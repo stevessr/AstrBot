@@ -190,9 +190,9 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             return await self.bot.api._http.request(route, json=payload)
 
     async def upload_group_and_c2c_record(
-        self, 
-        file_source: str, 
-        file_type: int, 
+        self,
+        file_source: str,
+        file_type: int,
         srv_send_msg: bool = False,
         **kwargs
     ) -> Optional[Media]:
@@ -204,18 +204,18 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             "file_type": file_type,
             "srv_send_msg": srv_send_msg
         }
-        
+
         # 处理文件数据
         if os.path.exists(file_source):
             # 读取本地文件
-            async with aiofiles.open(file_source, 'rb') as f:
+            async with aiofiles.open(file_source, "rb") as f:
                 file_content = await f.read()
                 # use base64 encode
-                payload["file_data"] = base64.b64encode(file_content).decode('utf-8')
+                payload["file_data"] = base64.b64encode(file_content).decode("utf-8")
         else:
             # 使用URL
             payload["url"] = file_source
-        
+
         # 添加接收者信息和确定路由
         if "openid" in kwargs:
             payload["openid"] = kwargs["openid"]
@@ -225,11 +225,11 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             route = Route("POST", "/v2/groups/{group_openid}/files", group_openid=kwargs["group_openid"])
         else:
             return None
-        
+
         try:
             # 使用底层HTTP请求
             result = await self.bot.api._http.request(route, json=payload)
-            
+
             if result:
                 return Media(
                     file_uuid=result.get("file_uuid"),
@@ -239,9 +239,9 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 )
         except Exception as e:
             logger.error(f"上传请求错误: {e}")
-        
+
         return None
-    
+
     async def post_c2c_message(
         self,
         openid: str,
@@ -294,11 +294,11 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                         if duration > 0:
                             record_file_path = record_tecent_silk_path
                         else:
-                            record_file_path = None                                 
+                            record_file_path = None
                             logger.error("转换音频格式时出错：音频时长不大于0")
                     except Exception as e:
                         logger.error(f"处理语音时出错: {e}")
-                        record_file_path = None                                     
+                        record_file_path = None
             else:
                 logger.debug(f"qq_official 忽略 {i.type}")
         return plain_text, image_base64, image_file_path, record_file_path
