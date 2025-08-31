@@ -267,18 +267,17 @@ class MatrixAdapter(Platform):
             )
 
             # Create AstrBot message
-            abm = AstrBotMessage(
-                type=message_type,
-                self_id=self.client.user_id,
-                session_id=room.room_id,
-                message_id=event.event_id,
-                sender=sender,
-                message=message_components,
-                message_str=message_str,
-                raw_message=event,
-                group_id=group_id,
-                timestamp=int(event.server_timestamp / 1000),
-            )
+            abm = AstrBotMessage()
+            abm.type = message_type
+            abm.self_id = self.client.user_id
+            abm.session_id = room.room_id
+            abm.message_id = event.event_id
+            abm.sender = sender
+            abm.message = message_components
+            abm.message_str = message_str
+            abm.raw_message = event
+            abm.group_id = group_id
+            abm.timestamp = int(event.server_timestamp / 1000)
 
             return abm
 
