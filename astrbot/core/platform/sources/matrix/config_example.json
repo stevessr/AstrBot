@@ -1,0 +1,37 @@
+{
+  "_comment": "Matrix Platform Adapter Configuration Example",
+  "_note": "Add this configuration to your AstrBot platform configuration array",
+  
+  "type": "matrix",
+  "enable": false,
+  "id": "matrix_bot_1",
+  
+  "matrix_homeserver": "https://matrix.org",
+  "matrix_user_id": "@your_bot_username:matrix.org",
+  
+  "_authentication_option_1": "Use password authentication",
+  "matrix_password": "your_bot_password_here",
+  
+  "_authentication_option_2": "Or use access token authentication (remove password if using this)",
+  "matrix_access_token": "",
+  
+  "_optional_settings": "Optional configuration parameters",
+  "matrix_device_name": "AstrBot",
+  "matrix_auto_join_rooms": true,
+  "matrix_sync_timeout": 30000,
+  
+  "_instructions": [
+    "1. Create a Matrix account for your bot on your chosen homeserver",
+    "2. Set matrix_user_id to your bot's full Matrix ID (e.g., @botname:matrix.org)",
+    "3. Either set matrix_password OR matrix_access_token (not both)",
+    "4. Set enable to true to activate the adapter",
+    "5. Invite your bot to Matrix rooms and start chatting!"
+  ],
+  
+  "_security_notes": [
+    "Store credentials securely",
+    "Use dedicated bot accounts, not personal accounts",
+    "Consider homeserver policies and rate limits",
+    "Test with small groups before deploying widely"
+  ]
+}
