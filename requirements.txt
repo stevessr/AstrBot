@@ -43,3 +43,4 @@ pydub
 sqlmodel
 deprecated
 sqlalchemy[asyncio]
+matrix-nio[e2e]
