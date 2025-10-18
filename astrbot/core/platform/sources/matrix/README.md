@@ -48,13 +48,20 @@ Add the following configuration to your AstrBot platform settings:
 
 ## E2EE Support
 
-The adapter automatically enables E2EE support when matrix-nio is installed with the `[e2e]` extra. 
+The adapter provides full End-to-End Encryption support using vodozemac via matrix-nio.
 
 ### How E2EE Works
 
-1. **Key Storage**: Device keys and session data are stored in `data/matrix_store/` directory
-2. **Vodozemac**: Uses the vodozemac library (via matrix-nio) for Olm and Megolm cryptographic operations
-3. **Automatic**: E2EE is handled automatically - encrypted rooms work transparently
+1. **Key Storage**: Device keys and session data are automatically stored in `data/matrix_store/`
+2. **Vodozemac**: Uses vodozemac (Rust implementation) for Olm and Megolm encryption
+3. **Automatic Encryption**: 
+   - Text messages in encrypted rooms are automatically encrypted
+   - Media files (images, audio) are automatically encrypted before upload
+4. **Automatic Decryption**:
+   - Encrypted messages are automatically decrypted during sync
+   - Encrypted media is downloaded and decrypted on-the-fly
+5. **Key Upload**: Encryption keys are automatically uploaded after login
+6. **Auto-join**: Bot automatically accepts room invitations
 
 ### Device Verification
 
