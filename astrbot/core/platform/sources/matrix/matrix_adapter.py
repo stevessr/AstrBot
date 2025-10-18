@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import traceback
 import uuid
 from pathlib import Path
 
@@ -17,10 +18,10 @@ from nio import (
     RoomEncryptedVideo,
     RoomEncryptedFile,
     SyncResponse,
+    SyncError,
     LoginResponse,
     DownloadResponse,
     KeysUploadResponse,
-    KeysQueryResponse,
 )
 
 import astrbot.api.message_components as Comp
@@ -177,6 +178,50 @@ class MatrixPlatformAdapter(Platform):
                     abm = await self._convert_matrix_event(event, room_id)
                     if abm:
                         await self._handle_msg(abm)
+
+    async def _reset_sync_state(self):
+        """Reset sync-related state to recover from errors"""
+        logger.warning("Resetting Matrix sync state due to sync error")
+        if hasattr(self.client, "next_batch"):
+            self.client.next_batch = None
+        if hasattr(self.client, "sync_token"):
+            self.client.sync_token = None
+        if self.client.store:
+            try:
+                self.client.store.next_batch = None
+            except AttributeError:
+                pass
+
+    async def _handle_sync_error(self, error: SyncError):
+        """Handle sync errors, attempting recovery when possible"""
+        message = getattr(error, "message", str(error))
+        status_code = getattr(error, "status_code", None)
+        logger.error(f"Matrix sync error: {message}")
+        if status_code:
+            logger.error(f"Matrix sync status code: {status_code}")
+
+        needs_reset = False
+        if message and "next_batch" in message:
+            needs_reset = True
+        if status_code in {400, 401}:
+            needs_reset = True
+
+        if needs_reset:
+            await self._reset_sync_state()
+
+        if status_code == 401:
+            logger.warning("Matrix sync unauthorized. Reauthenticating...")
+            await self._login()
+
+        transport = getattr(error, "transport_response", None)
+        if transport is not None:
+            try:
+                logger.debug(f"Matrix sync transport response: {transport.body}")
+            except AttributeError:
+                try:
+                    logger.debug(f"Matrix sync transport response: {transport.text}")
+                except AttributeError:
+                    logger.debug("Matrix sync transport response unavailable")
 
     async def _convert_matrix_event(self, event, room_id: str) -> AstrBotMessage:
         """Convert a Matrix event to an AstrBotMessage"""
@@ -369,40 +414,14 @@ class MatrixPlatformAdapter(Platform):
     async def run(self):
         """Start the Matrix client"""
         try:
-            # Load crypto store if available
-            if self.client.store:
-                try:
-                    await self.client.load_store()
-                    logger.info(f"Matrix crypto store loaded from {self.store_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to load Matrix crypto store: {e}")
-
-            # Login
+            # Login first
             await self._login()
 
-            # Enable encryption support if available
+            # Log E2EE status
             if self.client.store:
-                logger.info("Matrix E2EE support enabled")
-                try:
-                    query_response = await self.client.keys_query()
-                    if isinstance(query_response, KeysQueryResponse):
-                        logger.info("Matrix device keys queried successfully")
-                    else:
-                        logger.warning(f"Matrix key query failed: {query_response}")
-                except Exception as e:
-                    logger.warning(f"Failed to query Matrix device keys: {e}")
+                logger.info(f"Matrix E2EE support enabled (store: {self.store_path})")
             else:
                 logger.warning("Matrix E2EE support not available")
-
-            # Perform initial sync to get full state
-            try:
-                initial_sync = await self.client.sync(timeout=30000, full_state=True)
-                if isinstance(initial_sync, SyncResponse):
-                    await self._sync_callback(initial_sync)
-                else:
-                    logger.error(f"Initial sync error: {initial_sync}")
-            except Exception as e:
-                logger.error(f"Initial Matrix sync failed: {e}")
 
             # Start syncing
             self.running = True
@@ -414,14 +433,18 @@ class MatrixPlatformAdapter(Platform):
                     response = await self.client.sync(timeout=30000)
                     if isinstance(response, SyncResponse):
                         await self._sync_callback(response)
+                    elif isinstance(response, SyncError):
+                        await self._handle_sync_error(response)
+                        await asyncio.sleep(5)
                     else:
-                        logger.error(f"Sync error: {response}")
+                        logger.error(f"Unexpected sync response type: {type(response)}")
                         await asyncio.sleep(5)
                 except asyncio.CancelledError:
                     logger.info("Matrix sync cancelled")
                     break
                 except Exception as e:
                     logger.error(f"Error in Matrix sync loop: {e}")
+                    logger.error(traceback.format_exc())
                     await asyncio.sleep(5)
 
         except Exception as e:
