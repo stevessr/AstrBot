@@ -246,6 +246,17 @@ CONFIG_METADATA_2 = {
                         "slack_webhook_port": 6197,
                         "slack_webhook_path": "/astrbot-slack-webhook/callback",
                     },
+                    "Matrix": {
+                        "id": "matrix",
+                        "type": "matrix",
+                        "enable": False,
+                        "matrix_homeserver": "https://matrix.org",
+                        "matrix_user_id": "@your_username:matrix.org",
+                        "matrix_password": "",
+                        "matrix_device_name": "AstrBot",
+                        "matrix_device_id": "",
+                        "matrix_access_token": "",
+                    },
                 },
                 "items": {
                     "slack_connection_mode": {
@@ -268,6 +279,36 @@ CONFIG_METADATA_2 = {
                         "description": "Slack Webhook Path",
                         "type": "string",
                         "hint": "Only valid when Slack connection mode is `webhook`.",
+                    },
+                    "matrix_homeserver": {
+                        "description": "Matrix Homeserver URL",
+                        "type": "string",
+                        "hint": "The Matrix homeserver URL, e.g., https://matrix.org or https://your-server.com",
+                    },
+                    "matrix_user_id": {
+                        "description": "Matrix User ID",
+                        "type": "string",
+                        "hint": "Your Matrix user ID, e.g., @username:matrix.org",
+                    },
+                    "matrix_password": {
+                        "description": "Matrix Password",
+                        "type": "string",
+                        "hint": "Your Matrix account password. Either password or access_token is required.",
+                    },
+                    "matrix_device_name": {
+                        "description": "Device Name",
+                        "type": "string",
+                        "hint": "A friendly name for this device/bot instance.",
+                    },
+                    "matrix_device_id": {
+                        "description": "Device ID (Optional)",
+                        "type": "string",
+                        "hint": "Optional. If provided, the bot will use this device ID. Leave empty to generate a new one.",
+                    },
+                    "matrix_access_token": {
+                        "description": "Access Token (Optional)",
+                        "type": "string",
+                        "hint": "Optional. If provided, the bot will use this token instead of logging in with password.",
                     },
                     "active_send_mode": {
                         "description": "是否换用主动发送接口",
