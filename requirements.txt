@@ -11,6 +11,7 @@ googlesearch-python
 readability-lxml
 quart
 lxml_html_clean
+matrix-nio[e2e]
 colorlog
 aiocqhttp
 pyjwt

@@ -1,0 +1,11 @@
+{
+  "id": "matrix",
+  "type": "matrix",
+  "enable": false,
+  "matrix_homeserver": "https://matrix.org",
+  "matrix_user_id": "@your_username:matrix.org",
+  "matrix_password": "your_password_here",
+  "matrix_device_name": "AstrBot",
+  "matrix_device_id": "",
+  "matrix_access_token": ""
+}
