@@ -36,6 +36,7 @@ from astrbot.core.umop_config_router import UmopConfigRouter
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 from astrbot.core.star.star_handler import star_handlers_registry, EventType
 from astrbot.core.star.star_handler import star_map
+from astrbot.core.knowledge_base.kb_manager_lifecycle import KnowledgeBaseManager
 
 
 class AstrBotCoreLifecycle:
@@ -144,6 +145,19 @@ class AstrBotCoreLifecycle:
         # 根据配置实例化各个 Provider
         await self.provider_manager.initialize()
 
+        # 初始化知识库管理器
+        self.kb_manager = KnowledgeBaseManager(
+            self.astrbot_config, self.db, self.provider_manager
+        )
+        await self.kb_manager.initialize()
+
+        # 将知识库注入器添加到 star_context 中,供 Pipeline 使用
+        self.star_context.kb_injector = self.kb_manager.get_kb_injector()
+
+        # 注册知识库会话生命周期钩子（零侵入级联清理）
+        if self.kb_manager.is_initialized:
+            self.kb_manager.register_session_lifecycle_hooks(self.conversation_manager)
+
         # 初始化消息事件流水线调度器
 
         self.pipeline_scheduler_mapping = await self.load_pipeline_scheduler()
@@ -245,6 +259,7 @@ class AstrBotCoreLifecycle:
 
         await self.provider_manager.terminate()
         await self.platform_manager.terminate()
+        await self.kb_manager.terminate()
         self.dashboard_shutdown_event.set()
 
         # 再次遍历curr_tasks等待每个任务真正结束
@@ -260,6 +275,7 @@ class AstrBotCoreLifecycle:
         """重启 AstrBot 核心生命周期管理类, 终止各个管理器并重新加载平台实例"""
         await self.provider_manager.terminate()
         await self.platform_manager.terminate()
+        await self.kb_manager.terminate()
         self.dashboard_shutdown_event.set()
         threading.Thread(
             target=self.astrbot_updator._reboot, name="restart", daemon=True
