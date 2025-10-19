@@ -14,8 +14,8 @@ export interface menu {
   subCaption?: string;
 }
 
-// 注意：这个文件现在包含i18n键值而不是直接的文本
-// 在组件中使用时需要通过t()函数进行翻译
+// 注意：这个文件现在包含 i18n 键值而不是直接的文本
+// 在组件中使用时需要通过 t() 函数进行翻译
 // 所有键名都使用 core.navigation.* 格式
 const sidebarItem: menu[] = [
   {
@@ -27,11 +27,6 @@ const sidebarItem: menu[] = [
     title: 'core.navigation.providers',
     icon: 'mdi-creation',
     to: '/providers',
-  },
-  {
-    title: 'core.navigation.config',
-    icon: 'mdi-cog',
-    to: '/config',
   },
   {
     title: 'core.navigation.toolUse',
@@ -47,6 +42,19 @@ const sidebarItem: menu[] = [
     title: 'core.navigation.knowledgeBase',
     icon: 'mdi-text-box-search',
     to: '/alkaid/knowledge-base',
+  },
+  {
+    title: 'core.navigation.knowledgeBaseBeta',
+    icon: 'mdi-book-open-variant',
+    to: '/knowledge-base',
+    chip: 'Beta',
+    chipColor: 'primary',
+    chipVariant: 'tonal',
+  },
+  {
+    title: 'core.navigation.config',
+    icon: 'mdi-cog',
+    to: '/config',
   },
   {
     title: 'core.navigation.chat',
