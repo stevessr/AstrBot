@@ -98,6 +98,10 @@ class PlatformManager:
                     from .sources.misskey.misskey_adapter import (
                         MisskeyPlatformAdapter,  # noqa: F401
                     )
+                case "matrix":
+                    from .sources.matrix.matrix_adapter import (
+                        MatrixPlatformAdapter,  # noqa: F401
+                    )
                 case "slack":
                     from .sources.slack.slack_adapter import SlackAdapter  # noqa: F401
                 case "satori":

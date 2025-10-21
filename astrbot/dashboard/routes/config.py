@@ -606,6 +606,23 @@ class ConfigRoute(Route):
         platform_list = []
         for platform in self.config["platform"]:
             platform_list.append(platform)
+
+        # 如果需要显示所有可用的平台类型（用于选择器），添加未配置的平台类型
+        # 从 platform_registry 获取所有注册的平台类型
+        configured_types = {p.get("type", p.get("id")) for p in self.config["platform"]}
+
+        for platform_meta in platform_registry:
+            if platform_meta.name not in configured_types:
+                # 添加未配置的平台类型作为选项
+                platform_list.append(
+                    {
+                        "id": platform_meta.name,
+                        "type": platform_meta.name,
+                        "enable": False,
+                        "_unconfigured": True,  # 标记为未配置
+                    }
+                )
+
         return Response().ok({"platforms": platform_list}).__dict__
 
     async def post_astrbot_configs(self):

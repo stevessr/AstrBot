@@ -21,6 +21,7 @@ from typing import List
 from astrbot.core.pipeline.scheduler import PipelineScheduler, PipelineContext
 from astrbot.core.star import PluginManager
 from astrbot.core.platform.manager import PlatformManager
+from astrbot.core.platform.sources import register_all_platforms
 from astrbot.core.star.context import Context
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.provider.manager import ProviderManager
@@ -112,6 +113,10 @@ class AstrBotCoreLifecycle:
         self.provider_manager = ProviderManager(
             self.astrbot_config_mgr, self.db, self.persona_mgr
         )
+
+        # 预加载所有平台适配器以注册到 platform_registry
+        # 这样前端可以显示所有可用的平台类型，而不仅仅是已配置的平台
+        register_all_platforms()
 
         # 初始化平台管理器
         self.platform_manager = PlatformManager(self.astrbot_config, self.event_queue)
