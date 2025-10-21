@@ -220,6 +220,11 @@ class MatrixPlatformAdapter(Platform):
                 next_batch = sync_response.get("next_batch")
                 first_sync = False
 
+                # 处理 to-device 消息（E2EE 验证等）
+                to_device_events = sync_response.get("to_device", {}).get("events", [])
+                if to_device_events and self.e2ee_manager:
+                    await self._process_to_device_events(to_device_events)
+
                 # 处理 rooms 事件
                 rooms = sync_response.get("rooms", {})
 
@@ -238,6 +243,48 @@ class MatrixPlatformAdapter(Platform):
                 logger.error(f"Error in sync loop: {e}")
                 # Wait a bit before retrying
                 await asyncio.sleep(5)
+
+    async def _process_to_device_events(self, events: list):
+        """处理 to-device 事件（E2EE 验证等）"""
+        for event in events:
+            event_type = event.get("type")
+            content = event.get("content", {})
+            sender = event.get("sender")
+
+            # 记录所有 to-device 事件（用于调试）
+            logger.info(f"📨 Received to-device event: {event_type} from {sender}")
+            logger.debug(f"Event content: {content}")
+
+            # 处理 E2EE 验证相关事件
+            if event_type in [
+                "m.key.verification.ready",
+                "m.key.verification.start",
+                "m.key.verification.accept",
+                "m.key.verification.key",
+                "m.key.verification.mac",
+                "m.key.verification.done",
+                "m.key.verification.cancel",
+            ]:
+                if self.e2ee_manager:
+                    await self.e2ee_manager.handle_verification_event(event)
+                else:
+                    logger.warning(f"Received {event_type} but E2EE is not enabled")
+            elif event_type == "m.room.encrypted":
+                # 处理加密消息（可能包含验证事件）
+                if self.e2ee_manager:
+                    logger.info(
+                        f"Received encrypted to-device message from {sender}, attempting to decrypt..."
+                    )
+                    # TODO: 实现解密逻辑
+                    # 目前记录加密内容用于调试
+                    logger.debug(f"Encrypted content: {content}")
+                else:
+                    logger.warning(
+                        "Received encrypted message but E2EE manager not available"
+                    )
+            else:
+                # 记录未处理的事件类型
+                logger.warning(f"⚠️ Unhandled to-device event type: {event_type}")
 
     async def _process_room_events(self, room_id: str, room_data: dict):
         """处理房间事件"""

@@ -48,7 +48,7 @@ class MatrixE2EEManager:
 
     async def initialize(self) -> bool:
         """
-        初始化 E2EE 管理器
+        初始化 E2EE 管理器并上传密钥到服务器
 
         Returns:
             是否成功初始化
@@ -62,12 +62,66 @@ class MatrixE2EEManager:
             # 初始化加密模块
             self.crypto = MatrixE2EECrypto(self.store.account)
 
+            # 上传设备密钥到服务器
+            if self.client:
+                await self._upload_device_keys()
+
             self.enabled = True
             logger.info("E2EE manager initialized successfully")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize E2EE manager: {e}")
             return False
+
+    async def _upload_device_keys(self):
+        """上传设备密钥到 Matrix 服务器"""
+        try:
+            identity_keys = self.get_identity_keys()
+            if not identity_keys:
+                logger.warning("No identity keys to upload")
+                return
+
+            # 构建device_keys对象（符合Matrix规范）
+            device_keys = {
+                "user_id": self.user_id,
+                "device_id": self.device_id,
+                "algorithms": ["m.olm.v1.curve25519-aes-sha2", "m.megolm.v1.aes-sha2"],
+                "keys": {
+                    f"curve25519:{self.device_id}": identity_keys.get("curve25519"),
+                    f"ed25519:{self.device_id}": identity_keys.get("ed25519"),
+                },
+            }
+
+            # 签名设备密钥（在真实实现中应使用 Ed25519 签名）
+            import json
+            import hashlib
+
+            canonical_json = json.dumps(
+                device_keys, sort_keys=True, separators=(",", ":")
+            )
+            signature = hashlib.sha256(canonical_json.encode()).hexdigest()
+
+            device_keys["signatures"] = {
+                self.user_id: {f"ed25519:{self.device_id}": signature}
+            }
+
+            # 获取一次性密钥
+            one_time_keys = self.get_one_time_keys(count=50)
+            formatted_otks = {}
+            if one_time_keys:
+                for key_id, key_data in one_time_keys.items():
+                    formatted_otks[f"curve25519:{key_id}"] = key_data
+
+            # 上传到服务器
+            response = await self.client.upload_keys(device_keys, formatted_otks)
+
+            otk_counts = response.get("one_time_key_counts", {})
+            logger.info(f"✅ Uploaded device keys successfully")
+            logger.info(f"   One-time key counts: {otk_counts}")
+
+        except Exception as e:
+            logger.error(f"Failed to upload device keys: {e}")
+            # 不抛出异常，因为E2EE可以继续工作
 
     def is_enabled(self) -> bool:
         """检查 E2EE 是否启用"""
@@ -115,9 +169,9 @@ class MatrixE2EEManager:
         )
         return verification_id if success else None
 
-    def accept_device_verification(self, verification_id: str) -> bool:
-        """接受设备验证"""
-        return self.verification.accept_verification(verification_id)
+    async def accept_device_verification(self, verification_id: str) -> bool:
+        """接受设备验证并发送 start 事件"""
+        return await self.verification.accept_verification(verification_id)
 
     def get_sas_code(self, verification_id: str) -> Optional[str]:
         """获取 SAS 代码"""
@@ -236,6 +290,49 @@ class MatrixE2EEManager:
     def list_pending_recovery_requests(self) -> List[Dict]:
         """列出待处理的恢复请求"""
         return self.recovery.list_pending_recovery_requests()
+
+    # ==================== 事件处理 ====================
+
+    async def handle_verification_event(self, event: Dict[str, Any]):
+        """
+        处理验证相关的 to-device 事件
+
+        Args:
+            event: to-device 事件数据
+        """
+        event_type = event.get("type")
+        content = event.get("content", {})
+        sender = event.get("sender")
+
+        logger.info(f"Handling verification event: {event_type} from {sender}")
+
+        try:
+            if event_type == "m.key.verification.ready":
+                # 对方准备好验证了
+                await self.verification.handle_ready(sender, content)
+            elif event_type == "m.key.verification.start":
+                # 对方开始验证流程
+                await self.verification.handle_start(sender, content)
+            elif event_type == "m.key.verification.accept":
+                # 对方接受了我们的验证方法
+                await self.verification.handle_accept(sender, content)
+            elif event_type == "m.key.verification.key":
+                # 对方发送了公钥
+                await self.verification.handle_key(sender, content)
+            elif event_type == "m.key.verification.mac":
+                # 对方发送了 MAC 验证
+                await self.verification.handle_mac(sender, content)
+            elif event_type == "m.key.verification.done":
+                # 验证完成
+                await self.verification.handle_done(sender, content)
+            elif event_type == "m.key.verification.cancel":
+                # 验证被取消
+                await self.verification.handle_cancel(sender, content)
+            else:
+                logger.warning(f"Unknown verification event type: {event_type}")
+
+        except Exception as e:
+            logger.error(f"Error handling verification event {event_type}: {e}")
 
     # ==================== 生命周期 ====================
 

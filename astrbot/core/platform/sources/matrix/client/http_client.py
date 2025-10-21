@@ -451,3 +451,46 @@ class MatrixHTTPClient:
         }
 
         return await self._request("PUT", endpoint, data=content)
+
+    async def upload_keys(
+        self,
+        device_keys: Dict[str, Any],
+        one_time_keys: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Upload device and one-time keys to the server
+
+        Args:
+            device_keys: Device identity keys
+            one_time_keys: One-time keys (optional)
+
+        Returns:
+            Upload response with one_time_key_counts
+        """
+        endpoint = "/_matrix/client/v3/keys/upload"
+
+        data = {"device_keys": device_keys}
+
+        if one_time_keys:
+            data["one_time_keys"] = one_time_keys
+
+        return await self._request("POST", endpoint, data=data)
+
+    async def query_keys(
+        self, device_keys: Dict[str, List[str]], timeout: int = 10000
+    ) -> Dict[str, Any]:
+        """
+        Query keys for other devices
+
+        Args:
+            device_keys: Dict of user_id -> list of device_ids
+            timeout: Query timeout in milliseconds
+
+        Returns:
+            Device keys information
+        """
+        endpoint = "/_matrix/client/v3/keys/query"
+
+        data = {"device_keys": device_keys, "timeout": timeout}
+
+        return await self._request("POST", endpoint, data=data)

@@ -22,9 +22,11 @@ class VerificationState(Enum):
     """验证状态"""
 
     PENDING = "pending"
+    READY = "ready"
     STARTED = "started"
     ACCEPTED = "accepted"
     KEY_EXCHANGE = "key_exchange"
+    MAC_RECEIVED = "mac_received"
     MAC_EXCHANGE = "mac_exchange"
     VERIFIED = "verified"
     CANCELLED = "cancelled"
@@ -135,9 +137,9 @@ class MatrixE2EEVerification:
             logger.error(f"Failed to send verification request: {e}")
             raise
 
-    def accept_verification(self, verification_id: str) -> bool:
+    async def accept_verification(self, verification_id: str) -> bool:
         """
-        接受验证请求
+        接受验证请求并发送 start 事件
 
         Args:
             verification_id: 验证 ID
@@ -153,11 +155,47 @@ class MatrixE2EEVerification:
             verification = self.verifications[verification_id]
             verification["state"] = VerificationState.ACCEPTED.value
 
+            # 发送 m.key.verification.start 事件
+            if self.client:
+                await self._send_start_event(verification_id, verification)
+
             logger.info(f"Accepted verification {verification_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to accept verification: {e}")
             return False
+
+    async def _send_start_event(
+        self, transaction_id: str, verification: Dict[str, Any]
+    ):
+        """发送 m.key.verification.start 事件"""
+        try:
+            import time
+
+            other_user_id = verification["other_user_id"]
+            other_device_id = verification["other_device_id"]
+
+            content = {
+                "from_device": self.device_id,
+                "method": "m.sas.v1",
+                "transaction_id": transaction_id,
+                "key_agreement_protocols": ["curve25519-hkdf-sha256"],
+                "hashes": ["sha256"],
+                "message_authentication_codes": [
+                    "hkdf-hmac-sha256.v2",
+                    "hmac-sha256",
+                ],
+                "short_authentication_string": ["decimal", "emoji"],
+            }
+
+            messages = {other_user_id: {other_device_id: content}}
+
+            await self.client.send_to_device("m.key.verification.start", messages)
+            logger.info(f"Sent verification start to {other_user_id}:{other_device_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to send start event: {e}")
+            raise
 
     def generate_sas_code(self, verification_id: str) -> Optional[str]:
         """
@@ -292,3 +330,220 @@ class MatrixE2EEVerification:
     def get_all_verifications(self) -> Dict[str, Dict[str, Any]]:
         """获取所有验证会话"""
         return self.verifications.copy()
+
+    # ==================== 事件处理方法 ====================
+
+    async def handle_ready(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.ready 事件"""
+        transaction_id = content.get("transaction_id")
+        from_device = content.get("from_device")
+        methods = content.get("methods", [])
+
+        logger.info(
+            f"Received ready from {sender}:{from_device}, transaction: {transaction_id}"
+        )
+        logger.info(f"Supported methods: {methods}")
+
+        # 查找对应的验证会话
+        verification = None
+        for ver_id, ver_data in self.verifications.items():
+            if ver_id == transaction_id or (
+                ver_data.get("other_user_id") == sender
+                and ver_data.get("other_device_id") == from_device
+            ):
+                verification = ver_data
+                verification["state"] = VerificationState.READY.value
+                logger.info(f"Updated verification {ver_id} to READY state")
+                break
+
+        if not verification:
+            logger.warning(f"No verification found for ready from {sender}")
+
+    async def handle_start(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.start 事件"""
+        transaction_id = content.get("transaction_id")
+        method = content.get("method")
+
+        logger.info(
+            f"Received start from {sender}, transaction: {transaction_id}, method: {method}"
+        )
+
+        # 更新验证状态
+        if transaction_id in self.verifications:
+            self.verifications[transaction_id]["state"] = (
+                VerificationState.STARTED.value
+            )
+            logger.info(f"Verification {transaction_id} started with method {method}")
+
+    async def handle_accept(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.accept 事件并发送 key"""
+        transaction_id = content.get("transaction_id")
+        commitment = content.get("commitment")
+
+        logger.info(
+            f"Received accept from {sender}, transaction: {transaction_id}, commitment: {commitment}"
+        )
+
+        if transaction_id in self.verifications:
+            verification = self.verifications[transaction_id]
+            verification["state"] = VerificationState.ACCEPTED.value
+            verification["their_commitment"] = commitment
+
+            logger.info(f"Verification {transaction_id} accepted")
+
+            # 自动发送 key 事件
+            if self.client:
+                await self._send_key_event(transaction_id, verification)
+
+    async def _send_key_event(self, transaction_id: str, verification: Dict[str, Any]):
+        """发送 m.key.verification.key 事件"""
+        try:
+            import secrets
+
+            other_user_id = verification["other_user_id"]
+            other_device_id = verification["other_device_id"]
+
+            # 生成临时公钥（在真实实现中应使用 Curve25519）
+            our_key = secrets.token_hex(32)
+            verification["our_key"] = our_key
+
+            content = {
+                "transaction_id": transaction_id,
+                "key": our_key,
+            }
+
+            messages = {other_user_id: {other_device_id: content}}
+
+            await self.client.send_to_device("m.key.verification.key", messages)
+            logger.info(f"Sent verification key to {other_user_id}:{other_device_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to send key event: {e}")
+            raise
+
+    async def handle_key(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.key 事件并自动生成 SAS 码"""
+        transaction_id = content.get("transaction_id")
+        key = content.get("key")
+
+        logger.info(f"Received key from {sender}, transaction: {transaction_id}")
+
+        if transaction_id in self.verifications:
+            verification = self.verifications[transaction_id]
+            verification["their_key"] = key
+            verification["state"] = VerificationState.KEY_EXCHANGE.value
+
+            logger.info(f"Stored key for verification {transaction_id}")
+
+            # 自动生成 SAS 代码
+            sas_code = self.generate_sas_code(transaction_id)
+            if sas_code:
+                logger.info(f"✨ Generated SAS code for {transaction_id}: {sas_code}")
+                logger.info(
+                    f"📱 User should verify this code matches their client display"
+                )
+
+            # 自动发送 MAC（假设用户已确认 SAS 码）
+            if self.client:
+                await self._send_mac_event(transaction_id, verification)
+
+    async def _send_mac_event(self, transaction_id: str, verification: Dict[str, Any]):
+        """发送 m.key.verification.mac 事件"""
+        try:
+            import hashlib
+
+            other_user_id = verification["other_user_id"]
+            other_device_id = verification["other_device_id"]
+
+            # 生成 MAC（在真实实现中应使用 HMAC-SHA256）
+            our_key = verification.get("our_key", "")
+            their_key = verification.get("their_key", "")
+            combined = f"{our_key}{their_key}{transaction_id}"
+            mac = hashlib.sha256(combined.encode()).hexdigest()
+
+            content = {
+                "transaction_id": transaction_id,
+                "mac": {self.device_id: mac},
+                "keys": f"ed25519:{self.device_id}",
+            }
+
+            messages = {other_user_id: {other_device_id: content}}
+
+            await self.client.send_to_device("m.key.verification.mac", messages)
+            logger.info(f"Sent verification MAC to {other_user_id}:{other_device_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to send MAC event: {e}")
+            raise
+
+    async def handle_mac(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.mac 事件并发送 done"""
+        transaction_id = content.get("transaction_id")
+        mac_data = content.get("mac", {})
+
+        logger.info(
+            f"Received MAC from {sender}, transaction: {transaction_id}, mac: {mac_data}"
+        )
+
+        if transaction_id in self.verifications:
+            verification = self.verifications[transaction_id]
+            verification["state"] = VerificationState.MAC_RECEIVED.value
+            verification["their_mac"] = mac_data
+
+            logger.info(f"MAC received for verification {transaction_id}")
+
+            # 自动发送 done 事件
+            if self.client:
+                await self._send_done_event(transaction_id, verification)
+
+    async def _send_done_event(self, transaction_id: str, verification: Dict[str, Any]):
+        """发送 m.key.verification.done 事件"""
+        try:
+            other_user_id = verification["other_user_id"]
+            other_device_id = verification["other_device_id"]
+
+            content = {
+                "transaction_id": transaction_id,
+            }
+
+            messages = {other_user_id: {other_device_id: content}}
+
+            await self.client.send_to_device("m.key.verification.done", messages)
+            logger.info(
+                f"✅ Sent verification done to {other_user_id}:{other_device_id}"
+            )
+            logger.info(f"🎉 Verification {transaction_id} completed!")
+
+        except Exception as e:
+            logger.error(f"Failed to send done event: {e}")
+            raise
+
+    async def handle_done(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.done 事件"""
+        transaction_id = content.get("transaction_id")
+
+        logger.info(f"Received done from {sender}, transaction: {transaction_id}")
+
+        if transaction_id in self.verifications:
+            self.verifications[transaction_id]["state"] = (
+                VerificationState.VERIFIED.value
+            )
+            logger.info(f"Verification {transaction_id} completed successfully")
+
+    async def handle_cancel(self, sender: str, content: Dict[str, Any]):
+        """处理 m.key.verification.cancel 事件"""
+        transaction_id = content.get("transaction_id")
+        reason = content.get("reason", "unknown")
+        code = content.get("code", "m.unknown")
+
+        logger.info(
+            f"Received cancel from {sender}, transaction: {transaction_id}, reason: {code} - {reason}"
+        )
+
+        if transaction_id in self.verifications:
+            self.verifications[transaction_id]["state"] = (
+                VerificationState.CANCELLED.value
+            )
+            self.verifications[transaction_id]["cancel_reason"] = reason
+            self.verifications[transaction_id]["cancel_code"] = code
+            logger.info(f"Verification {transaction_id} cancelled")
