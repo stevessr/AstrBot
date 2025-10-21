@@ -1,0 +1,159 @@
+# Matrix Protocol Adapter Configuration Example
+# 
+# This file demonstrates how to configure the Matrix protocol adapter
+# for AstrBot with E2EE (End-to-End Encryption) support using vodozemac.
+#
+# The Matrix adapter allows AstrBot to connect to Matrix homeservers
+# and communicate in Matrix rooms with full E2EE support.
+
+# Matrix Adapter Configuration
+matrix:
+  # Enable the Matrix adapter
+  enable: true
+  
+  # Unique identifier for this adapter instance
+  # Useful when running multiple Matrix accounts
+  id: "matrix_main"
+  
+  # Matrix Homeserver URL
+  # Common homeservers:
+  # - https://matrix.org (default public homeserver)
+  # - https://matrix.example.com (self-hosted)
+  matrix_homeserver: "https://matrix.org"
+  
+  # Matrix User ID (REQUIRED)
+  # Format: @username:homeserver.domain
+  # Example: @astrbot:matrix.org
+  matrix_user_id: "@your_bot:matrix.org"
+  
+  # Authentication Method (choose ONE):
+  
+  # Method 1: Password Authentication (simpler, less secure)
+  # The password for your Matrix account
+  matrix_password: "your_secure_password_here"
+  
+  # Method 2: Access Token Authentication (RECOMMENDED for production)
+  # Use this instead of password for better security
+  # Get token from Element: Settings → Help & About → Advanced → Access Token
+  # Or the bot will log it after first password login
+  matrix_access_token: ""
+  
+  # Device Name
+  # A human-readable name for this bot instance
+  # Shown in Matrix client device lists
+  matrix_device_name: "AstrBot"
+  
+  # Device ID (OPTIONAL but RECOMMENDED with access_token)
+  # If not set, a new device ID will be generated on first login
+  # Save the generated device ID here to maintain session continuity
+  # and avoid device verification prompts
+  # When using access_token, this should match the token's device
+  matrix_device_id: ""
+  
+  # Enable E2EE (End-to-End Encryption)
+  # NOTE: E2EE support has been removed from AstrBot. This option is kept
+  # for backwards-compatibility in configs but has no effect. Set to false
+  # or remove the `matrix_enable_e2ee` key.
+  matrix_enable_e2ee: false
+  
+  # Store Path for Encryption Keys
+  # Directory where encryption keys and session data are stored
+  # IMPORTANT: Keep this directory secure and backed up!
+  # Loss of this data means loss of access to encrypted messages
+  matrix_store_path: "./data/matrix_store"
+  
+  # Auto-join Rooms
+  # When true, the bot automatically joins rooms when invited
+  # When false, invites must be accepted manually
+  matrix_auto_join_rooms: true
+  
+  # Sync Timeout
+  # How long to wait for sync responses from the server (in milliseconds)
+  # Default: 30000 (30 seconds)
+  matrix_sync_timeout: 30000
+
+# Usage Instructions:
+# 
+# 1. Create a Matrix Account:
+#    - Register an account on your chosen homeserver
+#    - For matrix.org: https://app.element.io/#/register
+#    - Or use: https://matrix.to/#/@astrbot:matrix.org
+#
+# 2. Choose Authentication Method:
+#    a) Password (Simple):
+#       - Fill in matrix_user_id and matrix_password
+#       - Leave matrix_access_token empty
+#       - The bot will log the access token after first login
+#    
+#    b) Access Token (Recommended):
+#       - Get your access token from Element Web client
+#       - Fill in matrix_user_id and matrix_access_token
+#       - Leave matrix_password empty
+#       - Optionally set matrix_device_id to reuse existing device
+#
+# 3. Configure the Adapter:
+#    - Copy this file to your config directory
+#    - Adjust other settings as needed
+#
+# 4. Invite the Bot to Rooms:
+#    - The bot must be invited to rooms to receive messages
+#    - Send an invite from your Matrix client
+#    - If matrix_auto_join_rooms is true, bot joins automatically
+#
+# 5. E2EE Setup:
+#    - Enable E2EE in encrypted rooms
+#    - The bot will automatically handle key exchange
+#    - Device verification may be required for some clients
+#
+# 6. Verify Device (Optional but Recommended):
+#    - In your Matrix client, find the bot's device
+#    - Verify the device to avoid "unverified device" warnings
+#    - This is especially important for encrypted rooms
+#
+# Security Notes:
+# - Access token is more secure than password
+# - Keep matrix_password/access_token secure (use env variables in production)
+# - Backup matrix_store_path directory regularly
+# - Use strong passwords and 2FA on your Matrix account
+# - Consider self-hosting a Matrix homeserver for better control
+# - Never share or commit access tokens to version control
+#
+# Troubleshooting:
+# - "Login failed": Check user_id and password/token
+# - "Can't decrypt": Ensure E2EE is enabled and store_path is accessible
+# - "Not receiving messages": Check bot is invited and joined the room
+# - "Device not trusted": Verify the bot's device in your Matrix client
+#
+# Key Export/Import:
+# - Export keys for backup or device transfer:
+#   await e2ee_handler.export_keys(passphrase="strong_pass", export_path="keys.txt")
+# - Import keys on another device:
+#   await e2ee_handler.import_keys(import_path="keys.txt", passphrase="strong_pass")
+# - Use a strong passphrase and transfer securely
+# - Delete export files after import
+
+# Advanced Configuration:
+# 
+# Multiple Matrix Accounts:
+# You can run multiple Matrix accounts by adding additional sections:
+#
+# matrix_account2:
+#   enable: true
+#   id: "matrix_secondary"
+#   matrix_homeserver: "https://other-homeserver.org"
+#   matrix_user_id: "@astrbot2:other-homeserver.org"
+#   matrix_access_token: "syt_..."
+#   matrix_device_id: "DEVICE123"
+#   matrix_store_path: "./data/matrix_store2"
+#   matrix_auto_join_rooms: true
+#
+# Custom Homeserver (Self-Hosted):
+# If using a self-hosted Matrix homeserver with custom federation:
+#
+# matrix_selfhosted:
+#   enable: true
+#   matrix_homeserver: "https://matrix.mycompany.com"
+#   matrix_user_id: "@bot:mycompany.com"
+#   matrix_access_token: "syt_..."
+#   matrix_auto_join_rooms: false  # Manual join control
+#   # May need to configure federation_domain if different from homeserver
