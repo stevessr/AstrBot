@@ -33,6 +33,7 @@ from .client import MatrixHTTPClient
         "matrix_auto_join_rooms": True,
         "matrix_sync_timeout": 30000,
         "matrix_bot_name": "AstrBot",  # 机器人的显示名称，用于检测 @
+        "matrix_enable_e2ee": True,  # 是否启用端到端加密
     },
     adapter_display_name="Matrix",
 )
@@ -49,7 +50,19 @@ class MatrixPlatformAdapter(Platform):
         self.client = MatrixHTTPClient(homeserver=self.config.homeserver)
         self.auth = MatrixAuth(self.client, self.config)
 
-        # E2EE support removed. Initialize sender without E2EE support.
+        # E2EE support
+        self.e2ee_manager = None
+        if self.config.enable_e2ee:
+            from .components.e2ee import MatrixE2EEManager
+
+            self.e2ee_manager = MatrixE2EEManager(
+                store_path=self.config.store_path,
+                user_id=self.config.user_id,
+                device_id=self.config.device_id,
+                homeserver=self.config.homeserver,
+                client=self.client,  # 传递客户端用于发送验证事件
+            )
+
         self.sender = MatrixSender(self.client)
 
         # 获取机器人名称用于检测 @
@@ -168,7 +181,16 @@ class MatrixPlatformAdapter(Platform):
     async def run(self):
         try:
             await self.auth.login()
-            # E2EE support removed: no initialization required
+
+            # Initialize E2EE if enabled
+            if self.e2ee_manager:
+                success = await self.e2ee_manager.initialize()
+                if success:
+                    logger.info("E2EE enabled and initialized successfully")
+                else:
+                    logger.warning("E2EE initialization failed, running without E2EE")
+                    self.e2ee_manager = None
+
             logger.info(
                 f"Matrix Platform Adapter is running for {self.config.user_id} on {self.config.homeserver}"
             )

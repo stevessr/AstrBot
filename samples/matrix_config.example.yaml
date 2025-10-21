@@ -51,10 +51,10 @@ matrix:
   matrix_device_id: ""
   
   # Enable E2EE (End-to-End Encryption)
-  # NOTE: E2EE support has been removed from AstrBot. This option is kept
-  # for backwards-compatibility in configs but has no effect. Set to false
-  # or remove the `matrix_enable_e2ee` key.
-  matrix_enable_e2ee: false
+  # When enabled, the bot will support encrypted messages in Matrix rooms
+  # Requires vodozemac library: uv add vodozemac
+  # Set to true to enable E2EE support
+  matrix_enable_e2ee: true
   
   # Store Path for Encryption Keys
   # Directory where encryption keys and session data are stored

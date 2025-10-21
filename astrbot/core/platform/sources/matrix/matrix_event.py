@@ -4,7 +4,9 @@ from astrbot.api.message_components import Plain, Image, File, Reply
 from pathlib import Path
 from astrbot import logger
 import mimetypes
-from astrbot.core.platform.sources.matrix.components.markdown_utils import markdown_to_html
+from astrbot.core.platform.sources.matrix.components.markdown_utils import (
+    markdown_to_html,
+)
 
 
 class MatrixPlatformEvent(AstrMessageEvent):
@@ -196,7 +198,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                     try:
                                         formatted_body = markdown_to_html(delta)
                                     except Exception as e:
-                                        logger.warning(f"Failed to render markdown: {e}")
+                                        logger.warning(
+                                            f"Failed to render markdown: {e}"
+                                        )
                                         formatted_body = delta.replace("\n", "<br>")
 
                                     await self.client.edit_message(
@@ -218,7 +222,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                     try:
                                         formatted_body = markdown_to_html(delta)
                                     except Exception as e:
-                                        logger.warning(f"Failed to render markdown: {e}")
+                                        logger.warning(
+                                            f"Failed to render markdown: {e}"
+                                        )
                                         formatted_body = delta.replace("\n", "<br>")
 
                                     content = {

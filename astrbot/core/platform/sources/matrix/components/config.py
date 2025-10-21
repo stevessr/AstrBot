@@ -29,7 +29,8 @@ class MatrixConfig:
                 extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
             )
 
-        # Note: E2EE support has been removed from AstrBot; configuration key removed.
+        # E2EE configuration
+        self.enable_e2ee = self.config.get("matrix_enable_e2ee", True)
 
         # Ensure these attributes exist for other components
         self.store_path = self.config.get("matrix_store_path", "./data/matrix_store")

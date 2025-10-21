@@ -213,6 +213,46 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/send/{msg_type}/{txn_id}"
         return await self._request("PUT", endpoint, data=content)
 
+    async def send_to_device(
+        self, event_type: str, messages: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Send to-device messages (used for E2EE key verification)
+
+        Args:
+            event_type: Event type (e.g., m.key.verification.request)
+            messages: Dictionary mapping user_id -> device_id -> content
+
+        Returns:
+            Response from server
+        """
+        import time
+
+        txn_id = f"txn_{int(time.time() * 1000)}"
+        endpoint = f"/_matrix/client/v3/sendToDevice/{event_type}/{txn_id}"
+        data = {"messages": messages}
+        return await self._request("PUT", endpoint, data=data)
+
+    async def send_room_event(
+        self, room_id: str, event_type: str, content: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Send a custom event to a room
+
+        Args:
+            room_id: Room ID
+            event_type: Event type (e.g., m.key.verification.request)
+            content: Event content
+
+        Returns:
+            Send response with event_id
+        """
+        import time
+
+        txn_id = f"txn_{int(time.time() * 1000)}"
+        endpoint = f"/_matrix/client/v3/rooms/{room_id}/send/{event_type}/{txn_id}"
+        return await self._request("PUT", endpoint, data=content)
+
     async def upload_file(
         self, data: bytes, content_type: str, filename: str
     ) -> Dict[str, Any]:
