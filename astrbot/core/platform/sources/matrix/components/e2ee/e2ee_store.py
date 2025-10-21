@@ -9,10 +9,11 @@ from typing import Optional, Dict, Any, List
 from astrbot import logger
 
 try:
-    from vodozemac import Account
+    from vodozemac import Account, InboundGroupSession
 except ImportError:
     logger.warning("vodozemac not installed, E2EE support disabled")
     Account = None
+    InboundGroupSession = None
 
 
 class MatrixE2EEStore:
@@ -36,11 +37,16 @@ class MatrixE2EEStore:
         self.device_keys_file = self.store_path / "device_keys.json"
         self.sessions_file = self.store_path / "sessions.json"
         self.verified_devices_file = self.store_path / "verified_devices.json"
+        self.group_sessions_dir = self.store_path / "group_sessions"
 
         self.account: Optional[Account] = None
         self.device_keys: Dict[str, Any] = {}
         self.sessions: Dict[str, Any] = {}
         self.verified_devices: Dict[str, set] = {}
+        self.group_sessions: Dict[str, InboundGroupSession] = {}  # room_id:session_id -> session
+        
+        # 创建群组会话目录
+        self.group_sessions_dir.mkdir(exist_ok=True)
 
     async def initialize(self):
         """初始化 E2EE 存储，加载或创建账户"""
@@ -63,6 +69,7 @@ class MatrixE2EEStore:
             self._load_device_keys()
             self._load_sessions()
             self._load_verified_devices()
+            self._load_group_sessions()
 
             return True
         except Exception as e:
@@ -219,6 +226,90 @@ class MatrixE2EEStore:
     def get_verified_devices(self, user_id: str) -> List[str]:
         """获取用户的已验证设备列表"""
         return list(self.verified_devices.get(user_id, set()))
+
+    def _load_group_sessions(self):
+        """加载 Megolm 群组会话"""
+        try:
+            if not InboundGroupSession:
+                return
+            
+            for session_file in self.group_sessions_dir.glob("*.pickle"):
+                try:
+                    with open(session_file, "rb") as f:
+                        pickle_data = f.read()
+                    
+                    pickle_key = bytes([0] * 32)
+                    if isinstance(pickle_data, bytes):
+                        pickle_data = pickle_data.decode()
+                    
+                    session = InboundGroupSession.from_pickle(pickle_data, pickle_key)
+                    session_key = session_file.stem  # room_id:session_id
+                    self.group_sessions[session_key] = session
+                    
+                except Exception as e:
+                    logger.error(f"Failed to load group session {session_file}: {e}")
+            
+            logger.info(f"Loaded {len(self.group_sessions)} Megolm group sessions")
+        except Exception as e:
+            logger.error(f"Failed to load group sessions: {e}")
+
+    def save_group_session(self, room_id: str, session_id: str, session: InboundGroupSession):
+        """保存 Megolm 群组会话"""
+        try:
+            session_key = f"{room_id}:{session_id}"
+            self.group_sessions[session_key] = session
+            
+            # 持久化到文件
+            session_file = self.group_sessions_dir / f"{session_key.replace(':', '_')}.pickle"
+            pickle_key = bytes([0] * 32)
+            pickle_data = session.pickle(pickle_key)
+            
+            with open(session_file, "wb") as f:
+                f.write(pickle_data.encode() if isinstance(pickle_data, str) else pickle_data)
+            
+            logger.debug(f"Saved group session for room {room_id}, session {session_id}")
+        except Exception as e:
+            logger.error(f"Failed to save group session: {e}")
+
+    def get_group_session(self, room_id: str, session_id: str) -> Optional[InboundGroupSession]:
+        """获取 Megolm 群组会话"""
+        session_key = f"{room_id}:{session_id}"
+        return self.group_sessions.get(session_key)
+
+    def import_group_session(
+        self, 
+        room_id: str, 
+        sender_key: str,
+        session_key: str
+    ) -> Optional[str]:
+        """
+        导入 Megolm 群组会话密钥
+        
+        Args:
+            room_id: 房间 ID
+            sender_key: 发送者的 Curve25519 密钥
+            session_key: 会话密钥（导出格式）
+        
+        Returns:
+            会话 ID，或 None 如果失败
+        """
+        try:
+            if not InboundGroupSession:
+                return None
+            
+            # 从导出的密钥创建会话
+            session = InboundGroupSession.import_session(session_key)
+            session_id = session.session_id()
+            
+            # 保存会话
+            self.save_group_session(room_id, session_id, session)
+            
+            logger.info(f"Imported group session {session_id} for room {room_id}")
+            return session_id
+            
+        except Exception as e:
+            logger.error(f"Failed to import group session: {e}")
+            return None
 
     async def close(self):
         """关闭存储，保存所有数据"""

@@ -45,6 +45,9 @@ class MatrixE2EEManager:
         self.recovery = MatrixE2EERecovery(user_id, device_id)
 
         self.enabled = False
+        # 记录已发起但尚未满足的群组密钥请求，避免频繁重复请求
+        # key: f"{room_id}:{session_id}", value: 上次请求时间戳 (ms)
+        self._pending_key_requests: Dict[str, int] = {}
 
     async def initialize(self) -> bool:
         """
@@ -81,7 +84,7 @@ class MatrixE2EEManager:
                 logger.warning("No identity keys to upload")
                 return
 
-            # 构建device_keys对象（符合Matrix规范）
+            # 构建 device_keys 对象（符合 Matrix 规范）
             device_keys = {
                 "user_id": self.user_id,
                 "device_id": self.device_id,
@@ -116,12 +119,12 @@ class MatrixE2EEManager:
             response = await self.client.upload_keys(device_keys, formatted_otks)
 
             otk_counts = response.get("one_time_key_counts", {})
-            logger.info(f"✅ Uploaded device keys successfully")
+            logger.info("✅ Uploaded device keys successfully")
             logger.info(f"   One-time key counts: {otk_counts}")
 
         except Exception as e:
             logger.error(f"Failed to upload device keys: {e}")
-            # 不抛出异常，因为E2EE可以继续工作
+            # 不抛出异常，因为 E2EE 可以继续工作
 
     def is_enabled(self) -> bool:
         """检查 E2EE 是否启用"""
@@ -240,6 +243,171 @@ class MatrixE2EEManager:
         """解密群组消息"""
         return self.crypto.decrypt_group_message(room_id, ciphertext)
 
+    async def decrypt_megolm_event(
+        self,
+        room_id: str,
+        sender: str,
+        sender_key: str,
+        session_id: str,
+        ciphertext: str,
+    ) -> Optional[str]:
+        """
+        解密 Megolm 加密的房间事件
+
+        Args:
+            room_id: 房间 ID
+            sender: 发送者用户 ID
+            sender_key: 发送者设备的 Curve25519 密钥
+            session_id: Megolm 会话 ID
+            ciphertext: 密文
+
+        Returns:
+            解密后的明文，或 None 如果失败
+        """
+        try:
+            logger.debug(
+                f"Attempting to decrypt Megolm message in room {room_id} from {sender}"
+            )
+
+            # 从存储中获取对应的群组会话
+            session = self.store.get_group_session(room_id, session_id)
+
+            if not session:
+                logger.warning(
+                    f"No group session found for room {room_id}, session {session_id}"
+                )
+                logger.info(
+                    "💡 Hint: You may need to request the room key from verified devices"
+                )
+                # 自动向本账号已验证的其他设备请求房间密钥
+                try:
+                    await self.request_room_key(room_id, session_id, sender_key)
+                except Exception as req_err:
+                    logger.warning(f"Auto room key request failed: {req_err}")
+                return None
+
+            # 使用 vodozemac 解密
+            plaintext = session.decrypt(ciphertext)
+            logger.info(f"✅ Successfully decrypted Megolm message in room {room_id}")
+
+            return plaintext
+
+        except Exception as e:
+            logger.error(f"Error decrypting Megolm event: {e}")
+            return None
+
+    async def decrypt_olm_event(
+        self, sender: str, device_id: str, ciphertext: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        解密 Olm 加密的事件（1 对 1）
+
+        Args:
+            sender: 发送者用户 ID
+            device_id: 发送者设备 ID
+            ciphertext: 密文字典（包含所有设备的密文）
+
+        Returns:
+            解密后的明文，或 None 如果失败
+        """
+        try:
+            logger.debug(f"Attempting to decrypt Olm message from {sender}:{device_id}")
+
+            # 目前返回 None，因为我们还没有实现 Olm 解密
+            # 需要：
+            # 1. 从 ciphertext 字典中找到给我们设备的密文
+            # 2. 使用 vodozemac 的 Account/Session 解密
+            logger.warning(
+                "Olm decryption not yet implemented - message will be skipped"
+            )
+            return None
+
+        except Exception as e:
+            logger.error(f"Error decrypting Olm event: {e}")
+            return None
+
+    # ==================== 群组密钥请求 ====================
+
+    async def request_room_key(
+        self, room_id: str, session_id: str, sender_key: Optional[str] = None
+    ) -> bool:
+        """
+        通过 to-device 发送 m.room_key_request，向本账号已验证且非当前设备请求 Megolm 群组密钥。
+
+        Args:
+            room_id: 房间 ID
+            session_id: Megolm 会话 ID（缺这个无法定位密钥）
+            sender_key: 发送者设备的 Curve25519 公钥（可选，但推荐提供）
+
+        Returns:
+            是否已成功发送至少一个请求
+        """
+        try:
+            if not self.client:
+                logger.warning("Matrix client not available, cannot request room key")
+                return False
+
+            if not self.enabled:
+                logger.warning("E2EE manager not enabled, skip room key request")
+                return False
+
+            # 防抖：30 秒内同一个 room_id:session_id 只请求一次
+            import time
+
+            req_key = f"{room_id}:{session_id}"
+            now_ms = int(time.time() * 1000)
+            last_req = self._pending_key_requests.get(req_key, 0)
+            if now_ms - last_req < 30_000:
+                logger.debug(
+                    f"Skip duplicate room key request for {req_key} within 30s window"
+                )
+                return False
+
+            # 选择目标设备：本账号已验证且不是当前设备
+            target_devices = [
+                d for d in self.store.get_verified_devices(self.user_id) if d != self.device_id
+            ]
+
+            if not target_devices:
+                logger.info(
+                    "No verified sibling devices found to request keys from; consider verifying another device."
+                )
+                # 仍然记录一次，避免疯狂重试
+                self._pending_key_requests[req_key] = now_ms
+                return False
+
+            # 构造请求内容（Matrix 规范）
+            request_id = f"$rk_{now_ms}_{session_id}"
+            body: Dict[str, Any] = {
+                "algorithm": "m.megolm.v1.aes-sha2",
+                "room_id": room_id,
+                "session_id": session_id,
+            }
+            if sender_key:
+                body["sender_key"] = sender_key
+
+            content = {
+                "action": "request",
+                "body": body,
+                "request_id": request_id,
+                "from_device": self.device_id,
+            }
+
+            # 发送给每个目标设备
+            messages: Dict[str, Dict[str, Any]] = {
+                self.user_id: dict.fromkeys(target_devices, content)
+            }
+            await self.client.send_to_device("m.room_key_request", messages)
+
+            self._pending_key_requests[req_key] = now_ms
+            logger.info(
+                f"📤 Requested room key for {room_id} session {session_id} from {len(target_devices)} verified device(s)"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to request room key: {e}")
+            return False
+
     # ==================== 密钥恢复 ====================
 
     def request_key_recovery(self, target_device_id: str) -> str:
@@ -333,6 +501,49 @@ class MatrixE2EEManager:
 
         except Exception as e:
             logger.error(f"Error handling verification event {event_type}: {e}")
+
+    async def handle_room_key(self, sender: str, content: Dict[str, Any]):
+        """
+        处理接收到的房间密钥（m.room_key 事件）
+
+        Args:
+            sender: 发送者用户 ID
+            content: 事件内容
+        """
+        try:
+            algorithm = content.get("algorithm")
+            room_id = content.get("room_id")
+            session_id = content.get("session_id")
+            session_key = content.get("session_key")
+            sender_key = content.get("sender_key")
+
+            logger.info(
+                f"📨 Received room key from {sender} for room {room_id}, session {session_id}"
+            )
+
+            # m.forwarded_room_key 可能没有 algorithm 字段；若缺失，且核心字段存在，也允许导入
+            if algorithm and algorithm != "m.megolm.v1.aes-sha2":
+                logger.warning(f"Unsupported room key algorithm: {algorithm}")
+                return
+
+            if not all([room_id, session_id, session_key, sender_key]):
+                logger.warning("Incomplete room key data")
+                return
+
+            # 导入会话密钥
+            imported_session_id = self.store.import_group_session(
+                room_id, sender_key, session_key
+            )
+
+            if imported_session_id:
+                logger.info(
+                    f"✅ Imported room key for {room_id}, can now decrypt messages!"
+                )
+            else:
+                logger.error(f"Failed to import room key for {room_id}")
+
+        except Exception as e:
+            logger.error(f"Error handling room key: {e}")
 
     # ==================== 生命周期 ====================
 

@@ -139,7 +139,7 @@ class MatrixE2EEVerification:
 
     async def accept_verification(self, verification_id: str) -> bool:
         """
-        接受验证请求并发送 start 事件
+        接受验证请求（但不立即发送 start，等待 ready）
 
         Args:
             verification_id: 验证 ID
@@ -155,11 +155,12 @@ class MatrixE2EEVerification:
             verification = self.verifications[verification_id]
             verification["state"] = VerificationState.ACCEPTED.value
 
-            # 发送 m.key.verification.start 事件
-            if self.client:
-                await self._send_start_event(verification_id, verification)
+            # 不立即发送 start，等待对方发送 ready
+            # start 会在 handle_ready() 中发送
 
-            logger.info(f"Accepted verification {verification_id}")
+            logger.info(
+                f"Accepted verification {verification_id}, waiting for ready from other device"
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to accept verification: {e}")
@@ -170,8 +171,6 @@ class MatrixE2EEVerification:
     ):
         """发送 m.key.verification.start 事件"""
         try:
-            import time
-
             other_user_id = verification["other_user_id"]
             other_device_id = verification["other_device_id"]
 
@@ -346,6 +345,7 @@ class MatrixE2EEVerification:
 
         # 查找对应的验证会话
         verification = None
+        ver_id = None
         for ver_id, ver_data in self.verifications.items():
             if ver_id == transaction_id or (
                 ver_data.get("other_user_id") == sender
@@ -358,6 +358,12 @@ class MatrixE2EEVerification:
 
         if not verification:
             logger.warning(f"No verification found for ready from {sender}")
+            return
+
+        # 自动发送 start 事件响应 ready
+        if self.client and ver_id:
+            logger.info(f"Sending start event in response to ready for {ver_id}")
+            await self._send_start_event(ver_id, verification)
 
     async def handle_start(self, sender: str, content: Dict[str, Any]):
         """处理 m.key.verification.start 事件"""
@@ -440,7 +446,7 @@ class MatrixE2EEVerification:
             if sas_code:
                 logger.info(f"✨ Generated SAS code for {transaction_id}: {sas_code}")
                 logger.info(
-                    f"📱 User should verify this code matches their client display"
+                    "📱 User should verify this code matches their client display"
                 )
 
             # 自动发送 MAC（假设用户已确认 SAS 码）

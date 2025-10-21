@@ -269,14 +269,25 @@ class MatrixPlatformAdapter(Platform):
                     await self.e2ee_manager.handle_verification_event(event)
                 else:
                     logger.warning(f"Received {event_type} but E2EE is not enabled")
+            elif event_type == "m.room_key":
+                # 处理房间密钥分享
+                if self.e2ee_manager:
+                    await self.e2ee_manager.handle_room_key(sender, content)
+                else:
+                    logger.warning("Received m.room_key but E2EE is not enabled")
+            elif event_type == "m.forwarded_room_key":
+                # 处理从其他设备转发过来的房间密钥
+                if self.e2ee_manager:
+                    await self.e2ee_manager.handle_room_key(sender, content)
+                else:
+                    logger.warning("Received m.forwarded_room_key but E2EE is not enabled")
             elif event_type == "m.room.encrypted":
                 # 处理加密消息（可能包含验证事件）
                 if self.e2ee_manager:
                     logger.info(
                         f"Received encrypted to-device message from {sender}, attempting to decrypt..."
                     )
-                    # TODO: 实现解密逻辑
-                    # 目前记录加密内容用于调试
+                    # TODO: 实现 Olm 解密 to-device 消息
                     logger.debug(f"Encrypted content: {content}")
                 else:
                     logger.warning(
@@ -318,9 +329,77 @@ class MatrixPlatformAdapter(Platform):
         event_type = event_data.get("type")
 
         if event_type == "m.room.message":
-            # 解析消息事件
+            # 解析明文消息事件
             event = parse_event(event_data, room.room_id)
             await self.message_callback(room, event)
+        elif event_type == "m.room.encrypted":
+            # 处理加密消息
+            if self.e2ee_manager and self.e2ee_manager.is_enabled():
+                logger.debug(f"Received encrypted message in room {room.room_id}")
+                # 尝试解密消息
+                decrypted_event = await self._decrypt_room_event(event_data, room)
+                if decrypted_event:
+                    # 解密成功，处理明文消息
+                    event = parse_event(decrypted_event, room.room_id)
+                    await self.message_callback(room, event)
+                else:
+                    logger.warning(
+                        f"Failed to decrypt message in room {room.room_id}, sender: {event_data.get('sender')}"
+                    )
+            else:
+                logger.warning(
+                    f"Received encrypted message but E2EE is not enabled in room {room.room_id}"
+                )
+
+    async def _decrypt_room_event(self, event_data: dict, room) -> dict | None:
+        """解密房间加密事件"""
+        try:
+            content = event_data.get("content", {})
+            sender = event_data.get("sender")
+
+            # 提取加密信息
+            algorithm = content.get("algorithm")
+            sender_key = content.get("sender_key")
+            ciphertext = content.get("ciphertext")
+            session_id = content.get("session_id")
+            device_id = content.get("device_id")
+
+            logger.debug(
+                f"Decrypting: algorithm={algorithm}, sender={sender}, device={device_id}"
+            )
+
+            # 调用 E2EE manager 解密
+            if algorithm == "m.megolm.v1.aes-sha2":
+                # Megolm 群组加密（加密房间使用）
+                plaintext = await self.e2ee_manager.decrypt_megolm_event(
+                    room.room_id, sender, sender_key, session_id, ciphertext
+                )
+            elif algorithm == "m.olm.v1.curve25519-aes-sha2":
+                # Olm 1 对 1 加密
+                plaintext = await self.e2ee_manager.decrypt_olm_event(
+                    sender, device_id, ciphertext
+                )
+            else:
+                logger.warning(f"Unsupported encryption algorithm: {algorithm}")
+                return None
+
+            if plaintext:
+                # 构建解密后的事件
+                import json
+
+                decrypted_content = json.loads(plaintext)
+                decrypted_event = event_data.copy()
+                decrypted_event["type"] = decrypted_content.get(
+                    "type", "m.room.message"
+                )
+                decrypted_event["content"] = decrypted_content.get("content", {})
+                return decrypted_event
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error decrypting room event: {e}")
+            return None
 
     async def _handle_invite(self, room_id: str, invite_data: dict):
         """处理房间邀请"""
