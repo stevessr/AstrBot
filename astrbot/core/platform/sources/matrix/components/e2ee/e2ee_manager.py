@@ -10,6 +10,7 @@ from .e2ee_store import MatrixE2EEStore
 from .e2ee_crypto import MatrixE2EECrypto
 from .e2ee_verification import MatrixE2EEVerification
 from .e2ee_recovery import MatrixE2EERecovery
+from .e2ee_auto_setup import MatrixE2EEAutoSetup
 
 
 class MatrixE2EEManager:
@@ -43,15 +44,19 @@ class MatrixE2EEManager:
         self.crypto = MatrixE2EECrypto()
         self.verification = MatrixE2EEVerification(user_id, device_id, client)
         self.recovery = MatrixE2EERecovery(user_id, device_id)
+        self.auto_setup = MatrixE2EEAutoSetup(client, self, user_id, device_id)
 
         self.enabled = False
         # 记录已发起但尚未满足的群组密钥请求，避免频繁重复请求
         # key: f"{room_id}:{session_id}", value: 上次请求时间戳 (ms)
         self._pending_key_requests: Dict[str, int] = {}
 
-    async def initialize(self) -> bool:
+    async def initialize(self, auto_setup: bool = True) -> bool:
         """
         初始化 E2EE 管理器并上传密钥到服务器
+
+        Args:
+            auto_setup: 是否自动设置 E2EE（获取设备、交换密钥等）
 
         Returns:
             是否成功初始化
@@ -71,6 +76,12 @@ class MatrixE2EEManager:
 
             self.enabled = True
             logger.info("E2EE manager initialized successfully")
+
+            # 自动设置 E2EE（如果启用）
+            if auto_setup and self.client:
+                logger.info("Starting automatic E2EE setup...")
+                await self.auto_setup.setup_e2ee()
+
             return True
         except Exception as e:
             logger.error(f"Failed to initialize E2EE manager: {e}")
@@ -501,6 +512,80 @@ class MatrixE2EEManager:
 
         except Exception as e:
             logger.error(f"Error handling verification event {event_type}: {e}")
+
+    async def handle_encrypted_to_device(self, sender: str, content: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        处理加密的 to-device 消息（m.room.encrypted with algorithm m.olm.v1.curve25519-aes-sha2）
+
+        Args:
+            sender: 发送者用户 ID
+            content: 加密的事件内容
+
+        Returns:
+            解密后的事件内容，或 None 如果失败
+        """
+        try:
+            algorithm = content.get("algorithm")
+            sender_key = content.get("sender_key")
+            ciphertext_data = content.get("ciphertext", {})
+
+            if algorithm != "m.olm.v1.curve25519-aes-sha2":
+                logger.warning(f"Unsupported to-device encryption algorithm: {algorithm}")
+                return None
+
+            # Find ciphertext for our device
+            device_ciphertext = ciphertext_data.get(self.device_id)
+            if not device_ciphertext:
+                logger.warning(f"No ciphertext found for our device {self.device_id}")
+                return None
+
+            message_type = device_ciphertext.get("type")
+            body = device_ciphertext.get("body")
+
+            if message_type is None or body is None:
+                logger.warning("Invalid Olm message format")
+                return None
+
+            # Try to decrypt with existing session
+            # Extract device_id from sender (format: @user:server)
+            # We need to find which device sent this
+            # For now, we'll try all sessions with this sender
+            plaintext = None
+            for session_key, session in self.crypto.sessions.items():
+                if session_key.startswith(f"{sender}:"):
+                    try:
+                        plaintext = self.crypto.decrypt_message(
+                            sender, session_key.split(":", 1)[1], message_type, body
+                        )
+                        if plaintext:
+                            break
+                    except Exception:
+                        continue
+
+            # If no existing session worked and this is a PreKey message, create new session
+            if not plaintext and message_type == 0:
+                logger.info(f"Creating new Olm session from PreKey message from {sender}")
+                # We need the sender's device_id - extract from sender_key or use a placeholder
+                # In a real implementation, we'd track device_id from the event
+                device_id = "UNKNOWN"  # This should be extracted from the event metadata
+
+                if self.crypto.create_inbound_session(sender, device_id, sender_key, body):
+                    plaintext = self.crypto.decrypt_message(sender, device_id, message_type, body)
+
+            if not plaintext:
+                logger.error(f"Failed to decrypt Olm to-device message from {sender}")
+                return None
+
+            # Parse decrypted JSON
+            import json
+            decrypted_event = json.loads(plaintext)
+
+            logger.info(f"✅ Decrypted Olm to-device message from {sender}: {decrypted_event.get('type')}")
+            return decrypted_event
+
+        except Exception as e:
+            logger.error(f"Error handling encrypted to-device message: {e}")
+            return None
 
     async def handle_room_key(self, sender: str, content: Dict[str, Any]):
         """

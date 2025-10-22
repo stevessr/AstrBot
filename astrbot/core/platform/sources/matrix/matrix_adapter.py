@@ -13,6 +13,8 @@ from .components.sender import MatrixSender
 from .components.receiver import MatrixReceiver
 from .components.event_handler import MatrixEventHandler
 from .components.utils import MatrixUtils
+from .components.sync_manager import MatrixSyncManager
+from .components.event_processor import MatrixEventProcessor
 
 # 自定义 Matrix 客户端（不依赖 matrix-nio）
 from .client import MatrixHTTPClient
@@ -26,7 +28,7 @@ from .client import MatrixHTTPClient
         "matrix_user_id": "",
         "matrix_password": "",
         "matrix_access_token": "",
-        "matrix_auth_method": "password",  # password, token
+        "matrix_auth_method": "password",  # password, token, oauth2
         "matrix_device_name": "AstrBot",
         "matrix_device_id": "",
         "matrix_store_path": "./data/matrix_store",
@@ -34,6 +36,8 @@ from .client import MatrixHTTPClient
         "matrix_sync_timeout": 30000,
         "matrix_bot_name": "AstrBot",  # 机器人的显示名称，用于检测 @
         "matrix_enable_e2ee": True,  # 是否启用端到端加密
+        # OAuth2: 所有配置自动从服务器获取，只需设置 matrix_auth_method="oauth2"
+        "matrix_refresh_token": "",  # OAuth2 刷新令牌（自动保存）
     },
     adapter_display_name="Matrix",
 )
@@ -77,17 +81,27 @@ class MatrixPlatformAdapter(Platform):
             self.client, self.config.auto_join_rooms
         )
 
-        self.sync_timeout = self.config.sync_timeout
+        # Initialize sync manager
+        self.sync_manager = MatrixSyncManager(
+            client=self.client,
+            sync_timeout=self.config.sync_timeout,
+            auto_join_rooms=self.config.auto_join_rooms,
+        )
 
-        # 消息去重：记录已处理的消息 ID，防止重复处理
-        self._processed_messages = set()
-        self._max_processed_messages = 1000  # 最多缓存 1000 条消息 ID
+        # Initialize event processor
+        self.event_processor = MatrixEventProcessor(
+            client=self.client,
+            user_id=self.config.user_id,
+            startup_ts=self._startup_ts,
+            e2ee_manager=self.e2ee_manager,
+        )
 
-        # 事件回调存储（替代 nio 的 add_event_callback）
-        self._event_callbacks = {
-            "m.room.message": [],
-            "m.room.member": [],
-        }
+        # Set up callbacks
+        self.sync_manager.set_room_event_callback(self.event_processor.process_room_events)
+        self.sync_manager.set_to_device_event_callback(self.event_processor.process_to_device_events)
+        self.sync_manager.set_invite_callback(self._handle_invite)
+        self.event_processor.set_message_callback(self.message_callback)
+
         logger.info("Matrix Adapter 初始化完成")
 
     async def send_by_session(
@@ -194,7 +208,7 @@ class MatrixPlatformAdapter(Platform):
             logger.info(
                 f"Matrix Platform Adapter is running for {self.config.user_id} on {self.config.homeserver}"
             )
-            await self._sync_forever()
+            await self.sync_manager.sync_forever()
         except KeyboardInterrupt:
             logger.info("Matrix adapter received shutdown signal")
             raise
@@ -203,203 +217,7 @@ class MatrixPlatformAdapter(Platform):
             logger.error("Matrix 适配器启动失败。请检查配置并查看上方详细错误信息。")
             raise
 
-    async def _sync_forever(self):
-        """自定义 sync 循环（替代 nio 的 sync_forever）"""
-        next_batch = None
-        first_sync = True
 
-        while True:
-            try:
-                # 执行 sync
-                sync_response = await self.client.sync(
-                    since=next_batch,
-                    timeout=self.sync_timeout,
-                    full_state=first_sync,
-                )
-
-                next_batch = sync_response.get("next_batch")
-                first_sync = False
-
-                # 处理 to-device 消息（E2EE 验证等）
-                to_device_events = sync_response.get("to_device", {}).get("events", [])
-                if to_device_events and self.e2ee_manager:
-                    await self._process_to_device_events(to_device_events)
-
-                # 处理 rooms 事件
-                rooms = sync_response.get("rooms", {})
-
-                # 处理 joined rooms
-                for room_id, room_data in rooms.get("join", {}).items():
-                    await self._process_room_events(room_id, room_data)
-
-                # 处理 invited rooms
-                if self.config.auto_join_rooms:
-                    for room_id, invite_data in rooms.get("invite", {}).items():
-                        await self._handle_invite(room_id, invite_data)
-
-            except KeyboardInterrupt:
-                raise
-            except Exception as e:
-                logger.error(f"Error in sync loop: {e}")
-                # Wait a bit before retrying
-                await asyncio.sleep(5)
-
-    async def _process_to_device_events(self, events: list):
-        """处理 to-device 事件（E2EE 验证等）"""
-        for event in events:
-            event_type = event.get("type")
-            content = event.get("content", {})
-            sender = event.get("sender")
-
-            # 记录所有 to-device 事件（用于调试）
-            logger.info(f"📨 Received to-device event: {event_type} from {sender}")
-            logger.debug(f"Event content: {content}")
-
-            # 处理 E2EE 验证相关事件
-            if event_type in [
-                "m.key.verification.ready",
-                "m.key.verification.start",
-                "m.key.verification.accept",
-                "m.key.verification.key",
-                "m.key.verification.mac",
-                "m.key.verification.done",
-                "m.key.verification.cancel",
-            ]:
-                if self.e2ee_manager:
-                    await self.e2ee_manager.handle_verification_event(event)
-                else:
-                    logger.warning(f"Received {event_type} but E2EE is not enabled")
-            elif event_type == "m.room_key":
-                # 处理房间密钥分享
-                if self.e2ee_manager:
-                    await self.e2ee_manager.handle_room_key(sender, content)
-                else:
-                    logger.warning("Received m.room_key but E2EE is not enabled")
-            elif event_type == "m.forwarded_room_key":
-                # 处理从其他设备转发过来的房间密钥
-                if self.e2ee_manager:
-                    await self.e2ee_manager.handle_room_key(sender, content)
-                else:
-                    logger.warning("Received m.forwarded_room_key but E2EE is not enabled")
-            elif event_type == "m.room.encrypted":
-                # 处理加密消息（可能包含验证事件）
-                if self.e2ee_manager:
-                    logger.info(
-                        f"Received encrypted to-device message from {sender}, attempting to decrypt..."
-                    )
-                    # TODO: 实现 Olm 解密 to-device 消息
-                    logger.debug(f"Encrypted content: {content}")
-                else:
-                    logger.warning(
-                        "Received encrypted message but E2EE manager not available"
-                    )
-            else:
-                # 记录未处理的事件类型
-                logger.warning(f"⚠️ Unhandled to-device event type: {event_type}")
-
-    async def _process_room_events(self, room_id: str, room_data: dict):
-        """处理房间事件"""
-        timeline = room_data.get("timeline", {})
-        events = timeline.get("events", [])
-
-        # 构建简化的 room 对象
-        from .client.event_types import MatrixRoom
-
-        room = MatrixRoom(room_id=room_id)
-
-        # 处理 state 事件以获取房间信息
-        state_events = room_data.get("state", {}).get("events", [])
-        for event in state_events:
-            if event.get("type") == "m.room.member":
-                user_id = event.get("state_key")
-                content = event.get("content", {})
-                if content.get("membership") == "join":
-                    display_name = content.get("displayname", user_id)
-                    room.members[user_id] = display_name
-                    room.member_count += 1
-
-        # 处理 timeline 事件
-        for event_data in events:
-            await self._handle_event(room, event_data)
-
-    async def _handle_event(self, room, event_data: dict):
-        """处理单个事件"""
-        from .client.event_types import parse_event
-
-        event_type = event_data.get("type")
-
-        if event_type == "m.room.message":
-            # 解析明文消息事件
-            event = parse_event(event_data, room.room_id)
-            await self.message_callback(room, event)
-        elif event_type == "m.room.encrypted":
-            # 处理加密消息
-            if self.e2ee_manager and self.e2ee_manager.is_enabled():
-                logger.debug(f"Received encrypted message in room {room.room_id}")
-                # 尝试解密消息
-                decrypted_event = await self._decrypt_room_event(event_data, room)
-                if decrypted_event:
-                    # 解密成功，处理明文消息
-                    event = parse_event(decrypted_event, room.room_id)
-                    await self.message_callback(room, event)
-                else:
-                    logger.warning(
-                        f"Failed to decrypt message in room {room.room_id}, sender: {event_data.get('sender')}"
-                    )
-            else:
-                logger.warning(
-                    f"Received encrypted message but E2EE is not enabled in room {room.room_id}"
-                )
-
-    async def _decrypt_room_event(self, event_data: dict, room) -> dict | None:
-        """解密房间加密事件"""
-        try:
-            content = event_data.get("content", {})
-            sender = event_data.get("sender")
-
-            # 提取加密信息
-            algorithm = content.get("algorithm")
-            sender_key = content.get("sender_key")
-            ciphertext = content.get("ciphertext")
-            session_id = content.get("session_id")
-            device_id = content.get("device_id")
-
-            logger.debug(
-                f"Decrypting: algorithm={algorithm}, sender={sender}, device={device_id}"
-            )
-
-            # 调用 E2EE manager 解密
-            if algorithm == "m.megolm.v1.aes-sha2":
-                # Megolm 群组加密（加密房间使用）
-                plaintext = await self.e2ee_manager.decrypt_megolm_event(
-                    room.room_id, sender, sender_key, session_id, ciphertext
-                )
-            elif algorithm == "m.olm.v1.curve25519-aes-sha2":
-                # Olm 1 对 1 加密
-                plaintext = await self.e2ee_manager.decrypt_olm_event(
-                    sender, device_id, ciphertext
-                )
-            else:
-                logger.warning(f"Unsupported encryption algorithm: {algorithm}")
-                return None
-
-            if plaintext:
-                # 构建解密后的事件
-                import json
-
-                decrypted_content = json.loads(plaintext)
-                decrypted_event = event_data.copy()
-                decrypted_event["type"] = decrypted_content.get(
-                    "type", "m.room.message"
-                )
-                decrypted_event["content"] = decrypted_content.get("content", {})
-                return decrypted_event
-
-            return None
-
-        except Exception as e:
-            logger.error(f"Error decrypting room event: {e}")
-            return None
 
     async def _handle_invite(self, room_id: str, invite_data: dict):
         """处理房间邀请"""
@@ -438,41 +256,15 @@ class MatrixPlatformAdapter(Platform):
             logger.warning(f"Failed to save Matrix config: {e}")
 
     async def message_callback(self, room, event):
+        """
+        Process a message event (called by event processor after filtering)
+
+        Args:
+            room: Room object
+            event: Parsed event object
+        """
         try:
-            # 忽略自己发送的消息
-            if event.sender == self.config.user_id:
-                logger.debug(f"Ignoring message from self: {event.event_id}")
-                return
-
-            # 历史消息过滤：忽略启动前的事件，避免启动时回复历史消息
-            evt_ts = getattr(event, "origin_server_ts", None)
-            if evt_ts is None:
-                evt_ts = getattr(event, "server_timestamp", None)
-            if evt_ts is not None and evt_ts < (
-                self._startup_ts - 1000
-            ):  # 允许 1s 的时间漂移
-                logger.debug(
-                    f"Ignoring historical message before startup: id={getattr(event, 'event_id', '<unknown>')} ts={evt_ts} startup={self._startup_ts}"
-                )
-                return
-
-            # 消息去重：检查是否已处理过该消息
-            if event.event_id in self._processed_messages:
-                logger.debug(f"Ignoring duplicate message: {event.event_id}")
-                return
-
-            # 记录已处理的消息 ID
-            self._processed_messages.add(event.event_id)
-
-            # 限制缓存大小，防止内存泄漏
-            if len(self._processed_messages) > self._max_processed_messages:
-                # 移除最旧的一半消息 ID（简单的 FIFO 策略）
-                old_messages = list(self._processed_messages)[
-                    : self._max_processed_messages // 2
-                ]
-                for msg_id in old_messages:
-                    self._processed_messages.discard(msg_id)
-
+            # Convert to AstrBot message format
             abm = await self.receiver.convert_message(room, event)
             if abm is None:
                 logger.warning(f"Failed to convert message: {event}")
@@ -507,9 +299,19 @@ class MatrixPlatformAdapter(Platform):
     async def terminate(self):
         try:
             logger.info("Shutting down Matrix adapter...")
-            # E2EE support removed: nothing to close
+
+            # Stop sync manager
+            if hasattr(self, 'sync_manager'):
+                self.sync_manager.stop()
+
+            # Close E2EE manager
+            if self.e2ee_manager:
+                await self.e2ee_manager.close()
+
+            # Close HTTP client
             if self.client:
                 await self.client.close()
+
             logger.info("Matrix 适配器已被优雅地关闭")
         except Exception as e:
             logger.error(f"Matrix 适配器关闭时出错：{e}")

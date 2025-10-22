@@ -10,14 +10,14 @@ class MatrixConfig:
     def __init__(self, config: dict):
         """Initialize Matrix configuration.
 
-        OAuth2/SSO login has been removed. Supported methods are 'password' and 'token'.
+        Supported authentication methods: 'password', 'token', and 'oauth2'.
         """
         self.config = config or {}
         self.homeserver = self.config.get("matrix_homeserver", "https://matrix.org")
         self.user_id = self.config.get("matrix_user_id")
         self.password = self.config.get("matrix_password")
         self.access_token = self.config.get("matrix_access_token")
-        # Only supported methods now: password, token
+        # Supported methods: password, token, oauth2
         self.auth_method = self.config.get("matrix_auth_method", "password")
         self.device_name = self.config.get("matrix_device_name", "AstrBot")
         self.device_id = self.config.get("matrix_device_id")
@@ -28,6 +28,10 @@ class MatrixConfig:
                 f"Auto-generated Matrix device_id: {self.device_id}",
                 extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
             )
+
+        # OAuth2 configuration - all parameters auto-discovered from server
+        # Only refresh_token is stored locally (auto-saved after login)
+        self.refresh_token = self.config.get("matrix_refresh_token")
 
         # E2EE configuration
         self.enable_e2ee = self.config.get("matrix_enable_e2ee", True)
@@ -40,7 +44,7 @@ class MatrixConfig:
         self._validate()
 
     def _validate(self):
-        if not self.user_id:
+        if not self.user_id and self.auth_method != "oauth2":
             raise ValueError(
                 "matrix_user_id is required in configuration. Format: @username:homeserver.com"
             )
@@ -49,7 +53,7 @@ class MatrixConfig:
                 "matrix_homeserver is required in configuration. Example: https://matrix.org"
             )
 
-        valid_auth_methods = ["password", "token"]
+        valid_auth_methods = ["password", "token", "oauth2"]
         if self.auth_method not in valid_auth_methods:
             raise ValueError(
                 f"Invalid matrix_auth_method: {self.auth_method}. Must be one of: {', '.join(valid_auth_methods)}"
@@ -65,9 +69,5 @@ class MatrixConfig:
                 "matrix_access_token is required when matrix_auth_method='token'"
             )
 
-        # If a user used an older config without specifying auth_method,
-        # ensure at least one credential is present.
-        if not self.password and not self.access_token:
-            raise ValueError(
-                "Either matrix_password or matrix_access_token is required. Please configure at least one authentication credential."
-            )
+        # OAuth2: client_id is now optional (can be auto-registered if server supports it)
+        # No strict validation needed for OAuth2 mode

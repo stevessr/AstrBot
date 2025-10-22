@@ -311,17 +311,64 @@ class MatrixHTTPClient:
             raise ValueError(f"Invalid MXC URL format: {mxc_url}")
 
         server_name, media_id = parts
-        url = f"{self.homeserver}/_matrix/media/v3/download/{server_name}/{media_id}"
 
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-        }
+        # 对于自己的 homeserver，使用本地下载端点
+        # 对于其他服务器，使用联邦下载端点
+        use_local = server_name == self.homeserver.split("://")[1] if "://" in self.homeserver else server_name == self.homeserver
 
-        async with self.session.get(url, headers=headers) as response:
-            if response.status >= 400:
-                raise Exception(f"Matrix media download error: {response.status}")
+        # Try multiple download endpoints
+        if use_local:
+            # 本地媒体：直接下载
+            endpoints = [
+                f"/_matrix/media/v3/download/{server_name}/{media_id}",
+                f"/_matrix/media/r0/download/{server_name}/{media_id}",
+            ]
+        else:
+            # 远程媒体：通过本地服务器代理下载
+            endpoints = [
+                f"/_matrix/media/v3/download/{server_name}/{media_id}",
+                f"/_matrix/media/r0/download/{server_name}/{media_id}",
+            ]
 
-            return await response.read()
+        last_error = None
+        last_status = None
+
+        for endpoint in endpoints:
+            url = f"{self.homeserver}{endpoint}"
+
+            # Try with authentication first
+            headers = {}
+            if self.access_token:
+                headers["Authorization"] = f"Bearer {self.access_token}"
+
+            try:
+                logger.debug(f"Trying to download from: {url}")
+                async with self.session.get(url, headers=headers) as response:
+                    last_status = response.status
+                    if response.status == 200:
+                        logger.debug(f"Successfully downloaded media from {endpoint}")
+                        return await response.read()
+                    elif response.status == 403:
+                        logger.debug(f"Got 403 with auth, trying without auth...")
+                        # Try without authentication (some servers allow public media access)
+                        async with self.session.get(url) as response_unauth:
+                            if response_unauth.status == 200:
+                                logger.debug(f"Successfully downloaded media without auth")
+                                return await response_unauth.read()
+                            last_status = response_unauth.status
+                            last_error = f"HTTP {response_unauth.status}"
+                    else:
+                        last_error = f"HTTP {response.status}"
+                        logger.debug(f"Got status {response.status} from {endpoint}")
+            except Exception as e:
+                last_error = str(e)
+                logger.debug(f"Exception downloading from {endpoint}: {e}")
+                continue
+
+        # If all attempts failed, raise the last error
+        error_msg = f"Matrix media download error: {last_error} (status: {last_status}) for {mxc_url}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
     async def join_room(self, room_id: str) -> Dict[str, Any]:
         """
@@ -494,3 +541,112 @@ class MatrixHTTPClient:
         data = {"device_keys": device_keys, "timeout": timeout}
 
         return await self._request("POST", endpoint, data=data)
+
+    async def claim_keys(
+        self, one_time_keys: Dict[str, Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """
+        Claim one-time keys for establishing Olm sessions
+
+        Args:
+            one_time_keys: Dict of user_id -> device_id -> key_algorithm
+
+        Returns:
+            Claimed one-time keys
+        """
+        endpoint = "/_matrix/client/v3/keys/claim"
+
+        data = {"one_time_keys": one_time_keys}
+
+        return await self._request("POST", endpoint, data=data)
+
+    async def get_devices(self) -> Dict[str, Any]:
+        """
+        Get the list of devices for the current user
+
+        Returns:
+            List of devices with their information
+        """
+        endpoint = "/_matrix/client/v3/devices"
+
+        return await self._request("GET", endpoint)
+
+    async def get_device(self, device_id: str) -> Dict[str, Any]:
+        """
+        Get information about a specific device
+
+        Args:
+            device_id: The device ID to query
+
+        Returns:
+            Device information
+        """
+        endpoint = f"/_matrix/client/v3/devices/{device_id}"
+
+        return await self._request("GET", endpoint)
+
+    async def update_device(
+        self, device_id: str, display_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update device information
+
+        Args:
+            device_id: The device ID to update
+            display_name: New display name for the device
+
+        Returns:
+            Empty dict on success
+        """
+        endpoint = f"/_matrix/client/v3/devices/{device_id}"
+
+        data = {}
+        if display_name is not None:
+            data["display_name"] = display_name
+
+        return await self._request("PUT", endpoint, data=data)
+
+    async def delete_device(
+        self, device_id: str, auth: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Delete a device
+
+        Args:
+            device_id: The device ID to delete
+            auth: Authentication data (if required)
+
+        Returns:
+            Empty dict on success or auth flow information
+        """
+        endpoint = f"/_matrix/client/v3/devices/{device_id}"
+
+        data = {}
+        if auth:
+            data["auth"] = auth
+
+        return await self._request("DELETE", endpoint, data=data)
+
+    async def send_to_device(
+        self, event_type: str, messages: Dict[str, Dict[str, Any]], txn_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Send to-device events to specific devices
+
+        Args:
+            event_type: The type of event to send
+            messages: Dict of user_id -> device_id -> content
+            txn_id: Transaction ID (auto-generated if not provided)
+
+        Returns:
+            Empty dict on success
+        """
+        import secrets
+        if txn_id is None:
+            txn_id = secrets.token_hex(16)
+
+        endpoint = f"/_matrix/client/v3/sendToDevice/{event_type}/{txn_id}"
+
+        data = {"messages": messages}
+
+        return await self._request("PUT", endpoint, data=data)
