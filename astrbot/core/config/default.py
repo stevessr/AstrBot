@@ -134,8 +134,8 @@ DEFAULT_CONFIG = {
     "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
-    "default_kb_collection": "",  # 默认知识库名称, 已经过时
-    "plugin_set": ["*"],  # "*" 表示使用所有可用的插件, 空列表表示不使用任何插件
+    "default_kb_collection": "",  # 默认知识库名称，已经过时
+    "plugin_set": ["*"],  # "*" 表示使用所有可用的插件，空列表表示不使用任何插件
     "kb_names": [],  # 默认知识库名称列表
     "kb_fusion_top_k": 20,  # 知识库检索融合阶段返回结果数量
     "kb_final_top_k": 5,  # 知识库检索最终返回结果数量
@@ -150,7 +150,7 @@ CONFIG_METADATA_2 = {
                 "description": "消息平台适配器",
                 "type": "list",
                 "config_template": {
-                    "QQ 官方机器人(WebSocket)": {
+                    "QQ 官方机器人 (WebSocket)": {
                         "id": "default",
                         "type": "qq_official",
                         "enable": False,
@@ -159,7 +159,7 @@ CONFIG_METADATA_2 = {
                         "enable_group_c2c": True,
                         "enable_guild_direct_message": True,
                     },
-                    "QQ 官方机器人(Webhook)": {
+                    "QQ 官方机器人 (Webhook)": {
                         "id": "default",
                         "type": "qq_official_webhook",
                         "enable": False,
@@ -169,7 +169,7 @@ CONFIG_METADATA_2 = {
                         "callback_server_host": "0.0.0.0",
                         "port": 6196,
                     },
-                    "QQ 个人号(OneBot v11)": {
+                    "QQ 个人号 (OneBot v11)": {
                         "id": "default",
                         "type": "aiocqhttp",
                         "enable": False,
@@ -182,7 +182,7 @@ CONFIG_METADATA_2 = {
                         "type": "wechatpadpro",
                         "enable": False,
                         "admin_key": "stay33",
-                        "host": "这里填写你的局域网IP或者公网服务器IP",
+                        "host": "这里填写你的局域网 IP 或者公网服务器 IP",
                         "port": 8059,
                         "wpp_active_message_poll": False,
                         "wpp_active_message_poll_interval": 3,
@@ -200,7 +200,7 @@ CONFIG_METADATA_2 = {
                         "port": 6194,
                         "active_send_mode": False,
                     },
-                    "企业微信(含微信客服)": {
+                    "企业微信 (含微信客服)": {
                         "id": "wecom",
                         "type": "wecom",
                         "enable": False,
@@ -225,7 +225,7 @@ CONFIG_METADATA_2 = {
                         "callback_server_host": "0.0.0.0",
                         "port": 6198,
                     },
-                    "飞书(Lark)": {
+                    "飞书 (Lark)": {
                         "id": "lark",
                         "type": "lark",
                         "enable": False,
@@ -234,7 +234,7 @@ CONFIG_METADATA_2 = {
                         "app_secret": "",
                         "domain": "https://open.feishu.cn",
                     },
-                    "钉钉(DingTalk)": {
+                    "钉钉 (DingTalk)": {
                         "id": "dingtalk",
                         "type": "dingtalk",
                         "enable": False,
@@ -303,6 +303,21 @@ CONFIG_METADATA_2 = {
                         "satori_auto_reconnect": True,
                         "satori_heartbeat_interval": 10,
                         "satori_reconnect_delay": 5,
+                    },
+                    "matrix": {
+                        "matrix_homeserver": "https://matrix.org",
+                        "matrix_user_id": "",
+                        "matrix_password": "",
+                        "matrix_access_token": "",
+                        "matrix_auth_method": "password",
+                        "matrix_device_name": "AstrBot",
+                        "matrix_device_id": "",
+                        "matrix_store_path": "./data/matrix_store",
+                        "matrix_auto_join_rooms": True,
+                        "matrix_sync_timeout": 30000,
+                        "matrix_bot_name": "AstrBot",
+                        "matrix_enable_e2ee": True,
+                        "matrix_refresh_token": "",
                     },
                     # "WebChat": {
                     #     "id": "webchat",
@@ -397,7 +412,7 @@ CONFIG_METADATA_2 = {
                     "kf_name": {
                         "description": "微信客服账号名",
                         "type": "string",
-                        "hint": "可选。微信客服账号名(不是 ID)。可在 https://kf.weixin.qq.com/kf/frame#/accounts 获取",
+                        "hint": "可选。微信客服账号名 (不是 ID)。可在 https://kf.weixin.qq.com/kf/frame#/accounts 获取",
                     },
                     "telegram_token": {
                         "description": "Bot Token",
@@ -552,7 +567,7 @@ CONFIG_METADATA_2 = {
                     "discord_token": {
                         "description": "Discord Bot Token",
                         "type": "string",
-                        "hint": "在此处填入你的Discord Bot Token",
+                        "hint": "在此处填入你的 Discord Bot Token",
                     },
                     "discord_proxy": {
                         "description": "Discord 代理地址",
@@ -623,11 +638,11 @@ CONFIG_METADATA_2 = {
                             "interval_method": {
                                 "type": "string",
                                 "options": ["random", "log"],
-                                "hint": "分段回复的间隔时间计算方法。random 为随机时间，log 为根据消息长度计算，$y=log_<log_base>(x)$，x为字数，y的单位为秒。",
+                                "hint": "分段回复的间隔时间计算方法。random 为随机时间，log 为根据消息长度计算，$y=log_<log_base>(x)$，x 为字数，y 的单位为秒。",
                             },
                             "interval": {
                                 "type": "string",
-                                "hint": "`random` 方法用。每一段回复的间隔时间，格式为 `最小时间,最大时间`。如 `0.75,2.5`",
+                                "hint": "`random` 方法用。每一段回复的间隔时间，格式为 `最小时间，最大时间`。如 `0.75,2.5`",
                             },
                             "log_base": {
                                 "type": "float",
@@ -653,7 +668,7 @@ CONFIG_METADATA_2 = {
                     },
                     "forward_threshold": {
                         "type": "int",
-                        "hint": "超过一定字数后，机器人会将消息折叠成 QQ 群聊的 “转发消息”，以防止刷屏。目前仅 QQ 平台适配器适用。",
+                        "hint": "超过一定字数后，机器人会将消息折叠成 QQ 群聊的“转发消息”，以防止刷屏。目前仅 QQ 平台适配器适用。",
                     },
                     "enable_id_white_list": {
                         "type": "bool",
@@ -700,7 +715,7 @@ CONFIG_METADATA_2 = {
                         "items": {
                             "enable": {
                                 "type": "bool",
-                                "hint": "启用此功能前，您需要手动在设备中安装 baidu-aip 库。一般来说，安装指令如下: `pip3 install baidu-aip`",
+                                "hint": "启用此功能前，您需要手动在设备中安装 baidu-aip 库。一般来说，安装指令如下：`pip3 install baidu-aip`",
                             },
                             "app_id": {"description": "APP ID", "type": "string"},
                             "api_key": {"description": "API Key", "type": "string"},
@@ -774,7 +789,7 @@ CONFIG_METADATA_2 = {
                         "modalities": ["text", "image", "tool_use"],
                     },
                     "Anthropic": {
-                        "hint": "注意Claude系列模型的温度调节范围为0到1.0，超出可能导致报错",
+                        "hint": "注意 Claude 系列模型的温度调节范围为 0 到 1.0，超出可能导致报错",
                         "id": "claude",
                         "provider": "anthropic",
                         "type": "anthropic_chat_completion",
@@ -791,7 +806,7 @@ CONFIG_METADATA_2 = {
                         "modalities": ["text", "image", "tool_use"],
                     },
                     "Ollama": {
-                        "hint": "启用前请确保已正确安装并运行 Ollama 服务端，Ollama默认不带鉴权，无需修改key",
+                        "hint": "启用前请确保已正确安装并运行 Ollama 服务端，Ollama 默认不带鉴权，无需修改 key",
                         "id": "ollama_default",
                         "provider": "ollama",
                         "type": "openai_chat_completion",
@@ -817,7 +832,7 @@ CONFIG_METADATA_2 = {
                         "custom_extra_body": {},
                         "modalities": ["text", "image", "tool_use"],
                     },
-                    "Gemini(OpenAI兼容)": {
+                    "Gemini(OpenAI 兼容)": {
                         "id": "gemini_default",
                         "provider": "google",
                         "type": "openai_chat_completion",
@@ -903,7 +918,7 @@ CONFIG_METADATA_2 = {
                         "custom_extra_body": {},
                         "modalities": ["text", "image", "tool_use"],
                     },
-                    "PPIO派欧云": {
+                    "PPIO 派欧云": {
                         "id": "ppio",
                         "provider": "ppio",
                         "type": "openai_chat_completion",
@@ -1054,7 +1069,7 @@ CONFIG_METADATA_2 = {
                         "model": "whisper-1",
                     },
                     "Whisper(本地加载)": {
-                        "hint": "启用前请 pip 安装 openai-whisper 库（N卡用户大约下载 2GB，主要是 torch 和 cuda，CPU 用户大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
+                        "hint": "启用前请 pip 安装 openai-whisper 库（N 卡用户大约下载 2GB，主要是 torch 和 cuda，CPU 用户大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
                         "provider": "openai",
                         "type": "openai_whisper_selfhost",
                         "provider_type": "speech_to_text",
@@ -1063,7 +1078,7 @@ CONFIG_METADATA_2 = {
                         "model": "tiny",
                     },
                     "SenseVoice(本地加载)": {
-                        "hint": "启用前请 pip 安装 funasr、funasr_onnx、torchaudio、torch、modelscope、jieba 库（默认使用CPU，大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
+                        "hint": "启用前请 pip 安装 funasr、funasr_onnx、torchaudio、torch、modelscope、jieba 库（默认使用 CPU，大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
                         "type": "sensevoice_stt_selfhost",
                         "provider": "sensevoice",
                         "provider_type": "speech_to_text",
@@ -1153,7 +1168,7 @@ CONFIG_METADATA_2 = {
                         "timeout": "20",
                     },
                     "阿里云百炼 TTS(API)": {
-                        "hint": "API Key 从 https://bailian.console.aliyun.com/?tab=model#/api-key 获取。模型和音色的选择文档请参考: 阿里云百炼语音合成音色名称。具体可参考 https://help.aliyun.com/zh/model-studio/speech-synthesis-and-speech-recognition",
+                        "hint": "API Key 从 https://bailian.console.aliyun.com/?tab=model#/api-key 获取。模型和音色的选择文档请参考：阿里云百炼语音合成音色名称。具体可参考 https://help.aliyun.com/zh/model-studio/speech-synthesis-and-speech-recognition",
                         "id": "dashscope_tts",
                         "provider": "dashscope",
                         "type": "dashscope_tts",
@@ -1327,17 +1342,17 @@ CONFIG_METADATA_2 = {
                         "invisible": True,
                     },
                     "gpt_weights_path": {
-                        "description": "GPT模型文件路径",
+                        "description": "GPT 模型文件路径",
                         "type": "string",
-                        "hint": "即“.ckpt”后缀的文件，请使用绝对路径，路径两端不要带双引号，不填则默认用GPT_SoVITS内置的SoVITS模型(建议直接在GPT_SoVITS中改默认模型)",
+                        "hint": "即“.ckpt”后缀的文件，请使用绝对路径，路径两端不要带双引号，不填则默认用 GPT_SoVITS 内置的 SoVITS 模型 (建议直接在 GPT_SoVITS 中改默认模型)",
                     },
                     "sovits_weights_path": {
-                        "description": "SoVITS模型文件路径",
+                        "description": "SoVITS 模型文件路径",
                         "type": "string",
-                        "hint": "即“.pth”后缀的文件，请使用绝对路径，路径两端不要带双引号，不填则默认用GPT_SoVITS内置的SoVITS模型(建议直接在GPT_SoVITS中改默认模型)",
+                        "hint": "即“.pth”后缀的文件，请使用绝对路径，路径两端不要带双引号，不填则默认用 GPT_SoVITS 内置的 SoVITS 模型 (建议直接在 GPT_SoVITS 中改默认模型)",
                     },
                     "gsv_default_parms": {
-                        "description": "GPT_SoVITS默认参数",
+                        "description": "GPT_SoVITS 默认参数",
                         "hint": "参考音频文件路径、参考音频文本必填，其他参数根据个人爱好自行填写",
                         "type": "object",
                         "items": {
@@ -1384,7 +1399,7 @@ CONFIG_METADATA_2 = {
                             "gsv_text_split_method": {
                                 "description": "切分文本的方法",
                                 "type": "string",
-                                "hint": "可选值：  `cut0`：不切分    `cut1`：四句一切   `cut2`：50字一切    `cut3`：按中文句号切    `cut4`：按英文句号切    `cut5`：按标点符号切",
+                                "hint": "可选值：`cut0`：不切分    `cut1`：四句一切   `cut2`：50 字一切    `cut3`：按中文句号切    `cut4`：按英文句号切    `cut5`：按标点符号切",
                                 "options": [
                                     "cut0",
                                     "cut1",
@@ -1412,7 +1427,7 @@ CONFIG_METADATA_2 = {
                             "gsv_speed_factor": {
                                 "description": "语音播放速度",
                                 "type": "float",
-                                "hint": "1为原始语速",
+                                "hint": "1 为原始语速",
                             },
                             "gsv_fragment_interval": {
                                 "description": "语音片段之间的间隔时间",
@@ -1442,7 +1457,7 @@ CONFIG_METADATA_2 = {
                             "gsv_media_type": {
                                 "description": "输出媒体的类型",
                                 "type": "string",
-                                "hint": "建议用wav",
+                                "hint": "建议用 wav",
                             },
                         },
                     },
@@ -1468,22 +1483,22 @@ CONFIG_METADATA_2 = {
                     "volcengine_cluster": {
                         "type": "string",
                         "description": "火山引擎集群",
-                        "hint": "若使用语音复刻大模型，可选volcano_icl或volcano_icl_concurr，默认使用volcano_tts",
+                        "hint": "若使用语音复刻大模型，可选 volcano_icl 或 volcano_icl_concurr，默认使用 volcano_tts",
                     },
                     "volcengine_voice_type": {
                         "type": "string",
                         "description": "火山引擎音色",
-                        "hint": "输入声音id(Voice_type)",
+                        "hint": "输入声音 id(Voice_type)",
                     },
                     "volcengine_speed_ratio": {
                         "type": "float",
                         "description": "语速设置",
-                        "hint": "语速设置，范围为 0.2 到 3.0,默认值为 1.0",
+                        "hint": "语速设置，范围为 0.2 到 3.0，默认值为 1.0",
                     },
                     "volcengine_volume_ratio": {
                         "type": "float",
                         "description": "音量设置",
-                        "hint": "音量设置，范围为 0.0 到 2.0,默认值为 1.0",
+                        "hint": "音量设置，范围为 0.0 到 2.0，默认值为 1.0",
                     },
                     "azure_tts_voice": {
                         "type": "string",
@@ -1493,12 +1508,12 @@ CONFIG_METADATA_2 = {
                     "azure_tts_style": {
                         "type": "string",
                         "description": "风格设置",
-                        "hint": "声音特定的讲话风格。 可以表达快乐、同情和平静等情绪。",
+                        "hint": "声音特定的讲话风格。可以表达快乐、同情和平静等情绪。",
                     },
                     "azure_tts_role": {
                         "type": "string",
                         "description": "模仿设置（可选）",
-                        "hint": "讲话角色扮演。 声音可以模仿不同的年龄和性别，但声音名称不会更改。 例如，男性语音可以提高音调和改变语调来模拟女性语音，但语音名称不会更改。 如果角色缺失或不受声音的支持，则会忽略此属性。",
+                        "hint": "讲话角色扮演。声音可以模仿不同的年龄和性别，但声音名称不会更改。例如，男性语音可以提高音调和改变语调来模拟女性语音，但语音名称不会更改。如果角色缺失或不受声音的支持，则会忽略此属性。",
                         "options": [
                             "Boy",
                             "Girl",
@@ -1514,12 +1529,12 @@ CONFIG_METADATA_2 = {
                     "azure_tts_rate": {
                         "type": "string",
                         "description": "语速设置",
-                        "hint": "指示文本的讲出速率。可在字词或句子层面应用语速。 速率变化应为原始音频的 0.5 到 2 倍。",
+                        "hint": "指示文本的讲出速率。可在字词或句子层面应用语速。速率变化应为原始音频的 0.5 到 2 倍。",
                     },
                     "azure_tts_volume": {
                         "type": "string",
                         "description": "语音音量设置",
-                        "hint": "指示语音的音量级别。 可在句子层面应用音量的变化。以从 0.0 到 100.0（从最安静到最大声，例如 75）的数字表示。 默认值为 100.0。",
+                        "hint": "指示语音的音量级别。可在句子层面应用音量的变化。以从 0.0 到 100.0（从最安静到最大声，例如 75）的数字表示。默认值为 100.0。",
                     },
                     "azure_tts_region": {
                         "type": "string",
@@ -1580,14 +1595,14 @@ CONFIG_METADATA_2 = {
                         "hint": "启用后所有函数工具将全部失效",
                     },
                     "gm_url_context": {
-                        "description": "启用URL上下文功能",
+                        "description": "启用 URL 上下文功能",
                         "type": "bool",
                         "hint": "启用后所有函数工具将全部失效",
                     },
                     "gm_safety_settings": {
                         "description": "安全过滤器",
                         "type": "object",
-                        "hint": "设置模型输入的内容安全过滤级别。过滤级别分类为NONE(不屏蔽)、HIGH(高风险时屏蔽)、MEDIUM_AND_ABOVE(中等风险及以上屏蔽)、LOW_AND_ABOVE(低风险及以上时屏蔽)，具体参见Gemini API文档。",
+                        "hint": "设置模型输入的内容安全过滤级别。过滤级别分类为 NONE(不屏蔽)、HIGH(高风险时屏蔽)、MEDIUM_AND_ABOVE(中等风险及以上屏蔽)、LOW_AND_ABOVE(低风险及以上时屏蔽)，具体参见 Gemini API 文档。",
                         "items": {
                             "harassment": {
                                 "description": "骚扰内容",
@@ -1636,13 +1651,13 @@ CONFIG_METADATA_2 = {
                         },
                     },
                     "gm_thinking_config": {
-                        "description": "Gemini思考设置",
+                        "description": "Gemini 思考设置",
                         "type": "object",
                         "items": {
                             "budget": {
                                 "description": "思考预算",
                                 "type": "int",
-                                "hint": "模型应该生成的思考Token的数量，设为0关闭思考。除gemini-2.5-flash外的模型会静默忽略此参数。",
+                                "hint": "模型应该生成的思考 Token 的数量，设为 0 关闭思考。除 gemini-2.5-flash 外的模型会静默忽略此参数。",
                             },
                         },
                     },
@@ -1686,33 +1701,33 @@ CONFIG_METADATA_2 = {
                     "minimax-voice-speed": {
                         "type": "float",
                         "description": "语速",
-                        "hint": "生成声音的语速, 取值[0.5, 2], 默认为1.0, 取值越大，语速越快",
+                        "hint": "生成声音的语速，取值 [0.5, 2], 默认为 1.0, 取值越大，语速越快",
                     },
                     "minimax-voice-vol": {
                         "type": "float",
                         "description": "音量",
-                        "hint": "生成声音的音量, 取值(0, 10], 默认为1.0, 取值越大，音量越高",
+                        "hint": "生成声音的音量，取值 (0, 10], 默认为 1.0, 取值越大，音量越高",
                     },
                     "minimax-voice-pitch": {
                         "type": "int",
                         "description": "语调",
-                        "hint": "生成声音的语调, 取值[-12, 12], 默认为0",
+                        "hint": "生成声音的语调，取值 [-12, 12], 默认为 0",
                     },
                     "minimax-is-timber-weight": {
                         "type": "bool",
                         "description": "启用混合音色",
-                        "hint": "启用混合音色, 支持以自定义权重混合最多四种音色, 启用后自动忽略单一音色设置",
+                        "hint": "启用混合音色，支持以自定义权重混合最多四种音色，启用后自动忽略单一音色设置",
                     },
                     "minimax-timber-weight": {
                         "type": "string",
                         "description": "混合音色",
                         "editor_mode": True,
-                        "hint": "混合音色及其权重, 最多支持四种音色, 权重为整数, 取值[1, 100]. 可在官网API语音调试台预览代码获得预设以及编写模板, 需要严格按照json字符串格式编写, 可以查看控制台判断是否解析成功. 具体结构可参照默认值以及官网代码预览.",
+                        "hint": "混合音色及其权重，最多支持四种音色，权重为整数，取值 [1, 100]. 可在官网 API 语音调试台预览代码获得预设以及编写模板，需要严格按照 json 字符串格式编写，可以查看控制台判断是否解析成功。具体结构可参照默认值以及官网代码预览。",
                     },
                     "minimax-voice-id": {
                         "type": "string",
                         "description": "单一音色",
-                        "hint": "单一音色编号, 详见官网文档",
+                        "hint": "单一音色编号，详见官网文档",
                     },
                     "minimax-voice-emotion": {
                         "type": "string",
@@ -1730,8 +1745,8 @@ CONFIG_METADATA_2 = {
                     },
                     "minimax-voice-latex": {
                         "type": "bool",
-                        "description": "支持朗读latex公式",
-                        "hint": "朗读latex公式, 但是需要确保输入文本按官网要求格式化",
+                        "description": "支持朗读 latex 公式",
+                        "hint": "朗读 latex 公式，但是需要确保输入文本按官网要求格式化",
                     },
                     "minimax-voice-english-normalization": {
                         "type": "bool",
@@ -1741,13 +1756,13 @@ CONFIG_METADATA_2 = {
                     "rag_options": {
                         "description": "RAG 选项",
                         "type": "object",
-                        "hint": "检索知识库设置, 非必填。仅 Agent 应用类型支持(智能体应用, 包括 RAG 应用)。阿里云百炼应用开启此功能后将无法多轮对话。",
+                        "hint": "检索知识库设置，非必填。仅 Agent 应用类型支持 (智能体应用，包括 RAG 应用)。阿里云百炼应用开启此功能后将无法多轮对话。",
                         "items": {
                             "pipeline_ids": {
                                 "description": "知识库 ID 列表",
                                 "type": "list",
                                 "items": {"type": "string"},
-                                "hint": "对指定知识库内所有文档进行检索, 前往 https://bailian.console.aliyun.com/ 数据应用->知识索引创建和获取 ID。",
+                                "hint": "对指定知识库内所有文档进行检索，前往 https://bailian.console.aliyun.com/ 数据应用->知识索引创建和获取 ID。",
                             },
                             "file_ids": {
                                 "description": "非结构化文档 ID, 传入该参数将对指定非结构化文档进行检索。",
@@ -1763,9 +1778,9 @@ CONFIG_METADATA_2 = {
                         },
                     },
                     "sensevoice_hint": {
-                        "description": "部署SenseVoice",
+                        "description": "部署 SenseVoice",
                         "type": "string",
-                        "hint": "启用前请 pip 安装 funasr、funasr_onnx、torchaudio、torch、modelscope、jieba 库（默认使用CPU，大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
+                        "hint": "启用前请 pip 安装 funasr、funasr_onnx、torchaudio、torch、modelscope、jieba 库（默认使用 CPU，大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
                     },
                     "is_emotion": {
                         "description": "情绪识别",
@@ -1813,12 +1828,12 @@ CONFIG_METADATA_2 = {
                     "fishaudio-tts-reference-id": {
                         "description": "reference_id",
                         "type": "string",
-                        "hint": "fishaudio TTS 的参考模型ID（可选）。如果填入此字段，将直接使用模型ID而不通过角色名称查询。例如：626bb6d3f3364c9cbc3aa6a67300a664。更多模型请访问：https://fish.audio/zh-CN/discovery，进入模型详情界面后可复制模型ID",
+                        "hint": "fishaudio TTS 的参考模型 ID（可选）。如果填入此字段，将直接使用模型 ID 而不通过角色名称查询。例如：626bb6d3f3364c9cbc3aa6a67300a664。更多模型请访问：https://fish.audio/zh-CN/discovery，进入模型详情界面后可复制模型 ID",
                     },
                     "whisper_hint": {
                         "description": "本地部署 Whisper 模型须知",
                         "type": "string",
-                        "hint": "启用前请 pip 安装 openai-whisper 库（N卡用户大约下载 2GB，主要是 torch 和 cuda，CPU 用户大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
+                        "hint": "启用前请 pip 安装 openai-whisper 库（N 卡用户大约下载 2GB，主要是 torch 和 cuda，CPU 用户大约下载 1 GB），并且安装 ffmpeg。否则将无法正常转文字。",
                     },
                     "id": {
                         "description": "ID",
@@ -1865,7 +1880,7 @@ CONFIG_METADATA_2 = {
                                 "type": "int",
                             },
                             "temperature": {"description": "温度", "type": "float"},
-                            "top_p": {"description": "Top P值", "type": "float"},
+                            "top_p": {"description": "Top P 值", "type": "float"},
                         },
                     },
                     "dify_api_key": {
@@ -1913,7 +1928,7 @@ CONFIG_METADATA_2 = {
                     "auto_save_history": {
                         "description": "由 Coze 管理对话记录",
                         "type": "bool",
-                        "hint": "启用后，将由 Coze 进行对话历史记录管理, 此时 AstrBot 本地保存的上下文不会生效(仅供浏览), 对 AstrBot 的上下文进行的操作也不会生效。如果为禁用, 则使用 AstrBot 管理上下文。",
+                        "hint": "启用后，将由 Coze 进行对话历史记录管理，此时 AstrBot 本地保存的上下文不会生效 (仅供浏览), 对 AstrBot 的上下文进行的操作也不会生效。如果为禁用，则使用 AstrBot 管理上下文。",
                     },
                 },
             },
@@ -2249,7 +2264,7 @@ CONFIG_METADATA_3 = {
                     "provider_settings.group_name_display": {
                         "description": "显示群名称",
                         "type": "bool",
-                        "hint": "启用后，在支持的平台(aiocqhttp)上会在 prompt 中包含群名称信息。",
+                        "hint": "启用后，在支持的平台 (aiocqhttp) 上会在 prompt 中包含群名称信息。",
                     },
                     "provider_settings.datetime_system_prompt": {
                         "description": "现实世界时间感知",
@@ -2283,7 +2298,7 @@ CONFIG_METADATA_3 = {
                     "provider_settings.dequeue_context_length": {
                         "description": "丢弃对话轮数",
                         "type": "int",
-                        "hint": "超出最多携带对话轮数时, 一次丢弃的聊天轮数。",
+                        "hint": "超出最多携带对话轮数时，一次丢弃的聊天轮数。",
                     },
                     "provider_settings.wake_prefix": {
                         "description": "LLM 聊天额外唤醒前缀 ",
@@ -2386,7 +2401,7 @@ CONFIG_METADATA_3 = {
                 "type": "object",
                 "items": {
                     "platform_settings.rate_limit.time": {
-                        "description": "消息速率限制时间(秒)",
+                        "description": "消息速率限制时间 (秒)",
                         "type": "int",
                     },
                     "platform_settings.rate_limit.count": {
@@ -2546,7 +2561,7 @@ CONFIG_METADATA_3 = {
                     "platform_settings.segmented_reply.interval": {
                         "description": "随机间隔时间",
                         "type": "string",
-                        "hint": "格式：最小值,最大值（如：1.5,3.5）",
+                        "hint": "格式：最小值，最大值（如：1.5,3.5）",
                         "condition": {
                             "platform_settings.segmented_reply.interval_method": "random",
                         },
@@ -2682,12 +2697,12 @@ CONFIG_METADATA_3_SYSTEM = {
                     "callback_api_base": {
                         "description": "对外可达的回调接口地址",
                         "type": "string",
-                        "hint": "外部服务可能会通过 AstrBot 生成的回调链接（如文件下载链接）访问 AstrBot 后端。由于 AstrBot 无法自动判断部署环境中对外可达的主机地址（host），因此需要通过此配置项显式指定 “外部服务如何访问 AstrBot” 的地址。如 http://localhost:6185，https://example.com 等。",
+                        "hint": "外部服务可能会通过 AstrBot 生成的回调链接（如文件下载链接）访问 AstrBot 后端。由于 AstrBot 无法自动判断部署环境中对外可达的主机地址（host），因此需要通过此配置项显式指定“外部服务如何访问 AstrBot”的地址。如 http://localhost:6185，https://example.com 等。",
                     },
                     "timezone": {
                         "description": "时区",
                         "type": "string",
-                        "hint": "时区设置。请填写 IANA 时区名称, 如 Asia/Shanghai, 为空时使用系统默认时区。所有时区请查看: https://data.iana.org/time-zones/tzdb-2021a/zone1970.tab",
+                        "hint": "时区设置。请填写 IANA 时区名称，如 Asia/Shanghai, 为空时使用系统默认时区。所有时区请查看：https://data.iana.org/time-zones/tzdb-2021a/zone1970.tab",
                     },
                     "http_proxy": {
                         "description": "HTTP 代理",
