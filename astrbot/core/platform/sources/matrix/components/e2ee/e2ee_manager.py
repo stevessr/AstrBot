@@ -254,6 +254,105 @@ class MatrixE2EEManager:
         """解密群组消息"""
         return self.crypto.decrypt_group_message(room_id, ciphertext)
 
+    async def share_room_key(self, room_id: str, user_ids: List[str]) -> bool:
+        """
+        分享房间密钥给指定用户的所有设备
+
+        这个方法会：
+        1. 确保所有用户的设备都有 Olm 会话
+        2. 创建或获取房间的 Megolm 会话
+        3. 将房间密钥加密后发送给每个设备
+
+        Args:
+            room_id: 房间 ID
+            user_ids: 用户 ID 列表
+
+        Returns:
+            是否成功分享
+        """
+        try:
+            # 1. 确保所有设备都有 Olm 会话
+            sessions_created = await self.auto_setup.get_missing_sessions(user_ids)
+            if sessions_created > 0:
+                logger.info(f"Created {sessions_created} new Olm sessions for room key sharing")
+
+            # 2. 确保房间有 Megolm 会话
+            session = self.crypto.group_sessions.get(room_id)
+            if not session:
+                session_id = self.crypto.create_group_session(room_id)
+                if not session_id:
+                    logger.error(f"Failed to create group session for {room_id}")
+                    return False
+                session = self.crypto.group_sessions[room_id]
+
+            # 3. 获取房间密钥
+            room_key_content = {
+                "algorithm": "m.megolm.v1.aes-sha2",
+                "room_id": room_id,
+                "session_id": session.session_id(),
+                "session_key": session.session_key(),
+            }
+
+            # 4. 收集所有需要发送密钥的设备
+            devices_to_share = []
+            for user_id in user_ids:
+                try:
+                    response = await self.client.get_devices(user_id)
+                    devices = response.get("devices", [])
+                    for device in devices:
+                        device_id = device.get("device_id")
+                        # 跳过当前设备
+                        if user_id == self.user_id and device_id == self.device_id:
+                            continue
+                        # 检查是否有 Olm 会话
+                        if self.crypto.has_olm_session(user_id, device_id):
+                            devices_to_share.append((user_id, device_id))
+                except Exception as e:
+                    logger.warning(f"Failed to get devices for {user_id}: {e}")
+                    continue
+
+            if not devices_to_share:
+                logger.warning(f"No devices to share room key with for {room_id}")
+                return False
+
+            # 5. 为每个设备加密并发送房间密钥
+            import json
+            room_key_json = json.dumps(room_key_content)
+
+            for user_id, device_id in devices_to_share:
+                try:
+                    # 使用 Olm 加密房间密钥
+                    encrypted = self.crypto.encrypt_message(user_id, device_id, room_key_json)
+                    if not encrypted:
+                        logger.warning(f"Failed to encrypt room key for {user_id}:{device_id}")
+                        continue
+
+                    # 发送 m.room_key 事件
+                    await self.client.send_to_device(
+                        event_type="m.room.encrypted",
+                        messages={
+                            user_id: {
+                                device_id: {
+                                    "algorithm": "m.olm.v1.curve25519-aes-sha2",
+                                    "sender_key": self.crypto.account.curve25519_key.to_base64(),
+                                    "ciphertext": encrypted,
+                                }
+                            }
+                        }
+                    )
+                    logger.debug(f"Shared room key with {user_id}:{device_id}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to share room key with {user_id}:{device_id}: {e}")
+                    continue
+
+            logger.info(f"✅ Shared room key for {room_id} with {len(devices_to_share)} device(s)")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to share room key: {e}")
+            return False
+
     async def decrypt_megolm_event(
         self,
         room_id: str,

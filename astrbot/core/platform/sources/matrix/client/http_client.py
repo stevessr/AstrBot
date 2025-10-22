@@ -338,6 +338,8 @@ class MatrixHTTPClient:
         last_status = None
 
         for endpoint in endpoints:
+            # 构建完整的 URL
+            # homeserver 已经包含了协议和域名，endpoint 是路径
             url = f"{self.homeserver}{endpoint}"
 
             # Try with authentication first
@@ -361,6 +363,7 @@ class MatrixHTTPClient:
                                 return await response_unauth.read()
                             last_status = response_unauth.status
                             last_error = f"HTTP {response_unauth.status}"
+                            logger.debug(f"Got {response_unauth.status} without auth from {endpoint}")
                     else:
                         last_error = f"HTTP {response.status}"
                         logger.debug(f"Got status {response.status} from {endpoint}")
