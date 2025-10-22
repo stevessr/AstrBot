@@ -3,9 +3,8 @@ Matrix E2EE 自动设置模块
 自动获取用户设备列表、交换密钥、验证设备
 """
 
-import asyncio
 import logging
-from typing import Optional, Dict, Any, List, Set
+from typing import Dict, Any, List, Set
 from datetime import datetime
 
 logger = logging.getLogger("astrbot.matrix.e2ee.auto_setup")
@@ -13,6 +12,7 @@ logger = logging.getLogger("astrbot.matrix.e2ee.auto_setup")
 # 导入诊断工具
 try:
     from .e2ee_diagnostics import MatrixE2EEDiagnostics
+
     DIAGNOSTICS_AVAILABLE = True
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
@@ -48,11 +48,11 @@ class MatrixE2EEAutoSetup:
         self.e2ee_manager = e2ee_manager
         self.user_id = user_id
         self.device_id = device_id
-        
+
         # 跟踪已处理的设备
         self.known_devices: Set[str] = set()
         self.verified_devices: Set[str] = set()
-        
+
         # 自动验证配置
         self.auto_verify_own_devices = True  # 自动验证自己的其他设备
         self.auto_accept_verifications = True  # 自动接受验证请求（谨慎使用）
@@ -67,19 +67,37 @@ class MatrixE2EEAutoSetup:
         try:
             _log("info", "🔐 Starting automatic E2EE setup...")
 
-            # 使用新的批量方法建立 Olm 会话
-            # 这个方法会自动处理：
-            # 1. 查询设备
-            # 2. 声明一次性密钥
-            # 3. 建立 Olm 会话
-            sessions_created = await self.get_missing_sessions([self.user_id])
+            # 首先获取设备列表和检查E2EE支持
+            devices = await self.get_user_devices()
 
-            _log("info", f"📊 Total Olm sessions established: {sessions_created}")
+            # 检查设备的E2EE密钥
+            device_keys = await self.query_device_keys(devices)
 
             # 如果启用了自动验证，验证自己的设备
             if self.auto_verify_own_devices:
-                devices = await self.get_user_devices()
                 await self.auto_verify_own_devices_func(devices)
+
+            # 只有当有设备支持E2EE时才尝试建立Olm会话
+            if device_keys:
+                _log(
+                    "info",
+                    f"📡 Found {len(device_keys)} device(s) with E2EE keys, establishing Olm sessions...",
+                )
+                sessions_created = await self.get_missing_sessions([self.user_id])
+                _log("info", f"📊 Total Olm sessions established: {sessions_created}")
+            else:
+                _log(
+                    "warning",
+                    "⚠️  No devices found with E2EE keys, skipping Olm session establishment",
+                )
+                _log("info", "💡 To enable E2EE communication:")
+                _log(
+                    "info",
+                    "   1. Log in with an E2EE-capable client (Element, FluffyChat, etc.)",
+                )
+                _log("info", "   2. Upload device keys via the client")
+                _log("info", "   3. Restart AstrBot to establish secure sessions")
+                sessions_created = 0
 
             _log("info", "✅ E2EE automatic setup completed successfully")
 
@@ -102,34 +120,36 @@ class MatrixE2EEAutoSetup:
     async def get_user_devices(self) -> List[Dict[str, Any]]:
         """
         获取当前用户的所有设备列表
-        
+
         Returns:
             设备列表
         """
         try:
             response = await self.client.get_devices()
             devices = response.get("devices", [])
-            
+
             for device in devices:
                 device_id = device.get("device_id")
                 display_name = device.get("display_name", "Unknown")
                 last_seen_ts = device.get("last_seen_ts")
-                
+
                 if device_id:
                     self.known_devices.add(device_id)
-                    
+
                     # 格式化最后在线时间
                     last_seen = "Never"
                     if last_seen_ts:
-                        last_seen = datetime.fromtimestamp(last_seen_ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
-                    
+                        last_seen = datetime.fromtimestamp(
+                            last_seen_ts / 1000
+                        ).strftime("%Y-%m-%d %H:%M:%S")
+
                     is_current = " (current)" if device_id == self.device_id else ""
                     _log("info", f"  📱 Device: {device_id}{is_current}")
                     _log("info", f"     Name: {display_name}")
                     _log("info", f"     Last seen: {last_seen}")
-            
+
             return devices
-            
+
         except Exception as e:
             _log("error", f"Failed to get user devices: {e}")
             return []
@@ -137,22 +157,22 @@ class MatrixE2EEAutoSetup:
     async def query_device_keys(self, devices: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         查询设备的加密密钥
-        
+
         Args:
             devices: 设备列表
-            
+
         Returns:
             设备密钥信息
         """
         try:
             # 构建查询请求
             device_ids = [d.get("device_id") for d in devices if d.get("device_id")]
-            
+
             if not device_ids:
                 return {}
-            
+
             _log("info", f"🔍 Querying keys for {len(device_ids)} device(s)...")
-            
+
             # 查询密钥
             response = await self.client.query_keys(
                 device_keys={self.user_id: device_ids}
@@ -160,6 +180,7 @@ class MatrixE2EEAutoSetup:
 
             # 调试：打印完整响应
             import json
+
             _log("debug", f"Keys query response: {json.dumps(response, indent=2)}")
 
             device_keys = response.get("device_keys", {}).get(self.user_id, {})
@@ -169,7 +190,10 @@ class MatrixE2EEAutoSetup:
             # 检查哪些设备没有上传密钥
             devices_without_keys = set(device_ids) - set(device_keys.keys())
             if devices_without_keys:
-                _log("warning", f"⚠️  {len(devices_without_keys)} device(s) have not uploaded E2EE keys:")
+                _log(
+                    "warning",
+                    f"⚠️  {len(devices_without_keys)} device(s) have not uploaded E2EE keys:",
+                )
                 for device_id in devices_without_keys:
                     # 查找设备名称
                     device_name = "Unknown"
@@ -179,9 +203,18 @@ class MatrixE2EEAutoSetup:
                             break
                     _log("warning", f"    - {device_id} ({device_name})")
                 _log("info", "💡 Possible reasons:")
-                _log("info", "   1. These devices haven't uploaded keys via /keys/upload API")
-                _log("info", "   2. They may be using cross-signing instead of device keys")
-                _log("info", "   3. Try requesting room keys directly - they might still work!")
+                _log(
+                    "info",
+                    "   1. These devices haven't uploaded keys via /keys/upload API",
+                )
+                _log(
+                    "info",
+                    "   2. They may be using cross-signing instead of device keys",
+                )
+                _log(
+                    "info",
+                    "   3. Try requesting room keys directly - they might still work!",
+                )
 
             # 显示密钥信息
             for device_id, keys in device_keys.items():
@@ -197,7 +230,7 @@ class MatrixE2EEAutoSetup:
                 _log("debug", f"    Ed25519: {ed25519_key[:16]}...")
 
             return device_keys
-            
+
         except Exception as e:
             _log("error", f"Failed to query device keys: {e}")
             return {}
@@ -205,59 +238,62 @@ class MatrixE2EEAutoSetup:
     async def establish_olm_sessions(self, device_keys: Dict[str, Any]) -> int:
         """
         为所有设备建立 Olm 会话
-        
+
         Args:
             device_keys: 设备密钥信息
-            
+
         Returns:
             成功建立的会话数量
         """
         try:
             sessions_created = 0
-            
+
             for device_id, keys in device_keys.items():
                 # 跳过当前设备
                 if device_id == self.device_id:
                     continue
-                
+
                 # 检查是否已有会话
                 if self.e2ee_manager.crypto.has_olm_session(self.user_id, device_id):
                     _log("debug", f"Olm session already exists for device {device_id}")
                     continue
-                
+
                 # 获取设备的 Curve25519 密钥
                 key_dict = keys.get("keys", {})
                 identity_key = key_dict.get(f"curve25519:{device_id}")
-                
+
                 if not identity_key:
                     _log("warning", f"No Curve25519 key found for device {device_id}")
                     continue
-                
+
                 # 声明一次性密钥
                 _log("info", f"🔑 Claiming one-time key for device {device_id}...")
-                
+
                 try:
                     claim_response = await self.client.claim_keys(
-                        one_time_keys={
-                            self.user_id: {
-                                device_id: "signed_curve25519"
-                            }
-                        }
+                        one_time_keys={self.user_id: {device_id: "signed_curve25519"}}
                     )
-                    
+
                     # 提取一次性密钥
-                    one_time_keys = claim_response.get("one_time_keys", {}).get(
-                        self.user_id, {}
-                    ).get(device_id, {})
-                    
+                    one_time_keys = (
+                        claim_response.get("one_time_keys", {})
+                        .get(self.user_id, {})
+                        .get(device_id, {})
+                    )
+
                     if not one_time_keys:
-                        _log("warning", f"No one-time keys available for device {device_id}")
+                        _log(
+                            "warning",
+                            f"No one-time keys available for device {device_id}",
+                        )
                         continue
-                    
+
                     # 获取第一个可用的一次性密钥
                     otk_id, otk_data = next(iter(one_time_keys.items()))
-                    one_time_key = otk_data.get("key") if isinstance(otk_data, dict) else otk_data
-                    
+                    one_time_key = (
+                        otk_data.get("key") if isinstance(otk_data, dict) else otk_data
+                    )
+
                     # 创建 Olm 会话
                     _log("info", f"🔗 Creating Olm session with device {device_id}...")
 
@@ -265,19 +301,25 @@ class MatrixE2EEAutoSetup:
                         user_id=self.user_id,
                         device_id=device_id,
                         identity_key=identity_key,
-                        one_time_key=one_time_key
+                        one_time_key=one_time_key,
                     )
 
                     if success:
                         sessions_created += 1
                         _log("info", f"✅ Olm session created for device {device_id}")
                     else:
-                        _log("error", f"Failed to create Olm session for device {device_id}")
-                        
+                        _log(
+                            "error",
+                            f"Failed to create Olm session for device {device_id}",
+                        )
+
                 except Exception as e:
-                    _log("error", f"Failed to establish session with device {device_id}: {e}")
+                    _log(
+                        "error",
+                        f"Failed to establish session with device {device_id}: {e}",
+                    )
                     continue
-            
+
             _log("info", f"✅ Created {sessions_created} Olm session(s)")
             return sessions_created
 
@@ -291,7 +333,7 @@ class MatrixE2EEAutoSetup:
 
         这个方法类似于 matrix-sdk-crypto 的 get_missing_sessions()
         它会：
-        1. 查询所有用户的设备
+        1. 查询所有用户的设备密钥
         2. 找出没有 Olm 会话的设备
         3. 批量声明一次性密钥
         4. 建立 Olm 会话
@@ -309,39 +351,67 @@ class MatrixE2EEAutoSetup:
             devices_to_claim = {}  # {user_id: [device_id, ...]}
 
             for user_id in user_ids:
-                # 获取用户的所有设备
-                try:
-                    response = await self.client.get_devices(user_id)
-                    devices = response.get("devices", [])
-                except Exception as e:
-                    _log("warning", f"Failed to get devices for {user_id}: {e}")
-                    continue
+                # 对于当前用户，使用get_devices() API获取设备列表
+                if user_id == self.user_id:
+                    try:
+                        response = await self.client.get_devices()
+                        devices = response.get("devices", [])
 
-                for device in devices:
-                    device_id = device.get("device_id")
+                        for device in devices:
+                            device_id = device.get("device_id")
 
-                    # 跳过当前设备
-                    if user_id == self.user_id and device_id == self.device_id:
+                            # 跳过当前设备
+                            if device_id == self.device_id:
+                                continue
+
+                            # 检查是否已有会话
+                            if not self.e2ee_manager.crypto.has_olm_session(
+                                user_id, device_id
+                            ):
+                                if user_id not in devices_to_claim:
+                                    devices_to_claim[user_id] = []
+                                devices_to_claim[user_id].append(device_id)
+                    except Exception as e:
+                        _log("warning", f"Failed to get devices for {user_id}: {e}")
                         continue
+                else:
+                    # 对于其他用户，使用query_keys API获取设备信息
+                    try:
+                        # 先查询空设备列表获取该用户的所有设备
+                        query_response = await self.client.query_keys(
+                            device_keys={user_id: []}
+                        )
+                        device_keys = query_response.get("device_keys", {}).get(
+                            user_id, {}
+                        )
 
-                    # 检查是否已有会话
-                    if not self.e2ee_manager.crypto.has_olm_session(user_id, device_id):
-                        if user_id not in devices_to_claim:
-                            devices_to_claim[user_id] = []
-                        devices_to_claim[user_id].append(device_id)
+                        for device_id in device_keys.keys():
+                            # 检查是否已有会话
+                            if not self.e2ee_manager.crypto.has_olm_session(
+                                user_id, device_id
+                            ):
+                                if user_id not in devices_to_claim:
+                                    devices_to_claim[user_id] = []
+                                devices_to_claim[user_id].append(device_id)
+                    except Exception as e:
+                        _log("warning", f"Failed to query devices for {user_id}: {e}")
+                        continue
 
             if not devices_to_claim:
                 _log("debug", "All devices already have Olm sessions")
                 return 0
 
-            _log("info", f"🔑 Claiming one-time keys for {sum(len(v) for v in devices_to_claim.values())} device(s)...")
+            _log(
+                "info",
+                f"🔑 Claiming one-time keys for {sum(len(v) for v in devices_to_claim.values())} device(s)...",
+            )
 
             # 2. 批量声明一次性密钥
             one_time_keys_to_claim = {}
             for user_id, device_ids in devices_to_claim.items():
-                one_time_keys_to_claim[user_id] = {
-                    device_id: "signed_curve25519" for device_id in device_ids
-                }
+                one_time_keys_to_claim[user_id] = dict.fromkeys(
+                    device_ids, "signed_curve25519"
+                )
 
             claim_response = await self.client.claim_keys(
                 one_time_keys=one_time_keys_to_claim
@@ -357,7 +427,11 @@ class MatrixE2EEAutoSetup:
                         if isinstance(otk_data, dict):
                             # otk_data 是 {key_id: {key: "...", signatures: {...}}}
                             otk_id, otk_info = next(iter(otk_data.items()))
-                            one_time_key = otk_info.get("key") if isinstance(otk_info, dict) else otk_info
+                            one_time_key = (
+                                otk_info.get("key")
+                                if isinstance(otk_info, dict)
+                                else otk_info
+                            )
                         else:
                             one_time_key = otk_data
 
@@ -366,18 +440,24 @@ class MatrixE2EEAutoSetup:
                             device_keys={user_id: [device_id]}
                         )
 
-                        device_keys = query_response.get("device_keys", {}).get(
-                            user_id, {}
-                        ).get(device_id, {})
+                        device_keys = (
+                            query_response.get("device_keys", {})
+                            .get(user_id, {})
+                            .get(device_id, {})
+                        )
 
                         if not device_keys:
                             _log("warning", f"No device keys for {user_id}:{device_id}")
                             continue
 
-                        identity_key = device_keys.get("keys", {}).get(f"curve25519:{device_id}")
+                        identity_key = device_keys.get("keys", {}).get(
+                            f"curve25519:{device_id}"
+                        )
 
                         if not identity_key:
-                            _log("warning", f"No identity key for {user_id}:{device_id}")
+                            _log(
+                                "warning", f"No identity key for {user_id}:{device_id}"
+                            )
                             continue
 
                         # 创建 Olm 会话
@@ -385,15 +465,21 @@ class MatrixE2EEAutoSetup:
                             user_id=user_id,
                             device_id=device_id,
                             identity_key=identity_key,
-                            one_time_key=one_time_key
+                            one_time_key=one_time_key,
                         )
 
                         if success:
                             sessions_created += 1
-                            _log("info", f"✅ Created Olm session with {user_id}:{device_id}")
+                            _log(
+                                "info",
+                                f"✅ Created Olm session with {user_id}:{device_id}",
+                            )
 
                     except Exception as e:
-                        _log("warning", f"Failed to create session with {user_id}:{device_id}: {e}")
+                        _log(
+                            "warning",
+                            f"Failed to create session with {user_id}:{device_id}: {e}",
+                        )
                         continue
 
             if sessions_created > 0:
@@ -454,31 +540,39 @@ class MatrixE2EEAutoSetup:
     ) -> bool:
         """
         处理收到的验证请求
-        
+
         Args:
             sender_user_id: 发送者用户 ID
             sender_device_id: 发送者设备 ID
             transaction_id: 事务 ID
-            
+
         Returns:
             是否接受验证
         """
         try:
             # 如果是自己的设备且启用了自动验证
             if sender_user_id == self.user_id and self.auto_verify_own_devices:
-                _log("info", f"Auto-accepting verification from own device {sender_device_id}")
+                _log(
+                    "info",
+                    f"Auto-accepting verification from own device {sender_device_id}",
+                )
                 return True
-            
+
             # 如果启用了自动接受所有验证
             if self.auto_accept_verifications:
-                _log("warning", f"Auto-accepting verification from {sender_user_id}:{sender_device_id}")
+                _log(
+                    "warning",
+                    f"Auto-accepting verification from {sender_user_id}:{sender_device_id}",
+                )
                 return True
-            
+
             # 否则需要手动确认
-            _log("info", f"Verification request from {sender_user_id}:{sender_device_id} requires manual confirmation")
+            _log(
+                "info",
+                f"Verification request from {sender_user_id}:{sender_device_id} requires manual confirmation",
+            )
             return False
-            
+
         except Exception as e:
             _log("error", f"Failed to handle verification request: {e}")
             return False
-

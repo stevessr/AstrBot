@@ -150,11 +150,16 @@ class MatrixReceiver:
                                     "short_levelname": "ERRO",
                                 },
                             )
-                            # 降级：显示错误信息，不添加图片组件
-                            message.message.append(
-                                Plain(f"[图片下载失败：{event.body}] {e}")
-                            )
-                            message.message_str = f"[图片下载失败：{event.body}]"
+                            # 降级：显示详细错误信息，帮助用户理解问题
+                            if "encrypted" in str(e).lower() or "403" in str(e):
+                                error_msg = (
+                                    f"[图片可能已加密或需要特殊权限：{event.body}]"
+                                )
+                            else:
+                                error_msg = f"[图片下载失败：{event.body}] {e}"
+
+                            message.message.append(Plain(error_msg))
+                            message.message_str = error_msg
                     else:
                         # 没有 client，无法下载
                         message.message.append(

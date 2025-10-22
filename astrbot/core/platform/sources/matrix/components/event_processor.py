@@ -4,7 +4,7 @@ Handles processing of Matrix events (messages, encryption, etc.)
 """
 
 import json
-from typing import Optional, Callable, Dict, Any, Set
+from typing import Optional, Callable, Set
 from astrbot.api import logger
 
 
@@ -136,7 +136,9 @@ class MatrixEventProcessor:
             evt_ts = getattr(event, "origin_server_ts", None)
             if evt_ts is None:
                 evt_ts = getattr(event, "server_timestamp", None)
-            if evt_ts is not None and evt_ts < (self.startup_ts - 1000):  # Allow 1s drift
+            if evt_ts is not None and evt_ts < (
+                self.startup_ts - 1000
+            ):  # Allow 1s drift
                 logger.debug(
                     f"Ignoring historical message before startup: "
                     f"id={getattr(event, 'event_id', '<unknown>')} "
@@ -213,7 +215,9 @@ class MatrixEventProcessor:
                 # Build decrypted event
                 decrypted_content = json.loads(plaintext)
                 decrypted_event = event_data.copy()
-                decrypted_event["type"] = decrypted_content.get("type", "m.room.message")
+                decrypted_event["type"] = decrypted_content.get(
+                    "type", "m.room.message"
+                )
                 decrypted_event["content"] = decrypted_content.get("content", {})
                 return decrypted_event
 
@@ -243,7 +247,11 @@ class MatrixEventProcessor:
             if event_type == "m.room.encrypted":
                 if self.e2ee_manager:
                     # Decrypt the message
-                    decrypted_event = await self.e2ee_manager.handle_encrypted_to_device(sender, content)
+                    decrypted_event = (
+                        await self.e2ee_manager.handle_encrypted_to_device(
+                            sender, content
+                        )
+                    )
                     if decrypted_event:
                         # Process the decrypted event
                         decrypted_type = decrypted_event.get("type")
@@ -251,13 +259,21 @@ class MatrixEventProcessor:
 
                         # Handle decrypted event based on its type
                         if decrypted_type == "m.room_key":
-                            await self.e2ee_manager.handle_room_key(sender, decrypted_content)
+                            await self.e2ee_manager.handle_room_key(
+                                sender, decrypted_content
+                            )
                         elif decrypted_type == "m.forwarded_room_key":
-                            await self.e2ee_manager.handle_room_key(sender, decrypted_content)
+                            await self.e2ee_manager.handle_room_key(
+                                sender, decrypted_content
+                            )
                         else:
-                            logger.info(f"Decrypted to-device event type: {decrypted_type}")
+                            logger.info(
+                                f"Decrypted to-device event type: {decrypted_type}"
+                            )
                 else:
-                    logger.warning("Received encrypted to-device message but E2EE is not enabled")
+                    logger.warning(
+                        "Received encrypted to-device message but E2EE is not enabled"
+                    )
                 continue
 
             # Handle E2EE verification events
@@ -288,7 +304,9 @@ class MatrixEventProcessor:
                 if self.e2ee_manager:
                     await self.e2ee_manager.handle_room_key(sender, content)
                 else:
-                    logger.warning("Received m.forwarded_room_key but E2EE is not enabled")
+                    logger.warning(
+                        "Received m.forwarded_room_key but E2EE is not enabled"
+                    )
                 continue
 
             # Log other event types
@@ -303,4 +321,3 @@ class MatrixEventProcessor:
     def get_processed_message_count(self) -> int:
         """Get the number of processed messages in cache"""
         return len(self._processed_messages)
-

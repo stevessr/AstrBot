@@ -97,8 +97,12 @@ class MatrixPlatformAdapter(Platform):
         )
 
         # Set up callbacks
-        self.sync_manager.set_room_event_callback(self.event_processor.process_room_events)
-        self.sync_manager.set_to_device_event_callback(self.event_processor.process_to_device_events)
+        self.sync_manager.set_room_event_callback(
+            self.event_processor.process_room_events
+        )
+        self.sync_manager.set_to_device_event_callback(
+            self.event_processor.process_to_device_events
+        )
         self.sync_manager.set_invite_callback(self._handle_invite)
         self.event_processor.set_message_callback(self.message_callback)
 
@@ -198,11 +202,23 @@ class MatrixPlatformAdapter(Platform):
 
             # Initialize E2EE if enabled
             if self.e2ee_manager:
+                logger.info("🔐 Initializing Matrix E2EE (End-to-End Encryption)...")
                 success = await self.e2ee_manager.initialize()
                 if success:
-                    logger.info("E2EE enabled and initialized successfully")
+                    logger.info("✅ E2EE enabled and initialized successfully")
+                    logger.info("🔍 E2EE capabilities:")
+                    logger.info("   - Device verification and cross-signing")
+                    logger.info("   - Room key management and sharing")
+                    logger.info("   - Automatic session establishment")
+                    logger.info("   - Encrypted message decryption")
                 else:
-                    logger.warning("E2EE initialization failed, running without E2EE")
+                    logger.warning(
+                        "⚠️  E2EE initialization failed, running without E2EE"
+                    )
+                    logger.info("💡 This may be due to:")
+                    logger.info("   - Missing vodozemac library")
+                    logger.info("   - Storage initialization issues")
+                    logger.info("   - Network connectivity problems")
                     self.e2ee_manager = None
 
             logger.info(
@@ -216,8 +232,6 @@ class MatrixPlatformAdapter(Platform):
             logger.error(f"Matrix adapter error: {e}")
             logger.error("Matrix 适配器启动失败。请检查配置并查看上方详细错误信息。")
             raise
-
-
 
     async def _handle_invite(self, room_id: str, invite_data: dict):
         """处理房间邀请"""
@@ -301,7 +315,7 @@ class MatrixPlatformAdapter(Platform):
             logger.info("Shutting down Matrix adapter...")
 
             # Stop sync manager
-            if hasattr(self, 'sync_manager'):
+            if hasattr(self, "sync_manager"):
                 self.sync_manager.stop()
 
             # Close E2EE manager

@@ -4,7 +4,7 @@ Handles the sync loop and event distribution
 """
 
 import asyncio
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable
 from astrbot.api import logger
 
 
@@ -132,4 +132,3 @@ class MatrixSyncManager:
         """Set the sync batch token (for resuming sync)"""
         self._next_batch = batch
         self._first_sync = False
-

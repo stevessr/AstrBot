@@ -23,7 +23,7 @@ class MatrixAuth:
 
         # OAuth2 specific attributes
         # All OAuth2 configuration is auto-discovered from server
-        self.refresh_token: Optional[str] = getattr(config, 'refresh_token', None)
+        self.refresh_token: Optional[str] = getattr(config, "refresh_token", None)
         self.oauth2_handler = None
 
     def _log(self, level, msg):
@@ -129,9 +129,10 @@ class MatrixAuth:
 
             # Provide helpful guidance
             if "not supported" in error_msg.lower() or "404" in error_msg:
-                self._log("error",
+                self._log(
+                    "error",
                     "💡 Suggestion: Change matrix_auth_method to 'password' in your configuration "
-                    "and provide matrix_user_id and matrix_password."
+                    "and provide matrix_user_id and matrix_password.",
                 )
 
             raise RuntimeError(f"OAuth2 login failed: {e}")

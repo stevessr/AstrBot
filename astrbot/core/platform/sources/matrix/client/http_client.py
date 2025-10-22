@@ -213,26 +213,6 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/send/{msg_type}/{txn_id}"
         return await self._request("PUT", endpoint, data=content)
 
-    async def send_to_device(
-        self, event_type: str, messages: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Send to-device messages (used for E2EE key verification)
-
-        Args:
-            event_type: Event type (e.g., m.key.verification.request)
-            messages: Dictionary mapping user_id -> device_id -> content
-
-        Returns:
-            Response from server
-        """
-        import time
-
-        txn_id = f"txn_{int(time.time() * 1000)}"
-        endpoint = f"/_matrix/client/v3/sendToDevice/{event_type}/{txn_id}"
-        data = {"messages": messages}
-        return await self._request("PUT", endpoint, data=data)
-
     async def send_room_event(
         self, room_id: str, event_type: str, content: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -294,7 +274,7 @@ class MatrixHTTPClient:
         """
         Download a file from the Matrix media repository
         按照 Matrix spec 正确实现媒体下载
-        
+
         参考: https://spec.matrix.org/latest/client-server-api/#get_matrixmediav3downloadservernamemediaid
 
         Args:
@@ -318,7 +298,7 @@ class MatrixHTTPClient:
         # 按照 Matrix spec，所有媒体下载都通过用户的 homeserver
         # 不管媒体来自哪个服务器，都使用认证请求
         # 参考: https://spec.matrix.org/latest/client-server-api/#id429
-        
+
         # Try multiple download endpoints (v3 first, then r0 fallback)
         endpoints = [
             f"/_matrix/media/v3/download/{server_name}/{media_id}",
@@ -341,19 +321,25 @@ class MatrixHTTPClient:
 
             try:
                 logger.debug(f"Downloading media from: {url}")
-                async with self.session.get(url, headers=headers, allow_redirects=True) as response:
+                async with self.session.get(
+                    url, headers=headers, allow_redirects=True
+                ) as response:
                     last_status = response.status
                     if response.status == 200:
-                        logger.debug(f"✅ Successfully downloaded media from {endpoint}")
+                        logger.debug(
+                            f"✅ Successfully downloaded media from {endpoint}"
+                        )
                         return await response.read()
                     elif response.status == 404:
                         logger.debug(f"Got 404 on {endpoint}, trying next endpoint...")
                         last_error = f"Media not found: {response.status}"
                         continue
                     elif response.status == 403:
-                        # 403 通常意味着认证问题或权限问题
-                        logger.warning(f"Got 403 on {endpoint} (auth problem or private media)")
-                        last_error = f"Access denied: {response.status}"
+                        # 403 通常意味着认证问题、私有媒体或加密媒体
+                        logger.warning(
+                            f"Got 403 on {endpoint} (auth problem, private media, or encrypted content)"
+                        )
+                        last_error = f"Access denied: {response.status} - Media may be encrypted or private"
                         continue
                     else:
                         last_error = f"HTTP {response.status}"
@@ -374,17 +360,19 @@ class MatrixHTTPClient:
                 f"/_matrix/media/v3/thumbnail/{server_name}/{media_id}?width=800&height=600",
                 f"/_matrix/media/r0/thumbnail/{server_name}/{media_id}?width=800&height=600",
             ]
-            
+
             for endpoint in thumbnail_endpoints:
                 url = f"{self.homeserver}{endpoint}"
                 headers = {}
                 if self.access_token:
                     headers["Authorization"] = f"Bearer {self.access_token}"
-                
+
                 try:
-                    async with self.session.get(url, headers=headers, allow_redirects=True) as response:
+                    async with self.session.get(
+                        url, headers=headers, allow_redirects=True
+                    ) as response:
                         if response.status == 200:
-                            logger.info(f"✅ Downloaded thumbnail instead of full media")
+                            logger.info("✅ Downloaded thumbnail instead of full media")
                             return await response.read()
                 except Exception:
                     continue
@@ -652,7 +640,10 @@ class MatrixHTTPClient:
         return await self._request("DELETE", endpoint, data=data)
 
     async def send_to_device(
-        self, event_type: str, messages: Dict[str, Dict[str, Any]], txn_id: Optional[str] = None
+        self,
+        event_type: str,
+        messages: Dict[str, Dict[str, Any]],
+        txn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send to-device events to specific devices
@@ -666,6 +657,7 @@ class MatrixHTTPClient:
             Empty dict on success
         """
         import secrets
+
         if txn_id is None:
             txn_id = secrets.token_hex(16)
 

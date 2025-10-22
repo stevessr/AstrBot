@@ -274,7 +274,9 @@ class MatrixE2EEManager:
             # 1. 确保所有设备都有 Olm 会话
             sessions_created = await self.auto_setup.get_missing_sessions(user_ids)
             if sessions_created > 0:
-                logger.info(f"Created {sessions_created} new Olm sessions for room key sharing")
+                logger.info(
+                    f"Created {sessions_created} new Olm sessions for room key sharing"
+                )
 
             # 2. 确保房间有 Megolm 会话
             session = self.crypto.group_sessions.get(room_id)
@@ -297,16 +299,30 @@ class MatrixE2EEManager:
             devices_to_share = []
             for user_id in user_ids:
                 try:
-                    response = await self.client.get_devices(user_id)
-                    devices = response.get("devices", [])
-                    for device in devices:
-                        device_id = device.get("device_id")
-                        # 跳过当前设备
-                        if user_id == self.user_id and device_id == self.device_id:
-                            continue
-                        # 检查是否有 Olm 会话
-                        if self.crypto.has_olm_session(user_id, device_id):
-                            devices_to_share.append((user_id, device_id))
+                    # 对于当前用户，使用get_devices() API
+                    if user_id == self.user_id:
+                        response = await self.client.get_devices()
+                        devices = response.get("devices", [])
+                        for device in devices:
+                            device_id = device.get("device_id")
+                            # 跳过当前设备
+                            if device_id == self.device_id:
+                                continue
+                            # 检查是否有 Olm 会话
+                            if self.crypto.has_olm_session(user_id, device_id):
+                                devices_to_share.append((user_id, device_id))
+                    else:
+                        # 对于其他用户，使用query_keys API获取设备信息
+                        query_response = await self.client.query_keys(
+                            device_keys={user_id: []}
+                        )
+                        device_keys = query_response.get("device_keys", {}).get(
+                            user_id, {}
+                        )
+                        for device_id in device_keys.keys():
+                            # 检查是否有 Olm 会话
+                            if self.crypto.has_olm_session(user_id, device_id):
+                                devices_to_share.append((user_id, device_id))
                 except Exception as e:
                     logger.warning(f"Failed to get devices for {user_id}: {e}")
                     continue
@@ -317,14 +333,19 @@ class MatrixE2EEManager:
 
             # 5. 为每个设备加密并发送房间密钥
             import json
+
             room_key_json = json.dumps(room_key_content)
 
             for user_id, device_id in devices_to_share:
                 try:
                     # 使用 Olm 加密房间密钥
-                    encrypted = self.crypto.encrypt_message(user_id, device_id, room_key_json)
+                    encrypted = self.crypto.encrypt_message(
+                        user_id, device_id, room_key_json
+                    )
                     if not encrypted:
-                        logger.warning(f"Failed to encrypt room key for {user_id}:{device_id}")
+                        logger.warning(
+                            f"Failed to encrypt room key for {user_id}:{device_id}"
+                        )
                         continue
 
                     # 发送 m.room_key 事件
@@ -338,15 +359,19 @@ class MatrixE2EEManager:
                                     "ciphertext": encrypted,
                                 }
                             }
-                        }
+                        },
                     )
                     logger.debug(f"Shared room key with {user_id}:{device_id}")
 
                 except Exception as e:
-                    logger.warning(f"Failed to share room key with {user_id}:{device_id}: {e}")
+                    logger.warning(
+                        f"Failed to share room key with {user_id}:{device_id}: {e}"
+                    )
                     continue
 
-            logger.info(f"✅ Shared room key for {room_id} with {len(devices_to_share)} device(s)")
+            logger.info(
+                f"✅ Shared room key for {room_id} with {len(devices_to_share)} device(s)"
+            )
             return True
 
         except Exception as e:
@@ -391,7 +416,13 @@ class MatrixE2EEManager:
                 )
                 # 自动向本账号已验证的其他设备请求房间密钥
                 try:
-                    await self.request_room_key(room_id, session_id, sender_key)
+                    requested = await self.request_room_key(
+                        room_id, session_id, sender_key
+                    )
+                    if not requested:
+                        logger.debug(
+                            f"Room key request for {session_id} was skipped (no suitable devices or rate limited)"
+                        )
                 except Exception as req_err:
                     logger.warning(f"Auto room key request failed: {req_err}")
                 return None
@@ -473,15 +504,26 @@ class MatrixE2EEManager:
                 )
                 return False
 
-            # 选择目标设备：本账号已验证且不是当前设备
-            target_devices = [
-                d for d in self.store.get_verified_devices(self.user_id) if d != self.device_id
-            ]
+            # 选择目标设备：本账号已验证且不是当前设备，且有E2EE支持
+            verified_devices = self.store.get_verified_devices(self.user_id)
+            target_devices = []
+
+            for device_id in verified_devices:
+                if device_id == self.device_id:
+                    continue
+                # 检查是否有Olm会话（表示设备支持E2EE）
+                if self.crypto.has_olm_session(self.user_id, device_id):
+                    target_devices.append(device_id)
 
             if not target_devices:
-                logger.info(
-                    "No verified sibling devices found to request keys from; consider verifying another device."
-                )
+                if not verified_devices or len(verified_devices) <= 1:
+                    logger.debug(
+                        "No verified sibling devices found to request keys from; consider verifying another device."
+                    )
+                else:
+                    logger.debug(
+                        f"Found {len(verified_devices)} verified devices but none have Olm sessions; they may not support E2EE."
+                    )
                 # 仍然记录一次，避免疯狂重试
                 self._pending_key_requests[req_key] = now_ms
                 return False
@@ -612,7 +654,9 @@ class MatrixE2EEManager:
         except Exception as e:
             logger.error(f"Error handling verification event {event_type}: {e}")
 
-    async def handle_encrypted_to_device(self, sender: str, content: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def handle_encrypted_to_device(
+        self, sender: str, content: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         """
         处理加密的 to-device 消息（m.room.encrypted with algorithm m.olm.v1.curve25519-aes-sha2）
 
@@ -629,7 +673,9 @@ class MatrixE2EEManager:
             ciphertext_data = content.get("ciphertext", {})
 
             if algorithm != "m.olm.v1.curve25519-aes-sha2":
-                logger.warning(f"Unsupported to-device encryption algorithm: {algorithm}")
+                logger.warning(
+                    f"Unsupported to-device encryption algorithm: {algorithm}"
+                )
                 return None
 
             # Find ciphertext for our device
@@ -663,13 +709,21 @@ class MatrixE2EEManager:
 
             # If no existing session worked and this is a PreKey message, create new session
             if not plaintext and message_type == 0:
-                logger.info(f"Creating new Olm session from PreKey message from {sender}")
+                logger.info(
+                    f"Creating new Olm session from PreKey message from {sender}"
+                )
                 # We need the sender's device_id - extract from sender_key or use a placeholder
                 # In a real implementation, we'd track device_id from the event
-                device_id = "UNKNOWN"  # This should be extracted from the event metadata
+                device_id = (
+                    "UNKNOWN"  # This should be extracted from the event metadata
+                )
 
-                if self.crypto.create_inbound_session(sender, device_id, sender_key, body):
-                    plaintext = self.crypto.decrypt_message(sender, device_id, message_type, body)
+                if self.crypto.create_inbound_session(
+                    sender, device_id, sender_key, body
+                ):
+                    plaintext = self.crypto.decrypt_message(
+                        sender, device_id, message_type, body
+                    )
 
             if not plaintext:
                 logger.error(f"Failed to decrypt Olm to-device message from {sender}")
@@ -677,9 +731,12 @@ class MatrixE2EEManager:
 
             # Parse decrypted JSON
             import json
+
             decrypted_event = json.loads(plaintext)
 
-            logger.info(f"✅ Decrypted Olm to-device message from {sender}: {decrypted_event.get('type')}")
+            logger.info(
+                f"✅ Decrypted Olm to-device message from {sender}: {decrypted_event.get('type')}"
+            )
             return decrypted_event
 
         except Exception as e:

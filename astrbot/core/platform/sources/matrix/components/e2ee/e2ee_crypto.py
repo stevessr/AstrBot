@@ -13,16 +13,23 @@ try:
         InboundGroupSession,
         OutboundGroupSession,
         OlmMessage,
+        Curve25519PublicKey,
     )
+
     VODOZEMAC_AVAILABLE = True
-except ImportError:
+    logger.info("✅ vodozemac library loaded successfully")
+except ImportError as e:
     Account = None
     Session = None
     InboundGroupSession = None
     OutboundGroupSession = None
     OlmMessage = None
+    Curve25519PublicKey = None
     VODOZEMAC_AVAILABLE = False
-    logger.warning("vodozemac not available, E2EE features will be limited")
+    logger.warning(f"vodozemac not available, E2EE features will be limited: {e}")
+    logger.info("💡 To enable full E2EE support, install vodozemac-python:")
+    logger.info("   pip install vodozemac>=0.9.0")
+    logger.info("   or: uv add vodozemac>=0.9.0")
 
 
 class MatrixE2EECrypto:
@@ -36,9 +43,15 @@ class MatrixE2EECrypto:
             account: vodozemac Account 实例
         """
         self.account = account
-        self.sessions: Dict[str, Session] = {}  # Olm 一对一会话: "user_id:device_id" -> Session
-        self.group_sessions: Dict[str, OutboundGroupSession] = {}  # 出站群组会话: room_id -> OutboundGroupSession
-        self.inbound_group_sessions: Dict[str, InboundGroupSession] = {}  # 入站群组会话: session_id -> InboundGroupSession
+        self.sessions: Dict[
+            str, Session
+        ] = {}  # Olm 一对一会话: "user_id:device_id" -> Session
+        self.group_sessions: Dict[
+            str, OutboundGroupSession
+        ] = {}  # 出站群组会话: room_id -> OutboundGroupSession
+        self.inbound_group_sessions: Dict[
+            str, InboundGroupSession
+        ] = {}  # 入站群组会话: session_id -> InboundGroupSession
 
     def create_outbound_session(
         self, user_id: str, device_id: str, identity_key: str, one_time_key: str
@@ -60,7 +73,9 @@ class MatrixE2EECrypto:
             return False
 
         try:
-            from vodozemac import Curve25519PublicKey
+            if not Curve25519PublicKey:
+                logger.error("Curve25519PublicKey not available")
+                return False
 
             session_key = f"{user_id}:{device_id}"
 
@@ -69,7 +84,9 @@ class MatrixE2EECrypto:
             one_time_key_obj = Curve25519PublicKey.from_base64(one_time_key)
 
             # Create outbound session
-            session = self.account.create_outbound_session(identity_key_obj, one_time_key_obj)
+            session = self.account.create_outbound_session(
+                identity_key_obj, one_time_key_obj
+            )
             self.sessions[session_key] = session
 
             logger.info(f"Created outbound Olm session with {session_key}")
@@ -98,12 +115,16 @@ class MatrixE2EECrypto:
             return False
 
         try:
-            from vodozemac import OlmMessage
+            if not OlmMessage:
+                logger.error("OlmMessage not available")
+                return False
 
             session_key = f"{user_id}:{device_id}"
 
             # Create OlmMessage from ciphertext
-            olm_message = OlmMessage.from_parts(0, ciphertext)  # Type 0 = PreKey message
+            olm_message = OlmMessage.from_parts(
+                0, ciphertext
+            )  # Type 0 = PreKey message
 
             # Create inbound session
             session = self.account.create_inbound_session(sender_key, olm_message)
@@ -178,7 +199,9 @@ class MatrixE2EECrypto:
 
             return {
                 "algorithm": "m.olm.v1.curve25519-aes-sha2",
-                "sender_key": self.account.curve25519_key.to_base64() if self.account else "",
+                "sender_key": self.account.curve25519_key.to_base64()
+                if self.account
+                else "",
                 "ciphertext": {
                     device_id: {
                         "type": message_type,
@@ -210,7 +233,9 @@ class MatrixE2EECrypto:
             return None
 
         try:
-            from vodozemac import OlmMessage
+            if not OlmMessage:
+                logger.error("OlmMessage not available")
+                return None
 
             session_key = f"{user_id}:{device_id}"
             session = self.sessions.get(session_key)
@@ -245,19 +270,27 @@ class MatrixE2EECrypto:
             return None
 
         try:
+            if not OutboundGroupSession:
+                logger.error("OutboundGroupSession not available")
+                return None
+
             # Create outbound group session
             session = OutboundGroupSession()
             session_id = session.session_id()
 
             self.group_sessions[room_id] = session
 
-            logger.info(f"Created Megolm outbound group session for {room_id}: {session_id}")
+            logger.info(
+                f"Created Megolm outbound group session for {room_id}: {session_id}"
+            )
             return session_id
         except Exception as e:
             logger.error(f"Failed to create group session: {e}")
             return None
 
-    def encrypt_group_message(self, room_id: str, plaintext: str) -> Optional[Dict[str, Any]]:
+    def encrypt_group_message(
+        self, room_id: str, plaintext: str
+    ) -> Optional[Dict[str, Any]]:
         """
         使用 Megolm 加密群组消息
 
@@ -288,18 +321,20 @@ class MatrixE2EECrypto:
 
             return {
                 "algorithm": "m.megolm.v1.aes-sha2",
-                "sender_key": self.account.curve25519_key.to_base64() if self.account else "",
+                "sender_key": self.account.curve25519_key.to_base64()
+                if self.account
+                else "",
                 "ciphertext": ciphertext,
                 "session_id": session.session_id(),
-                "device_id": self.account.ed25519_key.to_base64() if self.account else "",
+                "device_id": self.account.ed25519_key.to_base64()
+                if self.account
+                else "",
             }
         except Exception as e:
             logger.error(f"Failed to encrypt Megolm group message: {e}")
             return None
 
-    def decrypt_group_message(
-        self, session_id: str, ciphertext: str
-    ) -> Optional[str]:
+    def decrypt_group_message(self, session_id: str, ciphertext: str) -> Optional[str]:
         """
         使用 Megolm 解密群组消息
 
@@ -318,7 +353,9 @@ class MatrixE2EECrypto:
             session = self.inbound_group_sessions.get(session_id)
 
             if not session:
-                logger.warning(f"No inbound group session found for session {session_id}")
+                logger.warning(
+                    f"No inbound group session found for session {session_id}"
+                )
                 return None
 
             # Decrypt message using Megolm
@@ -329,9 +366,7 @@ class MatrixE2EECrypto:
             logger.error(f"Failed to decrypt Megolm group message: {e}")
             return None
 
-    def add_inbound_group_session(
-        self, session_id: str, session: InboundGroupSession
-    ):
+    def add_inbound_group_session(self, session_id: str, session: InboundGroupSession):
         """
         添加入站群组会话
 

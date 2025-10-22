@@ -3,7 +3,7 @@ E2EE 诊断工具 - 帮助诊断端到端加密问题
 """
 
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger("astrbot")
 
@@ -163,7 +163,6 @@ class MatrixE2EEDiagnostics:
             session_count = len(group_sessions)
 
             # 按房间分组
-            sessions_by_room = {}
             for session_id, session in group_sessions.items():
                 # 从 store 中获取房间信息
                 # 注意：这里需要遍历 store 的群组会话来获取房间 ID
@@ -300,4 +299,3 @@ class MatrixE2EEDiagnostics:
         _log("info", "")
         _log("info", "=" * 60)
         _log("info", "")
-

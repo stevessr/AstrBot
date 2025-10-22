@@ -93,12 +93,16 @@ class MatrixSender:
         """
         try:
             # 1. 分享房间密钥（内部会自动调用 get_missing_sessions）
-            logger.debug(f"Sharing room key for {room_id} with {len(room_members)} members")
+            logger.debug(
+                f"Sharing room key for {room_id} with {len(room_members)} members"
+            )
             await self.e2ee_manager.share_room_key(room_id, room_members)
 
             # 2. 加密消息内容
             plaintext = json.dumps(content)
-            encrypted_content = self.e2ee_manager.encrypt_group_message(room_id, plaintext)
+            encrypted_content = self.e2ee_manager.encrypt_group_message(
+                room_id, plaintext
+            )
 
             if not encrypted_content:
                 logger.error("Failed to encrypt message, sending plaintext instead")
