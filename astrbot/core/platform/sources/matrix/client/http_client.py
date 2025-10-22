@@ -293,6 +293,9 @@ class MatrixHTTPClient:
     async def download_file(self, mxc_url: str) -> bytes:
         """
         Download a file from the Matrix media repository
+        按照 Matrix spec 正确实现媒体下载
+        
+        参考: https://spec.matrix.org/latest/client-server-api/#get_matrixmediav3downloadservernamemediaid
 
         Args:
             mxc_url: MXC URL (mxc://server/media_id)
@@ -312,68 +315,82 @@ class MatrixHTTPClient:
 
         server_name, media_id = parts
 
-        # 对于自己的 homeserver，使用本地下载端点
-        # 对于其他服务器，使用联邦下载端点
-        use_local = server_name == self.homeserver.split("://")[1] if "://" in self.homeserver else server_name == self.homeserver
-
-        # Try multiple download endpoints with allow_redirect parameter
-        if use_local:
-            # 本地媒体：直接下载
-            endpoints = [
-                f"/_matrix/media/v3/download/{server_name}/{media_id}?allow_redirect=true",
-                f"/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
-                f"/_matrix/media/v3/download/{server_name}/{media_id}",
-                f"/_matrix/media/r0/download/{server_name}/{media_id}",
-            ]
-        else:
-            # 远程媒体：通过本地服务器代理下载
-            endpoints = [
-                f"/_matrix/media/v3/download/{server_name}/{media_id}?allow_redirect=true",
-                f"/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
-                f"/_matrix/media/v3/download/{server_name}/{media_id}",
-                f"/_matrix/media/r0/download/{server_name}/{media_id}",
-            ]
+        # 按照 Matrix spec，所有媒体下载都通过用户的 homeserver
+        # 不管媒体来自哪个服务器，都使用认证请求
+        # 参考: https://spec.matrix.org/latest/client-server-api/#id429
+        
+        # Try multiple download endpoints (v3 first, then r0 fallback)
+        endpoints = [
+            f"/_matrix/media/v3/download/{server_name}/{media_id}",
+            f"/_matrix/media/r0/download/{server_name}/{media_id}",
+            # 也尝试带 allow_redirect 参数的版本
+            f"/_matrix/media/v3/download/{server_name}/{media_id}?allow_redirect=true",
+        ]
 
         last_error = None
         last_status = None
 
         for endpoint in endpoints:
-            # 构建完整的 URL
-            # homeserver 已经包含了协议和域名，endpoint 是路径
             url = f"{self.homeserver}{endpoint}"
 
-            # Try with authentication first
+            # 根据 Matrix spec，媒体下载需要认证
+            # 使用 Authorization header 进行认证
             headers = {}
             if self.access_token:
                 headers["Authorization"] = f"Bearer {self.access_token}"
 
             try:
-                logger.debug(f"Trying to download from: {url}")
+                logger.debug(f"Downloading media from: {url}")
                 async with self.session.get(url, headers=headers, allow_redirects=True) as response:
                     last_status = response.status
                     if response.status == 200:
-                        logger.debug(f"Successfully downloaded media from {endpoint}")
+                        logger.debug(f"✅ Successfully downloaded media from {endpoint}")
                         return await response.read()
+                    elif response.status == 404:
+                        logger.debug(f"Got 404 on {endpoint}, trying next endpoint...")
+                        last_error = f"Media not found: {response.status}"
+                        continue
                     elif response.status == 403:
-                        logger.debug(f"Got 403 with auth, trying without auth...")
-                        # Try without authentication (some servers allow public media access)
-                        async with self.session.get(url, allow_redirects=True) as response_unauth:
-                            if response_unauth.status == 200:
-                                logger.debug(f"Successfully downloaded media without auth")
-                                return await response_unauth.read()
-                            last_status = response_unauth.status
-                            last_error = f"HTTP {response_unauth.status}"
-                            logger.debug(f"Got {response_unauth.status} without auth from {endpoint}")
+                        # 403 通常意味着认证问题或权限问题
+                        logger.warning(f"Got 403 on {endpoint} (auth problem or private media)")
+                        last_error = f"Access denied: {response.status}"
+                        continue
                     else:
                         last_error = f"HTTP {response.status}"
                         logger.debug(f"Got status {response.status} from {endpoint}")
+            except aiohttp.ClientError as e:
+                last_error = str(e)
+                logger.debug(f"Network error downloading from {endpoint}: {e}")
+                continue
             except Exception as e:
                 last_error = str(e)
                 logger.debug(f"Exception downloading from {endpoint}: {e}")
                 continue
 
+        # 所有端点都失败了，尝试缩略图作为最后手段
+        if last_status in [403, 404]:
+            logger.debug("Trying thumbnail endpoints as fallback...")
+            thumbnail_endpoints = [
+                f"/_matrix/media/v3/thumbnail/{server_name}/{media_id}?width=800&height=600",
+                f"/_matrix/media/r0/thumbnail/{server_name}/{media_id}?width=800&height=600",
+            ]
+            
+            for endpoint in thumbnail_endpoints:
+                url = f"{self.homeserver}{endpoint}"
+                headers = {}
+                if self.access_token:
+                    headers["Authorization"] = f"Bearer {self.access_token}"
+                
+                try:
+                    async with self.session.get(url, headers=headers, allow_redirects=True) as response:
+                        if response.status == 200:
+                            logger.info(f"✅ Downloaded thumbnail instead of full media")
+                            return await response.read()
+                except Exception:
+                    continue
+
         # If all attempts failed, raise the last error
-        error_msg = f"Matrix media download error: {last_error} (status: {last_status}) for {mxc_url}"
+        error_msg = f"Matrix media download error: {last_error} (last status: {last_status}) for {mxc_url}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
