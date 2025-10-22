@@ -316,16 +316,20 @@ class MatrixHTTPClient:
         # 对于其他服务器，使用联邦下载端点
         use_local = server_name == self.homeserver.split("://")[1] if "://" in self.homeserver else server_name == self.homeserver
 
-        # Try multiple download endpoints
+        # Try multiple download endpoints with allow_redirect parameter
         if use_local:
             # 本地媒体：直接下载
             endpoints = [
+                f"/_matrix/media/v3/download/{server_name}/{media_id}?allow_redirect=true",
+                f"/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
                 f"/_matrix/media/v3/download/{server_name}/{media_id}",
                 f"/_matrix/media/r0/download/{server_name}/{media_id}",
             ]
         else:
             # 远程媒体：通过本地服务器代理下载
             endpoints = [
+                f"/_matrix/media/v3/download/{server_name}/{media_id}?allow_redirect=true",
+                f"/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
                 f"/_matrix/media/v3/download/{server_name}/{media_id}",
                 f"/_matrix/media/r0/download/{server_name}/{media_id}",
             ]
@@ -343,7 +347,7 @@ class MatrixHTTPClient:
 
             try:
                 logger.debug(f"Trying to download from: {url}")
-                async with self.session.get(url, headers=headers) as response:
+                async with self.session.get(url, headers=headers, allow_redirects=True) as response:
                     last_status = response.status
                     if response.status == 200:
                         logger.debug(f"Successfully downloaded media from {endpoint}")
@@ -351,7 +355,7 @@ class MatrixHTTPClient:
                     elif response.status == 403:
                         logger.debug(f"Got 403 with auth, trying without auth...")
                         # Try without authentication (some servers allow public media access)
-                        async with self.session.get(url) as response_unauth:
+                        async with self.session.get(url, allow_redirects=True) as response_unauth:
                             if response_unauth.status == 200:
                                 logger.debug(f"Successfully downloaded media without auth")
                                 return await response_unauth.read()
