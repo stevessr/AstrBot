@@ -588,7 +588,10 @@ class MatrixE2EEManager:
         logger.info(f"Handling verification event: {event_type} from {sender}")
 
         try:
-            if event_type == "m.key.verification.ready":
+            if event_type == "m.key.verification.request":
+                # 初始验证请求
+                await self.verification.handle_request(sender, content)
+            elif event_type == "m.key.verification.ready":
                 # 对方准备好验证了
                 await self.verification.handle_ready(sender, content)
             elif event_type == "m.key.verification.start":
@@ -613,7 +616,7 @@ class MatrixE2EEManager:
                 logger.warning(f"Unknown verification event type: {event_type}")
 
         except Exception as e:
-            logger.error(f"Error handling verification event {event_type}: {e}")
+            logger.error(f"Error handling verification event {event_type}: {e}", exc_info=True)
 
     async def handle_encrypted_to_device(self, sender: str, content: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

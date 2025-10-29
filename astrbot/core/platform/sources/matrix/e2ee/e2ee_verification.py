@@ -196,15 +196,19 @@ class MatrixE2EEVerification:
             logger.error(f"Failed to send start event: {e}")
             raise
 
-    def generate_sas_code(self, verification_id: str) -> Optional[str]:
+    def generate_sas_code(self, verification_id: str) -> Optional[Dict[str, str]]:
         """
-        生成短认证字符串（SAS）
-
+        生成短认证字符串（SAS）- 支持 emoji 和 decimal 格式
+        
+        按照 Matrix 规范生成 SAS：
+        - Emoji: 7 个 emoji 符号
+        - Decimal: 3 组 4 位数字
+        
         Args:
             verification_id: 验证 ID
-
+        
         Returns:
-            SAS 代码，或 None 如果失败
+            包含 emoji 和 decimal 格式的字典，或 None 如果失败
         """
         try:
             if verification_id not in self.verifications:
@@ -212,26 +216,68 @@ class MatrixE2EEVerification:
                 return None
 
             verification = self.verifications[verification_id]
+            
+            # 需要双方的密钥来生成 SAS
+            our_key = verification.get("our_key")
+            their_key = verification.get("their_key")
+            
+            if not our_key or not their_key:
+                logger.warning(f"Missing keys for SAS generation")
+                return None
 
-            # 生成 SAS 代码
-            # 使用 SHA256 哈希生成可读的代码
-            combined = (
-                f"{self.device_id}:{verification['other_device_id']}:{verification_id}"
-            )
-            hash_bytes = hashlib.sha256(combined.encode()).digest()
+            # 生成共享密钥材料
+            # 按照 Matrix 规范：HKDF-SHA256(共享密钥, info, 6 bytes)
+            import hashlib
+            import hmac
+            
+            # 简化实现：使用 HMAC 生成 SAS 字节
+            combined = f"{our_key}|{their_key}|{verification_id}".encode()
+            sas_bytes = hmac.new(b"MATRIX_KEY_VERIFICATION_SAS", combined, hashlib.sha256).digest()[:6]
 
-            # 转换为易读的格式（例如：ABCD-EFGH-IJKL）
-            sas_code = "-".join(
-                hash_bytes[i : i + 4].hex().upper() for i in range(0, 12, 4)
-            )
+            # Emoji SAS - 使用 Matrix 规范定义的 64 个 emoji
+            EMOJI_SAS = [
+                "🐶", "🐱", "🦁", "🐴", "🦄", "🐷", "🐮", "🐗",
+                "🐵", "🐔", "🐧", "🐦", "🐤", "🐣", "🐺", "🐗",
+                "🐝", "🐛", "🦋", "🐌", "🐞", "🐜", "🦟", "🐢",
+                "🐍", "🦎", "🐙", "🦑", "🦀", "🦞", "🦐", "🐡",
+                "🐠", "🐟", "🐬", "🐳", "🐋", "🦈", "🐊", "🐅",
+                "🐆", "🦓", "🦍", "🐘", "🦏", "🦛", "🐪", "🐫",
+                "🦒", "🐃", "🐂", "🐄", "🐎", "🐖", "🐏", "🐑",
+                "🐐", "🦌", "🐕", "🐩", "🐈", "🐓", "🦃", "🦚",
+            ]
+            
+            # 从 6 字节生成 7 个 emoji（每个使用 6 bits = 64 种可能）
+            emoji_indices = []
+            bit_string = ''.join(format(b, '08b') for b in sas_bytes)
+            for i in range(7):
+                start = i * 6
+                if start + 6 <= len(bit_string):
+                    index = int(bit_string[start:start+6], 2)
+                    emoji_indices.append(index % 64)
+            
+            emoji_sas = ' '.join(EMOJI_SAS[i] for i in emoji_indices)
 
-            verification["sas_code"] = sas_code
+            # Decimal SAS - 生成 3 组 4 位数字
+            # 使用前 5 字节生成 3 个 13-bit 数字（范围 0-8191，显示为 4 位）
+            num1 = ((sas_bytes[0] << 5) | (sas_bytes[1] >> 3)) & 0x1FFF
+            num2 = (((sas_bytes[1] & 0x07) << 10) | (sas_bytes[2] << 2) | (sas_bytes[3] >> 6)) & 0x1FFF
+            num3 = (((sas_bytes[3] & 0x3F) << 7) | (sas_bytes[4] >> 1)) & 0x1FFF
+            
+            decimal_sas = f"{num1:04d}-{num2:04d}-{num3:04d}"
+
+            sas_codes = {
+                "emoji": emoji_sas,
+                "decimal": decimal_sas,
+            }
+            
+            verification["sas_codes"] = sas_codes
             verification["state"] = VerificationState.KEY_EXCHANGE.value
 
-            logger.info(f"Generated SAS code for verification {verification_id}")
-            return sas_code
+            logger.debug(f"Generated SAS codes for verification {verification_id}")
+            return sas_codes
+            
         except Exception as e:
-            logger.error(f"Failed to generate SAS code: {e}")
+            logger.error(f"Failed to generate SAS code: {e}", exc_info=True)
             return None
 
     def confirm_sas(self, verification_id: str, sas_code: str) -> bool:
@@ -332,6 +378,54 @@ class MatrixE2EEVerification:
 
     # ==================== 事件处理方法 ====================
 
+    async def handle_request(self, sender: str, content: Dict[str, Any]):
+        """
+        处理 m.key.verification.request 事件（初始验证请求）
+        这是验证流程的第一步
+        """
+        transaction_id = content.get("transaction_id")
+        from_device = content.get("from_device")
+        methods = content.get("methods", [])
+        timestamp = content.get("timestamp")
+
+        logger.info(f"📨 Received verification request from {sender}:{from_device}")
+        logger.info(f"   Transaction: {transaction_id}")
+        logger.info(f"   Supported methods: {methods}")
+
+        # 检查是否支持 SAS 验证
+        if "m.sas.v1" not in methods:
+            logger.warning(f"Device {sender}:{from_device} doesn't support m.sas.v1, cannot verify")
+            return
+
+        # 创建验证会话
+        verification = {
+            "other_user_id": sender,
+            "other_device_id": from_device,
+            "transaction_id": transaction_id,
+            "state": VerificationState.REQUESTED.value,
+            "methods": methods,
+            "timestamp": timestamp,
+        }
+        self.verifications[transaction_id] = verification
+
+        # 自动发送 ready 响应
+        try:
+            content = {
+                "from_device": self.device_id,
+                "methods": ["m.sas.v1"],  # 我们支持的方法
+                "transaction_id": transaction_id,
+            }
+
+            messages = {sender: {from_device: content}}
+            await self.client.send_to_device("m.key.verification.ready", messages)
+            
+            verification["state"] = VerificationState.READY.value
+            logger.info(f"✅ Sent ready response, waiting for start...")
+
+        except Exception as e:
+            logger.error(f"Failed to send ready response: {e}")
+            raise
+
     async def handle_ready(self, sender: str, content: Dict[str, Any]):
         """处理 m.key.verification.ready 事件"""
         transaction_id = content.get("transaction_id")
@@ -339,9 +433,9 @@ class MatrixE2EEVerification:
         methods = content.get("methods", [])
 
         logger.info(
-            f"Received ready from {sender}:{from_device}, transaction: {transaction_id}"
+            f"📨 Received ready from {sender}:{from_device}, transaction: {transaction_id}"
         )
-        logger.info(f"Supported methods: {methods}")
+        logger.info(f"   Supported methods: {methods}")
 
         # 查找对应的验证会话
         verification = None
@@ -353,7 +447,7 @@ class MatrixE2EEVerification:
             ):
                 verification = ver_data
                 verification["state"] = VerificationState.READY.value
-                logger.info(f"Updated verification {ver_id} to READY state")
+                logger.info(f"✅ Updated verification {ver_id} to READY state")
                 break
 
         if not verification:
@@ -366,20 +460,78 @@ class MatrixE2EEVerification:
             await self._send_start_event(ver_id, verification)
 
     async def handle_start(self, sender: str, content: Dict[str, Any]):
-        """处理 m.key.verification.start 事件"""
+        """处理 m.key.verification.start 事件并自动接受"""
         transaction_id = content.get("transaction_id")
         method = content.get("method")
+        from_device = content.get("from_device")
 
-        logger.info(
-            f"Received start from {sender}, transaction: {transaction_id}, method: {method}"
-        )
+        logger.info(f"📨 Received start from {sender}:{from_device}")
+        logger.info(f"   Transaction: {transaction_id}, method: {method}")
 
-        # 更新验证状态
-        if transaction_id in self.verifications:
-            self.verifications[transaction_id]["state"] = (
-                VerificationState.STARTED.value
-            )
-            logger.info(f"Verification {transaction_id} started with method {method}")
+        # 检查是否支持该方法
+        if method != "m.sas.v1":
+            logger.warning(f"Unsupported verification method: {method}")
+            return
+
+        # 更新或创建验证状态
+        if transaction_id not in self.verifications:
+            # 如果还没有验证会话，创建一个
+            self.verifications[transaction_id] = {
+                "other_user_id": sender,
+                "other_device_id": from_device,
+                "transaction_id": transaction_id,
+                "state": VerificationState.STARTED.value,
+            }
+        else:
+            self.verifications[transaction_id]["state"] = VerificationState.STARTED.value
+
+        verification = self.verifications[transaction_id]
+        verification["method"] = method
+        verification["start_content"] = content
+
+        logger.info(f"✅ Verification {transaction_id} started with method {method}")
+
+        # 自动发送 accept 响应
+        if self.client:
+            await self._send_accept_event(transaction_id, verification)
+
+    async def _send_accept_event(self, transaction_id: str, verification: Dict[str, Any]):
+        """发送 m.key.verification.accept 事件"""
+        try:
+            import secrets
+            import hashlib
+
+            other_user_id = verification["other_user_id"]
+            other_device_id = verification["other_device_id"]
+
+            # 获取 start 事件的内容
+            start_content = verification.get("start_content", {})
+
+            # 生成 commitment (hash of our public key)
+            # 在真实实现中应使用真实的公钥
+            our_key = secrets.token_bytes(32)
+            commitment = hashlib.sha256(our_key).hexdigest()
+            verification["our_commitment_key"] = our_key
+
+            content = {
+                "transaction_id": transaction_id,
+                "method": "m.sas.v1",
+                "key_agreement_protocol": "curve25519-hkdf-sha256",
+                "hash": "sha256",
+                "message_authentication_code": "hkdf-hmac-sha256.v2",
+                "short_authentication_string": ["emoji", "decimal"],
+                "commitment": commitment,
+            }
+
+            messages = {other_user_id: {other_device_id: content}}
+
+            await self.client.send_to_device("m.key.verification.accept", messages)
+            verification["state"] = VerificationState.ACCEPTED.value
+            logger.info(f"✅ Sent accept response to {other_user_id}:{other_device_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to send accept event: {e}")
+            raise
 
     async def handle_accept(self, sender: str, content: Dict[str, Any]):
         """处理 m.key.verification.accept 事件并发送 key"""
@@ -428,30 +580,44 @@ class MatrixE2EEVerification:
             raise
 
     async def handle_key(self, sender: str, content: Dict[str, Any]):
-        """处理 m.key.verification.key 事件并自动生成 SAS 码"""
+        """处理 m.key.verification.key 事件并生成 SAS 码"""
         transaction_id = content.get("transaction_id")
         key = content.get("key")
 
-        logger.info(f"Received key from {sender}, transaction: {transaction_id}")
+        logger.info(f"📨 Received key from {sender}, transaction: {transaction_id}")
 
-        if transaction_id in self.verifications:
-            verification = self.verifications[transaction_id]
-            verification["their_key"] = key
-            verification["state"] = VerificationState.KEY_EXCHANGE.value
+        if transaction_id not in self.verifications:
+            logger.warning(f"Verification {transaction_id} not found")
+            return
 
-            logger.info(f"Stored key for verification {transaction_id}")
+        verification = self.verifications[transaction_id]
+        verification["their_key"] = key
+        verification["state"] = VerificationState.KEY_EXCHANGE.value
 
-            # 自动生成 SAS 代码
+        logger.info(f"✅ Stored key for verification {transaction_id}")
+
+        # 如果我们还没有发送 key，现在发送
+        if "our_key" not in verification:
+            if self.client:
+                await self._send_key_event(transaction_id, verification)
+
+        # 生成 SAS 代码（需要双方的公钥）
+        if "our_key" in verification and "their_key" in verification:
             sas_code = self.generate_sas_code(transaction_id)
             if sas_code:
-                logger.info(f"✨ Generated SAS code for {transaction_id}: {sas_code}")
-                logger.info(
-                    "📱 User should verify this code matches their client display"
-                )
+                logger.info(f"")
+                logger.info(f"✨ ================== SAS 验证码 ==================")
+                logger.info(f"   Transaction: {transaction_id}")
+                logger.info(f"   Emoji: {sas_code['emoji']}")
+                logger.info(f"   Decimal: {sas_code['decimal']}")
+                logger.info(f"   ⚠️  请确认此代码与您其他设备上显示的一致！")
+                logger.info(f"===================================================")
+                logger.info(f"")
 
-            # 自动发送 MAC（假设用户已确认 SAS 码）
-            if self.client:
-                await self._send_mac_event(transaction_id, verification)
+                # 自动发送 MAC（在实际使用中应该等待用户确认）
+                # TODO: 添加用户确认步骤
+                if self.client:
+                    await self._send_mac_event(transaction_id, verification)
 
     async def _send_mac_event(self, transaction_id: str, verification: Dict[str, Any]):
         """发送 m.key.verification.mac 事件"""

@@ -262,6 +262,7 @@ class MatrixEventProcessor:
 
             # Handle E2EE verification events
             if event_type in [
+                "m.key.verification.request",  # 添加 request 处理
                 "m.key.verification.ready",
                 "m.key.verification.start",
                 "m.key.verification.accept",
