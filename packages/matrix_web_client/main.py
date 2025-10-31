@@ -629,11 +629,20 @@ class MatrixWebClient(Star):
                 client_data = self.matrix_clients[session_id]
                 client = client_data["client"]
 
+                # 构建消息内容
+                content = {"msgtype": msgtype, "body": message}
+
+                # 如果是文件/图片/视频/音频消息，添加额外字段
+                if msgtype in ["m.image", "m.file", "m.video", "m.audio"]:
+                    url = data.get("url")
+                    info = data.get("info", {})
+                    if url:
+                        content["url"] = url
+                        content["info"] = info
+
                 # 发送消息
                 response = await client.send_message(
-                    room_id=room_id,
-                    msg_type="m.room.message",
-                    content={"msgtype": msgtype, "body": message},
+                    room_id=room_id, msg_type="m.room.message", content=content
                 )
 
                 return jsonify({"success": True, "event_id": response.get("event_id")})
@@ -693,6 +702,120 @@ class MatrixWebClient(Star):
 
             except Exception as e:
                 logger.error(f"Failed to get devices: {e}")
+                return jsonify({"success": False, "error": str(e)})
+
+        @self.app.route("/api/keys/upload", methods=["POST"])
+        async def upload_keys():
+            """上传加密密钥"""
+            session_id = request.args.get("session_id")
+            data = await request.get_json()
+
+            if not session_id or session_id not in self.matrix_clients:
+                return jsonify({"success": False, "error": "Invalid session"})
+
+            try:
+                client_data = self.matrix_clients[session_id]
+                client = client_data["client"]
+
+                # 上传密钥
+                response = await client.upload_keys(
+                    device_keys=data.get("device_keys"),
+                    one_time_keys=data.get("one_time_keys"),
+                )
+
+                return jsonify({"success": True, "response": response})
+
+            except Exception as e:
+                logger.error(f"Failed to upload keys: {e}")
+                return jsonify({"success": False, "error": str(e)})
+
+        @self.app.route("/api/keys/query", methods=["POST"])
+        async def query_keys():
+            """查询用户密钥"""
+            session_id = request.args.get("session_id")
+            data = await request.get_json()
+
+            if not session_id or session_id not in self.matrix_clients:
+                return jsonify({"success": False, "error": "Invalid session"})
+
+            try:
+                client_data = self.matrix_clients[session_id]
+                client = client_data["client"]
+
+                # 查询密钥
+                response = await client.query_keys(
+                    device_keys=data.get("device_keys", {}), timeout=data.get("timeout")
+                )
+
+                return jsonify({"success": True, "response": response})
+
+            except Exception as e:
+                logger.error(f"Failed to query keys: {e}")
+                return jsonify({"success": False, "error": str(e)})
+
+        @self.app.route("/api/keys/claim", methods=["POST"])
+        async def claim_keys():
+            """声明一次性密钥"""
+            session_id = request.args.get("session_id")
+            data = await request.get_json()
+
+            if not session_id or session_id not in self.matrix_clients:
+                return jsonify({"success": False, "error": "Invalid session"})
+
+            try:
+                client_data = self.matrix_clients[session_id]
+                client = client_data["client"]
+
+                # 声明密钥
+                response = await client.claim_keys(
+                    one_time_keys=data.get("one_time_keys", {}),
+                    timeout=data.get("timeout"),
+                )
+
+                return jsonify({"success": True, "response": response})
+
+            except Exception as e:
+                logger.error(f"Failed to claim keys: {e}")
+                return jsonify({"success": False, "error": str(e)})
+
+        @self.app.route("/api/upload", methods=["POST"])
+        async def upload_file():
+            """上传文件"""
+            session_id = request.args.get("session_id")
+
+            if not session_id or session_id not in self.matrix_clients:
+                return jsonify({"success": False, "error": "Invalid session"})
+
+            try:
+                files = await request.files
+                if "file" not in files:
+                    return jsonify({"success": False, "error": "No file provided"})
+
+                file = files["file"]
+                file_data = await file.read()
+
+                client_data = self.matrix_clients[session_id]
+                client = client_data["client"]
+
+                # 上传文件
+                response = await client.upload_file(
+                    data=file_data,
+                    content_type=file.content_type or "application/octet-stream",
+                    filename=file.filename,
+                )
+
+                return jsonify(
+                    {
+                        "success": True,
+                        "content_uri": response.get("content_uri"),
+                        "filename": file.filename,
+                        "content_type": file.content_type,
+                        "size": len(file_data),
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to upload file: {e}")
                 return jsonify({"success": False, "error": str(e)})
 
         @self.app.route("/api/logout", methods=["POST"])
@@ -787,6 +910,8 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Matrix Web Client</title>
+    <!-- Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.2/dist/markdown-it.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -1012,11 +1137,39 @@ HTML_TEMPLATE = """
             border-radius: 8px;
             background: white;
             box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            word-wrap: break-word;
+        }
+        
+        .message-content img {
+            max-width: 300px;
+            max-height: 300px;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+        
+        .message-content .file-attachment {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 12px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #333;
+            margin: 5px 0;
+        }
+        
+        .message-content .sticker {
+            max-width: 150px;
+            max-height: 150px;
         }
         
         .message.own .message-content {
             background: #4CAF50;
             color: white;
+        }
+        
+        .message.own .message-content a {
+            color: #e8f5e9;
         }
         
         .message-time {
@@ -1031,13 +1184,28 @@ HTML_TEMPLATE = """
             background: white;
             display: flex;
             gap: 10px;
+            align-items: center;
         }
         
-        .message-input input {
+        .message-input input[type="text"] {
             flex: 1;
             padding: 12px;
             border: 1px solid #ddd;
             border-radius: 20px;
+            font-size: 14px;
+        }
+        
+        .message-input input[type="file"] {
+            display: none;
+        }
+        
+        .message-input .file-btn {
+            padding: 10px 15px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
             font-size: 14px;
         }
         
@@ -1142,6 +1310,9 @@ HTML_TEMPLATE = """
                 <div class="user-info" id="userInfo">
                     加载中...
                 </div>
+                <button onclick="showKeyManagement()" style="margin-top: 10px; padding: 6px 12px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%;">
+                    🔐 密钥管理
+                </button>
             </div>
             <div class="room-list" id="roomList">
                 <div class="loading">加载房间列表...</div>
@@ -1156,7 +1327,9 @@ HTML_TEMPLATE = """
                 <div class="loading">选择一个房间查看消息</div>
             </div>
             <div class="message-input hidden" id="messageInput">
-                <input type="text" id="messageText" placeholder="输入消息..." onkeypress="handleMessageKeyPress(event)">
+                <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt">
+                <button class="file-btn" onclick="document.getElementById('fileInput').click()">📎</button>
+                <input type="text" id="messageText" placeholder="输入消息 (支持 Markdown)..." onkeypress="handleMessageKeyPress(event)">
                 <button onclick="sendMessage()">发送</button>
             </div>
         </div>
@@ -1166,6 +1339,13 @@ HTML_TEMPLATE = """
         let sessionId = null;
         let currentRoomId = null;
         let ws = null;
+        
+        // Initialize markdown parser
+        const md = window.markdownit({
+            html: false,
+            linkify: true,
+            breaks: true
+        });
         
         function switchTab(tabName) {
             // 更新标签
@@ -1378,11 +1558,60 @@ HTML_TEMPLATE = """
             div.className = 'message';
             
             const time = new Date(msg.timestamp).toLocaleTimeString();
-            const body = msg.content.body || '';
+            const content = msg.content || {};
+            const msgtype = content.msgtype || 'm.text';
+            
+            let messageHtml = '';
+            
+            // 处理不同类型的消息
+            if (msgtype === 'm.image') {
+                const url = content.url || '';
+                const body = content.body || 'Image';
+                const mxcUrl = url.replace('mxc://', '');
+                const httpUrl = `${window.location.protocol}//${window.location.host}/_matrix/media/r0/download/${mxcUrl}`;
+                messageHtml = `<img src="${httpUrl}" alt="${escapeHtml(body)}" title="${escapeHtml(body)}">`;
+            } else if (msgtype === 'm.file') {
+                const url = content.url || '';
+                const body = content.body || 'File';
+                const mxcUrl = url.replace('mxc://', '');
+                const httpUrl = `${window.location.protocol}//${window.location.host}/_matrix/media/r0/download/${mxcUrl}`;
+                messageHtml = `<a href="${httpUrl}" class="file-attachment" download="${escapeHtml(body)}">📎 ${escapeHtml(body)}</a>`;
+            } else if (msgtype === 'm.sticker') {
+                const url = content.url || '';
+                const body = content.body || 'Sticker';
+                const mxcUrl = url.replace('mxc://', '');
+                const httpUrl = `${window.location.protocol}//${window.location.host}/_matrix/media/r0/download/${mxcUrl}`;
+                messageHtml = `<img src="${httpUrl}" alt="${escapeHtml(body)}" class="sticker">`;
+            } else if (msgtype === 'm.video') {
+                const url = content.url || '';
+                const body = content.body || 'Video';
+                const mxcUrl = url.replace('mxc://', '');
+                const httpUrl = `${window.location.protocol}//${window.location.host}/_matrix/media/r0/download/${mxcUrl}`;
+                messageHtml = `<video controls style="max-width: 400px;"><source src="${httpUrl}"></video><br>${escapeHtml(body)}`;
+            } else if (msgtype === 'm.audio') {
+                const url = content.url || '';
+                const body = content.body || 'Audio';
+                const mxcUrl = url.replace('mxc://', '');
+                const httpUrl = `${window.location.protocol}//${window.location.host}/_matrix/media/r0/download/${mxcUrl}`;
+                messageHtml = `<audio controls><source src="${httpUrl}"></audio><br>${escapeHtml(body)}`;
+            } else {
+                // 文本消息 - 渲染 markdown
+                const body = content.body || '';
+                const formatted = content.formatted_body;
+                const format = content.format;
+                
+                if (format === 'org.matrix.custom.html' && formatted) {
+                    // 已有 HTML 格式
+                    messageHtml = formatted;
+                } else {
+                    // 使用 markdown 渲染
+                    messageHtml = md.render(body);
+                }
+            }
             
             div.innerHTML = `
-                <div class="message-sender">${msg.sender}</div>
-                <div class="message-content">${escapeHtml(body)}</div>
+                <div class="message-sender">${escapeHtml(msg.sender)}</div>
+                <div class="message-content">${messageHtml}</div>
                 <div class="message-time">${time}</div>
             `;
             
@@ -1391,22 +1620,72 @@ HTML_TEMPLATE = """
         
         async function sendMessage() {
             const messageText = document.getElementById('messageText').value;
+            const fileInput = document.getElementById('fileInput');
             
-            if (!messageText || !currentRoomId) {
+            if (!currentRoomId) {
                 return;
             }
             
             try {
-                const response = await fetch(`/api/room/${currentRoomId}/send?session_id=${sessionId}`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({message: messageText})
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    document.getElementById('messageText').value = '';
+                // 如果有文件，先上传文件
+                if (fileInput.files.length > 0) {
+                    const file = fileInput.files[0];
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    // 上传文件
+                    const uploadResp = await fetch(`/api/upload?session_id=${sessionId}`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const uploadData = await uploadResp.json();
+                    
+                    if (uploadData.success) {
+                        // 根据文件类型发送消息
+                        const contentType = uploadData.content_type || '';
+                        let msgtype = 'm.file';
+                        
+                        if (contentType.startsWith('image/')) {
+                            msgtype = 'm.image';
+                        } else if (contentType.startsWith('video/')) {
+                            msgtype = 'm.video';
+                        } else if (contentType.startsWith('audio/')) {
+                            msgtype = 'm.audio';
+                        }
+                        
+                        // 发送文件消息
+                        const response = await fetch(`/api/room/${currentRoomId}/send?session_id=${sessionId}`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                message: uploadData.filename,
+                                msgtype: msgtype,
+                                url: uploadData.content_uri,
+                                info: {
+                                    size: uploadData.size,
+                                    mimetype: uploadData.content_type
+                                }
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            fileInput.value = '';
+                        }
+                    }
+                } else if (messageText) {
+                    // 发送文本消息
+                    const response = await fetch(`/api/room/${currentRoomId}/send?session_id=${sessionId}`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({message: messageText})
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        document.getElementById('messageText').value = '';
+                    }
                 }
             } catch (e) {
                 console.error('Failed to send message:', e);
@@ -1480,6 +1759,23 @@ HTML_TEMPLATE = """
             div.textContent = text;
             return div.innerHTML;
         }
+        
+        function showKeyManagement() {
+            alert('密钥管理功能\\n\\n可用操作：\\n- 上传设备密钥: POST /api/keys/upload\\n- 查询用户密钥: POST /api/keys/query\\n- 声明一次性密钥: POST /api/keys/claim\\n\\n请使用 API 端点进行密钥管理操作。\\n\\n完整的 E2EE 密钥管理需要加密库支持，建议使用专门的 Matrix 客户端进行密钥验证和交换。');
+        }
+        
+        // 监听文件选择
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput) {
+                fileInput.addEventListener('change', function() {
+                    if (this.files.length > 0) {
+                        const fileName = this.files[0].name;
+                        document.getElementById('messageText').placeholder = `已选择: ${fileName}`;
+                    }
+                });
+            }
+        });
     </script>
 </body>
 </html>
