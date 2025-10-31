@@ -1,0 +1,6 @@
+name: astrbot_plugin_matrix_e2ee
+desc: Matrix E2EE 端到端加密设备验证和密钥恢复插件
+version: v1.0.0
+author: AstrBot
+repo: https://github.com/Soulter/AstrBot
+
