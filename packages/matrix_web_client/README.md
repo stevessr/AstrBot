@@ -29,13 +29,14 @@
 - 自动服务器发现 (`.well-known/matrix/client`)
 - OIDC 配置自动获取 (`.well-known/openid-configuration`)
 - 授权码交换
-- Token 刷新
+- PKCE (Proof Key for Code Exchange)
+- State 参数验证 (CSRF 防护)
 
 适用于需要 SSO 单点登录的 Matrix 服务器。
 
 ## 配置
 
-插件不需要额外配置，启动即可使用。默认配置：
+插件使用默认配置，启动即可使用。默认配置：
 - 主机: `0.0.0.0` (监听所有网卡)
 - 端口: `8766`
 
@@ -45,6 +46,7 @@
 
 - **Web 框架**: Quart (异步 Flask)
 - **Matrix 客户端**: 基于 AstrBot 的 MatrixHTTPClient
+- **OAuth2**: 基于 MatrixOAuth2（部分使用内部方法，待公共 API 完善）
 - **实时通信**: WebSocket
 - **前端**: 原生 HTML/CSS/JavaScript
 
@@ -60,13 +62,20 @@
 
 - 会话使用随机生成的 session_id 进行管理
 - Access Token 仅存储在服务器内存中
-- 支持安全的 OAuth2/OIDC 流程
-- 建议在生产环境中使用 HTTPS
+- OAuth2 流程包含 CSRF 防护（state 参数验证）
+- PKCE 增强授权码流安全性
+- postMessage 使用明确的 origin 而非 '*'
+- **建议在生产环境中使用 HTTPS**
+
+## 已知限制
+
+- OAuth2 实现目前使用了 MatrixOAuth2 的部分私有方法（`_generate_state` 等），这些应该在未来版本中替换为公共 API
+- client_id 使用硬编码的默认值 'matrix-web-client'，应该支持配置或动态注册
 
 ## 依赖
 
 本插件依赖 AstrBot 的 Matrix 适配器组件：
 - `astrbot.core.platform.sources.matrix.client.MatrixHTTPClient`
-- `astrbot.core.platform.sources.matrix.components.oauth2.OAuth2Handler`
+- `astrbot.core.platform.sources.matrix.components.oauth2.MatrixOAuth2`
 
 确保 AstrBot 主程序已正确安装这些组件。

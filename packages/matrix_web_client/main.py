@@ -370,8 +370,6 @@ class MatrixWebClient(Star):
 
             try:
                 # 交换授权码获取 token
-                import aiohttp
-
                 token_data = {
                     "grant_type": "authorization_code",
                     "code": code,
@@ -430,8 +428,10 @@ class MatrixWebClient(Star):
                         <p>您已成功登录 Matrix。请返回客户端继续...</p>
                         <script>
                             // 通知父窗口登录成功
+                            // Using window.location.origin for security instead of '*'
                             if (window.opener) {
-                                window.opener.postMessage({type: 'oauth2_success', session_id: '%s'}, '*');
+                                const targetOrigin = window.location.origin;
+                                window.opener.postMessage({type: 'oauth2_success', session_id: '%s'}, targetOrigin);
                             }
                             setTimeout(() => window.close(), 2000);
                         </script>
