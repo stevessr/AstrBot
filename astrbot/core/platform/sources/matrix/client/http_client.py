@@ -4,6 +4,8 @@ Implements the Matrix Client-Server API using aiohttp
 """
 
 import aiohttp
+import os
+import json
 from typing import Optional, Dict, Any, List
 from astrbot.api import logger
 
@@ -213,25 +215,9 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/send/{msg_type}/{txn_id}"
         return await self._request("PUT", endpoint, data=content)
 
-    async def send_to_device(
-        self, event_type: str, messages: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Send to-device messages (used for E2EE key verification)
-
-        Args:
-            event_type: Event type (e.g., m.key.verification.request)
-            messages: Dictionary mapping user_id -> device_id -> content
-
-        Returns:
-            Response from server
-        """
-        import time
-
-        txn_id = f"txn_{int(time.time() * 1000)}"
-        endpoint = f"/_matrix/client/v3/sendToDevice/{event_type}/{txn_id}"
-        data = {"messages": messages}
-        return await self._request("PUT", endpoint, data=data)
+    # NOTE: send_to_device is defined later with an optional txn_id parameter.
+    # The detailed implementation (including diagnostics) is implemented below
+    # to avoid duplicate definitions.
 
     async def send_room_event(
         self, room_id: str, event_type: str, content: Dict[str, Any]
@@ -394,7 +380,7 @@ class MatrixHTTPClient:
                 try:
                     async with self.session.get(url, headers=headers, allow_redirects=True) as response:
                         if response.status == 200:
-                            logger.info(f"✅ Downloaded thumbnail instead of full media")
+                            logger.info("✅ Downloaded thumbnail instead of full media")
                             return await response.read()
                 except Exception:
                     continue
@@ -676,11 +662,71 @@ class MatrixHTTPClient:
             Empty dict on success
         """
         import secrets
+
         if txn_id is None:
             txn_id = secrets.token_hex(16)
 
         endpoint = f"/_matrix/client/v3/sendToDevice/{event_type}/{txn_id}"
-
         data = {"messages": messages}
 
-        return await self._request("PUT", endpoint, data=data)
+        # Control verbose logging via environment variable to avoid accidental secret leaks
+        verbose_env = os.environ.get("ASTRBOT_VERBOSE_TO_DEVICE", "").lower()
+        verbose = verbose_env in ("1", "true", "yes")
+
+        # Helper to produce a short, safe representation of potentially large dicts
+        def _short(obj: Any, maxlen: int = 400) -> str:
+            try:
+                s = json.dumps(obj, ensure_ascii=False)
+            except Exception:
+                s = str(obj)
+            if len(s) > maxlen:
+                return s[: maxlen - 80] + f"... (truncated, {len(s)} bytes)"
+            return s
+
+        # Build request manually so we can capture HTTP status and raw response body
+        await self._ensure_session()
+        url = f"{self.homeserver}{endpoint}"
+        headers = self._get_headers()
+
+        try:
+            async with self.session.put(url, json=data, headers=headers) as resp:
+                status = resp.status
+                # Try to parse JSON, fallback to text
+                try:
+                    resp_body = await resp.json()
+                except Exception:
+                    resp_text = await resp.text()
+                    resp_body = resp_text
+
+                # Log summary for diagnostics
+                try:
+                    from astrbot.api import logger as api_logger
+
+                    api_logger.debug(
+                        f"send_to_device response for {event_type} txn {txn_id}: status={status} body={_short(resp_body)}"
+                    )
+
+                    if verbose:
+                        api_logger.debug(f"send_to_device request payload: {_short(data, maxlen=2000)}")
+                        api_logger.debug(f"send_to_device full response: {_short(resp_body, maxlen=2000)}")
+                except Exception:
+                    pass
+
+                if status >= 400:
+                    # Try to extract errcode/message if JSON
+                    if isinstance(resp_body, dict):
+                        error_code = resp_body.get("errcode", "UNKNOWN")
+                        error_msg = resp_body.get("error", "Unknown error")
+                    else:
+                        error_code = "UNKNOWN"
+                        error_msg = str(resp_body)
+
+                    raise Exception(
+                        f"Matrix API error: {error_code} - {error_msg} (status: {status})"
+                    )
+
+                return resp_body
+
+        except aiohttp.ClientError as e:
+            logger.error(f"send_to_device network error for {event_type} txn {txn_id}: {e}")
+            raise

@@ -51,21 +51,50 @@ class MatrixE2EEVerificationPlugin(Star):
                 yield event.plain_result("E2EE 未启用")
                 return
 
-            # 必须提供参数
+            # 如果没有参数，则尝试自动识别并验证发出者的当前设备
             if not user_id or not device_id:
-                # 获取发送者信息用于提示
                 sender_id = event.get_sender_id()
-                yield event.plain_result(
-                    "用法：/e2ee_verify <user_id> <device_id>\n\n"
-                    "启动与指定用户设备的验证流程。\n\n"
-                    "参数说明：\n"
-                    "  user_id   - 对方的 Matrix 用户 ID（如 @alice:example.com）\n"
-                    "  device_id - 对方的设备 ID（如 GHTYAJCE）\n\n"
-                    f"提示：你的用户 ID 是 {sender_id}\n"
-                    "要查看设备 ID，可在 Element 等客户端的设置中查看\n\n"
-                    "示例：/e2ee_verify @alice:example.com GHTYAJCE"
-                )
-                return
+
+                # 尝试通过 keys/query 查询对方设备并挑选一个设备自动验证
+                try:
+                    response = await e2ee_manager.client.query_keys(device_keys={sender_id: []})
+                    device_keys = response.get("device_keys", {}).get(sender_id, {})
+                except Exception as e:
+                    logger.error(f"Failed to query device keys for {sender_id}: {e}")
+                    yield event.plain_result(
+                        "用法：/e2ee_verify <user_id> <device_id>\n\n"
+                        "无法自动识别对方设备（查询 keys 失败）。请手动指定 device_id。"
+                    )
+                    return
+
+                if not device_keys:
+                    # 没有查询到任何设备密钥，提示用户手动指定
+                    yield event.plain_result(
+                        "未能查询到对方设备信息。请使用：/e2ee_verify <user_id> <device_id> 来指定设备。"
+                    )
+                    return
+
+                # 选择一个候选设备：优先选第一个非空项
+                chosen_device = None
+                for did, info in device_keys.items():
+                    # 跳过我们的机器人自身设备（如果出现在列表中）
+                    try:
+                        bot_device = getattr(e2ee_manager, "device_id", None) or getattr(e2ee_manager.store, "device_id", None)
+                    except Exception:
+                        bot_device = None
+
+                    if bot_device and did == bot_device:
+                        continue
+                    chosen_device = did
+                    break
+
+                # 如果仍然没有可选设备，就退回到任意设备
+                if not chosen_device:
+                    chosen_device = next(iter(device_keys.keys()))
+
+                user_id = sender_id
+                device_id = chosen_device
+                logger.info(f"Auto-detected device for verification: {user_id}:{device_id}")
 
             # 设备验证使用 to-device 消息，不需要房间 ID
             verification_id = await e2ee_manager.start_device_verification(

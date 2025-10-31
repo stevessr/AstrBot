@@ -128,10 +128,14 @@ class MatrixE2EEVerification:
             # 通过 to-device 消息发送验证请求
             messages = {other_user_id: {other_device_id: content}}
 
-            await self.client.send_to_device("m.key.verification.request", messages)
+            response = await self.client.send_to_device("m.key.verification.request", messages)
             logger.info(
                 f"Sent to-device verification request to {other_user_id}:{other_device_id}"
             )
+            try:
+                logger.debug(f"verification request send response: {response}")
+            except Exception:
+                pass
 
         except Exception as e:
             logger.error(f"Failed to send verification request: {e}")
