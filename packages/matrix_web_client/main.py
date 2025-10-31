@@ -50,9 +50,17 @@ class MatrixWebClient(Star):
         self.matrix_clients: Dict[str, Any] = {}  # session_id -> client_data
         self.active_sessions: Dict[str, Dict] = {}  # session_id -> session_info
 
+        # 持久化存储路径
+        self.data_dir = os.path.join(os.path.dirname(__file__), "data")
+        self.sessions_file = os.path.join(self.data_dir, "sessions.json")
+        os.makedirs(self.data_dir, exist_ok=True)
+
     async def initialize(self):
         """初始化插件，启动 Web 服务器"""
         logger.info("Initializing Matrix Web Client Plugin...")
+
+        # 加载持久化的会话
+        self._load_sessions()
 
         # 创建 Quart 应用
         self.app = Quart(
@@ -69,9 +77,82 @@ class MatrixWebClient(Star):
 
         logger.info(f"Matrix Web Client started on http://{self.host}:{self.port}")
 
+    def _load_sessions(self):
+        """从文件加载持久化的会话"""
+        try:
+            if os.path.exists(self.sessions_file):
+                with open(self.sessions_file, "r") as f:
+                    data = json.load(f)
+                    saved_sessions = data.get("sessions", {})
+
+                    # 恢复会话
+                    for session_id, session_info in saved_sessions.items():
+                        try:
+                            if MatrixHTTPClient:
+                                client = MatrixHTTPClient(
+                                    homeserver=session_info["homeserver"]
+                                )
+                                client.restore_login(
+                                    user_id=session_info["user_id"],
+                                    device_id=session_info.get("device_id"),
+                                    access_token=session_info["access_token"],
+                                )
+
+                                self.matrix_clients[session_id] = {
+                                    "client": client,
+                                    "user_id": session_info["user_id"],
+                                    "device_id": session_info.get("device_id"),
+                                    "access_token": session_info["access_token"],
+                                    "homeserver": session_info["homeserver"],
+                                }
+
+                                self.active_sessions[session_id] = {
+                                    "user_id": session_info["user_id"],
+                                    "homeserver": session_info["homeserver"],
+                                    "login_time": session_info.get(
+                                        "login_time", datetime.now().isoformat()
+                                    ),
+                                }
+
+                                logger.info(
+                                    f"Restored session for {session_info['user_id']}"
+                                )
+                        except Exception as e:
+                            logger.error(f"Failed to restore session {session_id}: {e}")
+                            continue
+
+                logger.info(f"Loaded {len(self.matrix_clients)} sessions from disk")
+        except Exception as e:
+            logger.error(f"Failed to load sessions: {e}")
+
+    def _save_sessions(self):
+        """保存会话到文件"""
+        try:
+            sessions_to_save = {}
+            for session_id, client_data in self.matrix_clients.items():
+                sessions_to_save[session_id] = {
+                    "user_id": client_data["user_id"],
+                    "device_id": client_data.get("device_id"),
+                    "access_token": client_data["access_token"],
+                    "homeserver": client_data["homeserver"],
+                    "login_time": self.active_sessions.get(session_id, {}).get(
+                        "login_time", datetime.now().isoformat()
+                    ),
+                }
+
+            with open(self.sessions_file, "w") as f:
+                json.dump({"sessions": sessions_to_save}, f, indent=2)
+
+            logger.info(f"Saved {len(sessions_to_save)} sessions to disk")
+        except Exception as e:
+            logger.error(f"Failed to save sessions: {e}")
+
     async def terminate(self):
         """终止插件，关闭 Web 服务器"""
         logger.info("Terminating Matrix Web Client Plugin...")
+
+        # 保存会话到磁盘
+        self._save_sessions()
 
         if self.server_task:
             self.server_task.cancel()
@@ -179,6 +260,9 @@ class MatrixWebClient(Star):
                         "login_time": datetime.now().isoformat(),
                     }
 
+                    # 保存会话到磁盘
+                    self._save_sessions()
+
                     return jsonify(
                         {
                             "success": True,
@@ -233,6 +317,9 @@ class MatrixWebClient(Star):
                         "homeserver": homeserver,
                         "login_time": datetime.now().isoformat(),
                     }
+
+                    # 保存会话到磁盘
+                    self._save_sessions()
 
                     return jsonify(
                         {
@@ -423,6 +510,9 @@ class MatrixWebClient(Star):
                         }
                     )
 
+                    # 保存会话到磁盘
+                    self._save_sessions()
+
                     return """<html><body>
                         <h1>认证成功！</h1>
                         <p>您已成功登录 Matrix。请返回客户端继续...</p>
@@ -435,7 +525,9 @@ class MatrixWebClient(Star):
                             }
                             setTimeout(() => window.close(), 2000);
                         </script>
-                    </body></html>""" % (session_id)
+                    </body></html>""" % (
+                        session_id
+                    )
 
             except Exception as e:
                 logger.error(f"OAuth2 callback error: {e}")
@@ -538,13 +630,13 @@ class MatrixWebClient(Star):
                 client = client_data["client"]
 
                 # 发送消息
-                event_id = await client.room_send(
+                response = await client.send_message(
                     room_id=room_id,
-                    event_type="m.room.message",
+                    msg_type="m.room.message",
                     content={"msgtype": msgtype, "body": message},
                 )
 
-                return jsonify({"success": True, "event_id": event_id})
+                return jsonify({"success": True, "event_id": response.get("event_id")})
 
             except Exception as e:
                 logger.error(f"Failed to send message: {e}")
@@ -564,7 +656,7 @@ class MatrixWebClient(Star):
                 user_id = client_data["user_id"]
 
                 # 获取用户资料
-                displayname = await client.get_displayname(user_id)
+                displayname = await client.get_display_name(user_id)
                 avatar_url = await client.get_avatar_url(user_id)
 
                 return jsonify(
@@ -626,6 +718,9 @@ class MatrixWebClient(Star):
                 if session_id in self.active_sessions:
                     del self.active_sessions[session_id]
 
+                # 保存会话到磁盘
+                self._save_sessions()
+
                 return jsonify({"success": True})
 
             except Exception as e:
@@ -635,7 +730,7 @@ class MatrixWebClient(Star):
         @self.app.websocket("/ws")
         async def websocket_handler():
             """WebSocket 连接用于实时同步"""
-            session_id = request.args.get("session_id")
+            session_id = websocket.args.get("session_id")
 
             if not session_id or session_id not in self.matrix_clients:
                 await websocket.close(1008, "Invalid session")
