@@ -469,6 +469,56 @@ class MatrixHTTPClient:
         response = await self._request("GET", endpoint, authenticated=False)
         return response.get("displayname", user_id)
 
+    async def get_avatar_url(self, user_id: str) -> Optional[str]:
+        """
+        Get user avatar URL
+
+        Args:
+            user_id: Matrix user ID
+
+        Returns:
+            Avatar URL (mxc:// format) or None
+        """
+        endpoint = f"/_matrix/client/v3/profile/{user_id}/avatar_url"
+        try:
+            response = await self._request("GET", endpoint, authenticated=False)
+            return response.get("avatar_url")
+        except Exception:
+            return None
+
+    async def room_messages(
+        self,
+        room_id: str,
+        from_token: Optional[str] = None,
+        to_token: Optional[str] = None,
+        direction: str = "b",
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Get messages from a room
+
+        Args:
+            room_id: Room ID
+            from_token: Token to start from
+            to_token: Token to end at
+            direction: Direction to paginate ('b' for backwards, 'f' for forwards)
+            limit: Maximum number of events to return
+
+        Returns:
+            Response with chunk of events and pagination tokens
+        """
+        endpoint = f"/_matrix/client/v3/rooms/{room_id}/messages"
+        params = {
+            "dir": direction,
+            "limit": limit,
+        }
+        if from_token:
+            params["from"] = from_token
+        if to_token:
+            params["to"] = to_token
+
+        return await self._request("GET", endpoint, params=params)
+
     async def get_joined_rooms(self) -> List[str]:
         """
         Get list of joined room IDs

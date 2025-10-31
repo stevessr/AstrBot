@@ -32,4 +32,4 @@ packages/python_interpreter/workplace
 pytest.ini
 .astrbot
 
-uv.lock
+uv.lockpackages/matrix_web_client/data/
