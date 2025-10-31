@@ -266,15 +266,21 @@ class MatrixWebClient(Star):
                 if MatrixOAuth2 and MatrixHTTPClient:
                     client = MatrixHTTPClient(homeserver=homeserver)
 
+                    # 使用请求的 host 构建回调 URL，支持不同部署场景
+                    request_host = request.host
+                    redirect_uri = f"http://{request_host}/api/login/oauth2/callback"
+
                     # 创建 OAuth2 handler
                     oauth2_handler = MatrixOAuth2(
                         client=client,
                         homeserver=homeserver,
-                        redirect_uri=f"http://127.0.0.1:{self.port}/api/login/oauth2/callback",
+                        redirect_uri=redirect_uri,
                     )
 
                     # 发现 OAuth2 配置
                     try:
+                        # Note: Using private method temporarily until MatrixOAuth2 provides
+                        # a public API for manual authorization URL construction
                         await oauth2_handler._discover_oauth_endpoints()
                     except Exception as e:
                         return jsonify(
@@ -285,6 +291,8 @@ class MatrixWebClient(Star):
                         )
 
                     # 生成授权 URL（手动构建）
+                    # Note: Using private methods temporarily. These should be exposed as
+                    # public API in MatrixOAuth2 for building authorization URLs manually
                     state = oauth2_handler._generate_state()
                     pkce_verifier = oauth2_handler._generate_pkce_verifier()
                     pkce_challenge = oauth2_handler._generate_pkce_challenge(
@@ -293,8 +301,9 @@ class MatrixWebClient(Star):
 
                     auth_params = {
                         "response_type": "code",
-                        "client_id": oauth2_handler.client_id
-                        or "matrix-web-client",  # 默认 client_id
+                        # TODO: Make client_id configurable or get from dynamic registration
+                        # Fallback client_id may not work with all OAuth2 providers
+                        "client_id": oauth2_handler.client_id or "matrix-web-client",
                         "redirect_uri": oauth2_handler.redirect_uri,
                         "scope": " ".join(oauth2_handler.scopes),
                         "state": state,
@@ -332,19 +341,105 @@ class MatrixWebClient(Star):
         async def oauth2_callback():
             """OAuth2/OIDC 回调处理"""
             code = request.args.get("code")
-            # state parameter could be used for CSRF protection in the future
-            # state = request.args.get("state")
+            state = request.args.get("state")
             error = request.args.get("error")
 
             if error:
-                return f"<html><body><h1>认证失败</h1><p>{error}</p></body></html>"
+                return f"<html><body><h1>认证失败</h1><p>{error}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
 
-            if not code:
-                return "<html><body><h1>认证失败</h1><p>Missing authorization code</p></body></html>"
+            if not code or not state:
+                return "<html><body><h1>认证失败</h1><p>Missing authorization code or state</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
 
-            # 处理 OAuth2 回调
-            # 实际实现中需要找到对应的 session 并完成 token 交换
-            return "<html><body><h1>认证成功</h1><p>请返回客户端继续...</p><script>window.close();</script></body></html>"
+            # 验证 state 参数 (CSRF protection)
+            session_id = None
+            for sid, session_data in self.active_sessions.items():
+                if session_data.get("oauth2_state") == state:
+                    session_id = sid
+                    break
+
+            if not session_id:
+                return "<html><body><h1>认证失败</h1><p>Invalid state parameter (CSRF)</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
+
+            # 获取 OAuth2 handler 和 PKCE verifier
+            session_data = self.active_sessions[session_id]
+            oauth2_handler = session_data.get("oauth2_handler")
+            pkce_verifier = session_data.get("pkce_verifier")
+
+            if not oauth2_handler or not pkce_verifier:
+                return "<html><body><h1>认证失败</h1><p>Session expired</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
+
+            try:
+                # 交换授权码获取 token
+                import aiohttp
+
+                token_data = {
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": oauth2_handler.redirect_uri,
+                    "client_id": oauth2_handler.client_id or "matrix-web-client",
+                    "code_verifier": pkce_verifier,
+                }
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        oauth2_handler.token_endpoint, data=token_data
+                    ) as resp:
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            logger.error(f"Token exchange failed: {error_text}")
+                            return f"<html><body><h1>认证失败</h1><p>Token exchange failed</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
+
+                        token_response = await resp.json()
+
+                access_token = token_response.get("access_token")
+                if not access_token:
+                    return "<html><body><h1>认证失败</h1><p>No access token received</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
+
+                # 使用 access token 创建客户端
+                if MatrixHTTPClient:
+                    client = MatrixHTTPClient(homeserver=session_data["homeserver"])
+                    client.restore_login(
+                        user_id=None,  # Will be fetched from whoami
+                        device_id=None,
+                        access_token=access_token,
+                    )
+
+                    # 获取用户信息
+                    whoami = await client.whoami()
+
+                    # 保存客户端和会话信息
+                    self.matrix_clients[session_id] = {
+                        "client": client,
+                        "user_id": whoami.get("user_id"),
+                        "device_id": whoami.get("device_id"),
+                        "access_token": access_token,
+                        "homeserver": session_data["homeserver"],
+                    }
+
+                    # 更新会话状态
+                    self.active_sessions[session_id].update(
+                        {
+                            "user_id": whoami.get("user_id"),
+                            "oauth2_state": "completed",
+                            "login_time": datetime.now().isoformat(),
+                        }
+                    )
+
+                    return """<html><body>
+                        <h1>认证成功！</h1>
+                        <p>您已成功登录 Matrix。请返回客户端继续...</p>
+                        <script>
+                            // 通知父窗口登录成功
+                            if (window.opener) {
+                                window.opener.postMessage({type: 'oauth2_success', session_id: '%s'}, '*');
+                            }
+                            setTimeout(() => window.close(), 2000);
+                        </script>
+                    </body></html>""" % (session_id)
+
+            except Exception as e:
+                logger.error(f"OAuth2 callback error: {e}")
+                return f"<html><body><h1>认证失败</h1><p>{str(e)}</p><script>setTimeout(() => window.close(), 3000);</script></body></html>"
 
         @self.app.route("/api/rooms", methods=["GET"])
         async def get_rooms():
@@ -1067,22 +1162,29 @@ HTML_TEMPLATE = """
                 
                 if (data.success) {
                     sessionId = data.session_id;
-                    window.open(data.authorization_url, 'oauth2', 'width=600,height=700');
-                    showSuccess('请在新窗口中完成授权...');
                     
-                    // 轮询检查授权状态
-                    checkOAuth2Status();
+                    // 监听来自 OAuth2 窗口的消息
+                    window.addEventListener('message', (event) => {
+                        if (event.data.type === 'oauth2_success' && event.data.session_id === sessionId) {
+                            showSuccess('OAuth2 认证成功！');
+                            setTimeout(() => showClient(), 1000);
+                        }
+                    });
+                    
+                    // 打开 OAuth2 授权窗口
+                    const authWindow = window.open(
+                        data.authorization_url, 
+                        'oauth2',
+                        'width=600,height=700'
+                    );
+                    
+                    showSuccess('请在新窗口中完成授权...');
                 } else {
                     showError('启动 OAuth2 失败: ' + data.error);
                 }
             } catch (e) {
                 showError('启动 OAuth2 失败: ' + e.message);
             }
-        }
-        
-        function checkOAuth2Status() {
-            // 实际实现中需要轮询检查授权状态
-            // 这里简化处理
         }
         
         async function showClient() {
