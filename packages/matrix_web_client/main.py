@@ -792,7 +792,7 @@ class MatrixWebClient(Star):
                     return jsonify({"success": False, "error": "No file provided"})
 
                 file = files["file"]
-                file_data = await file.read()
+                file_data = file.read()  # Not async in Quart
 
                 client_data = self.matrix_clients[session_id]
                 client = client_data["client"]
@@ -1239,6 +1239,114 @@ HTML_TEMPLATE = """
         .hidden {
             display: none !important;
         }
+        
+        /* 密钥管理模态框 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .modal-header h2 {
+            margin: 0;
+            color: #333;
+        }
+        
+        .close-btn {
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+        
+        .close-btn:hover {
+            color: #000;
+        }
+        
+        .key-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        
+        .key-section h3 {
+            margin-top: 0;
+            color: #555;
+            font-size: 16px;
+        }
+        
+        .key-info {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .key-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .key-actions button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: #2196F3;
+            color: white;
+        }
+        
+        .btn-warning {
+            background: #FF9800;
+            color: white;
+        }
+        
+        .key-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -1331,6 +1439,58 @@ HTML_TEMPLATE = """
                 <button class="file-btn" onclick="document.getElementById('fileInput').click()">📎</button>
                 <input type="text" id="messageText" placeholder="输入消息 (支持 Markdown)..." onkeypress="handleMessageKeyPress(event)">
                 <button onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 密钥管理模态框 -->
+    <div id="keyManagementModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔐 密钥管理</h2>
+                <button class="close-btn" onclick="closeKeyManagement()">&times;</button>
+            </div>
+            
+            <div class="key-section">
+                <h3>📤 上传密钥</h3>
+                <p class="key-info">上传设备密钥和一次性密钥到服务器用于端到端加密</p>
+                <textarea id="deviceKeys" class="key-input" rows="4" placeholder='{"user_id": "@user:server", "device_id": "DEVICE", ...}'></textarea>
+                <textarea id="oneTimeKeys" class="key-input" rows="3" placeholder='{"curve25519:AAAAAQ": "base64+encoded+key", ...}'></textarea>
+                <div class="key-actions">
+                    <button class="btn-primary" onclick="uploadKeys()">上传密钥</button>
+                </div>
+                <div id="uploadResult"></div>
+            </div>
+            
+            <div class="key-section">
+                <h3>🔍 查询密钥</h3>
+                <p class="key-info">查询指定用户的密钥信息</p>
+                <input type="text" id="queryUserId" class="key-input" placeholder="@user:server.org">
+                <div class="key-actions">
+                    <button class="btn-secondary" onclick="queryKeys()">查询密钥</button>
+                </div>
+                <div id="queryResult"></div>
+            </div>
+            
+            <div class="key-section">
+                <h3>🎯 声明一次性密钥</h3>
+                <p class="key-info">为指定用户声明一次性密钥</p>
+                <textarea id="claimKeysInput" class="key-input" rows="3" placeholder='{"@user:server": {"DEVICE": "signed_curve25519"}}'></textarea>
+                <div class="key-actions">
+                    <button class="btn-warning" onclick="claimKeys()">声明密钥</button>
+                </div>
+                <div id="claimResult"></div>
+            </div>
+            
+            <div class="key-section">
+                <h3>ℹ️ 说明</h3>
+                <p class="key-info">
+                    • 设备密钥用于建立加密会话<br>
+                    • 一次性密钥用于初始化加密通道<br>
+                    • 查询密钥可以获取其他用户的公钥<br>
+                    • 声明密钥用于与新设备建立加密<br>
+                    • 完整的 E2EE 需要配合加密库使用
+                </p>
             </div>
         </div>
     </div>
@@ -1761,7 +1921,101 @@ HTML_TEMPLATE = """
         }
         
         function showKeyManagement() {
-            alert('密钥管理功能\\n\\n可用操作：\\n- 上传设备密钥: POST /api/keys/upload\\n- 查询用户密钥: POST /api/keys/query\\n- 声明一次性密钥: POST /api/keys/claim\\n\\n请使用 API 端点进行密钥管理操作。\\n\\n完整的 E2EE 密钥管理需要加密库支持，建议使用专门的 Matrix 客户端进行密钥验证和交换。');
+            document.getElementById('keyManagementModal').style.display = 'block';
+        }
+        
+        function closeKeyManagement() {
+            document.getElementById('keyManagementModal').style.display = 'none';
+        }
+        
+        async function uploadKeys() {
+            const deviceKeysText = document.getElementById('deviceKeys').value;
+            const oneTimeKeysText = document.getElementById('oneTimeKeys').value;
+            const resultDiv = document.getElementById('uploadResult');
+            
+            try {
+                let deviceKeys = null;
+                let oneTimeKeys = null;
+                
+                if (deviceKeysText) {
+                    deviceKeys = JSON.parse(deviceKeysText);
+                }
+                if (oneTimeKeysText) {
+                    oneTimeKeys = JSON.parse(oneTimeKeysText);
+                }
+                
+                const response = await fetch(`/api/keys/upload?session_id=${sessionId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_keys: deviceKeys, one_time_keys: oneTimeKeys})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = '<div class="success">✅ 密钥上传成功！<br><pre>' + JSON.stringify(data.response, null, 2) + '</pre></div>';
+                } else {
+                    resultDiv.innerHTML = '<div class="error">❌ 上传失败: ' + data.error + '</div>';
+                }
+            } catch (e) {
+                resultDiv.innerHTML = '<div class="error">❌ 错误: ' + e.message + '</div>';
+            }
+        }
+        
+        async function queryKeys() {
+            const userId = document.getElementById('queryUserId').value;
+            const resultDiv = document.getElementById('queryResult');
+            
+            if (!userId) {
+                resultDiv.innerHTML = '<div class="error">❌ 请输入用户 ID</div>';
+                return;
+            }
+            
+            try {
+                const deviceKeys = {};
+                deviceKeys[userId] = [];
+                
+                const response = await fetch(`/api/keys/query?session_id=${sessionId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_keys: deviceKeys})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = '<div class="success">✅ 查询成功！<br><pre style="max-height: 200px; overflow-y: auto;">' + JSON.stringify(data.response, null, 2) + '</pre></div>';
+                } else {
+                    resultDiv.innerHTML = '<div class="error">❌ 查询失败: ' + data.error + '</div>';
+                }
+            } catch (e) {
+                resultDiv.innerHTML = '<div class="error">❌ 错误: ' + e.message + '</div>';
+            }
+        }
+        
+        async function claimKeys() {
+            const claimKeysText = document.getElementById('claimKeysInput').value;
+            const resultDiv = document.getElementById('claimResult');
+            
+            try {
+                const oneTimeKeys = JSON.parse(claimKeysText);
+                
+                const response = await fetch(`/api/keys/claim?session_id=${sessionId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({one_time_keys: oneTimeKeys})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = '<div class="success">✅ 声明成功！<br><pre style="max-height: 200px; overflow-y: auto;">' + JSON.stringify(data.response, null, 2) + '</pre></div>';
+                } else {
+                    resultDiv.innerHTML = '<div class="error">❌ 声明失败: ' + data.error + '</div>';
+                }
+            } catch (e) {
+                resultDiv.innerHTML = '<div class="error">❌ 错误: ' + e.message + '</div>';
+            }
         }
         
         // 监听文件选择
@@ -1774,6 +2028,14 @@ HTML_TEMPLATE = """
                         document.getElementById('messageText').placeholder = `已选择: ${fileName}`;
                     }
                 });
+            }
+            
+            // 点击模态框外部关闭
+            const modal = document.getElementById('keyManagementModal');
+            window.onclick = function(event) {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
             }
         });
     </script>
