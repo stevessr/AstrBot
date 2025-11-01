@@ -1,15 +1,23 @@
-"""
-本地 Agent 模式的 LLM 调用 Stage
-"""
+"""本地 Agent 模式的 LLM 调用 Stage"""
 
 import asyncio
 import copy
 import json
 import traceback
 from datetime import timedelta
-from typing import AsyncGenerator, Union
+from typing import Union
 from astrbot.core.conversation_mgr import Conversation
+from collections.abc import AsyncGenerator
+
 from astrbot.core import logger
+from astrbot.core.agent.handoff import HandoffTool
+from astrbot.core.agent.hooks import BaseAgentRunHooks
+from astrbot.core.agent.run_context import ContextWrapper
+from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+from astrbot.core.agent.tool import FunctionTool, ToolSet
+from astrbot.core.agent.tool_executor import BaseFunctionToolExecutor
+from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -22,26 +30,19 @@ from astrbot.core.provider.entities import (
     LLMResponse,
     ProviderRequest,
 )
-from astrbot.core.agent.hooks import BaseAgentRunHooks
-from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
-from astrbot.core.agent.run_context import ContextWrapper
-from astrbot.core.agent.tool import ToolSet, FunctionTool
-from astrbot.core.agent.tool_executor import BaseFunctionToolExecutor
-from astrbot.core.agent.handoff import HandoffTool
+from astrbot.core.provider.register import llm_tools
 from astrbot.core.star.session_llm_manager import SessionServiceManager
-from astrbot.core.star.star_handler import EventType
+from astrbot.core.star.star_handler import EventType, star_map
 from astrbot.core.utils.metrics import Metric
+
 from ...context import PipelineContext, call_event_hook, call_handler
 from ..stage import Stage
 from ..utils import inject_kb_context
-from astrbot.core.provider.register import llm_tools
-from astrbot.core.star.star_handler import star_map
-from astrbot.core.astr_agent_context import AstrAgentContext
 
 try:
     import mcp
 except (ModuleNotFoundError, ImportError):
-    logger.warning("警告: 缺少依赖库 'mcp'，将无法使用 MCP 服务。")
+    logger.warning("警告：缺少依赖库 'mcp'，将无法使用 MCP 服务。")
 
 
 AgentContextWrapper = ContextWrapper[AstrAgentContext]
@@ -54,11 +55,12 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         """执行函数调用。
 
         Args:
-            event (AstrMessageEvent): 事件对象, 当 origin 为 local 时必须提供。
+            event (AstrMessageEvent): 事件对象，当 origin 为 local 时必须提供。
             **kwargs: 函数调用的参数。
 
         Returns:
             AsyncGenerator[None | mcp.types.CallToolResult, None]
+
         """
         if isinstance(tool, HandoffTool):
             async for r in cls._execute_handoff(tool, run_context, **tool_args):
@@ -117,14 +119,15 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
 
         logger.debug(f"正在将任务委托给 Agent: {tool.agent.name}, input: {input_}")
         await run_context.event.send(
-            MessageChain().message("✨ 正在将任务委托给 Agent: " + tool.agent.name)
+            MessageChain().message("✨ 正在将任务委托给 Agent: " + tool.agent.name),
         )
 
         await agent_runner.reset(
             provider=run_context.context.provider,
             request=request,
             run_context=AgentContextWrapper(
-                context=astr_agent_ctx, event=run_context.event
+                context=astr_agent_ctx,
+                event=run_context.event,
             ),
             tool_executor=FunctionToolExecutor(),
             agent_hooks=tool.agent.run_hooks or BaseAgentRunHooks[AstrAgentContext](),
@@ -146,7 +149,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                 return
 
             logger.debug(
-                f"Agent  {tool.agent.name} 任务完成, response: {llm_response.completion_text}"
+                f"Agent  {tool.agent.name} 任务完成，response: {llm_response.completion_text}",
             )
 
             result = (
@@ -180,7 +183,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         # 检查 tool 下有没有 run 方法
         if not tool.handler and not hasattr(tool, "run"):
             raise ValueError("Tool must have a valid handler or 'run' method.")
-        awaitable = tool.handler or getattr(tool, "run")
+        awaitable = tool.handler or tool.run
 
         wrapper = call_handler(
             event=run_context.event,
@@ -205,12 +208,12 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
                         yield mcp.types.CallToolResult(content=[text_content])
                 else:
                     # NOTE: Tool 在这里直接请求发送消息给用户
-                    # TODO: 是否需要判断 event.get_result() 是否为空?
-                    # 如果为空,则说明没有发送消息给用户,并且返回值为空,将返回一个特殊的 TextContent,其内容如"工具没有返回内容"
+                    # TODO: 是否需要判断 event.get_result() 是否为空？
+                    # 如果为空，则说明没有发送消息给用户，并且返回值为空，将返回一个特殊的 TextContent，其内容如"工具没有返回内容"
                     yield None
             except asyncio.TimeoutError:
                 raise Exception(
-                    f"tool {tool.name} execution timeout after {run_context.context.tool_call_timeout} seconds."
+                    f"tool {tool.name} execution timeout after {run_context.context.tool_call_timeout} seconds.",
                 )
             except StopAsyncIteration:
                 break
@@ -232,7 +235,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             name=tool.name,
             arguments=tool_args,
             read_timeout_seconds=timedelta(
-                seconds=run_context.context.tool_call_timeout
+                seconds=run_context.context.tool_call_timeout,
             ),
         )
         if not res:
@@ -244,7 +247,9 @@ class MainAgentHooks(BaseAgentRunHooks[AstrAgentContext]):
     async def on_agent_done(self, run_context, llm_response):
         # 执行事件钩子
         await call_event_hook(
-            run_context.event, EventType.OnLLMResponseEvent, llm_response
+            run_context.event,
+            EventType.OnLLMResponseEvent,
+            llm_response,
         )
 
 
@@ -252,7 +257,9 @@ MAIN_AGENT_HOOKS = MainAgentHooks()
 
 
 async def run_agent(
-    agent_runner: AgentRunner, max_step: int = 30, show_tool_use: bool = True
+    agent_runner: AgentRunner,
+    max_step: int = 30,
+    show_tool_use: bool = True,
 ) -> AsyncGenerator[MessageChain, None]:
     step_idx = 0
     astr_event = agent_runner.run_context.event
@@ -290,19 +297,18 @@ async def run_agent(
                         MessageEventResult(
                             chain=resp.data["chain"].chain,
                             result_content_type=content_typ,
-                        )
+                        ),
                     )
                     yield
                     astr_event.clear_result()
-                else:
-                    if resp.type == "streaming_delta":
-                        yield resp.data["chain"]  # MessageChain
+                elif resp.type == "streaming_delta":
+                    yield resp.data["chain"]  # MessageChain
             if agent_runner.done():
                 break
 
         except Exception as e:
             logger.error(traceback.format_exc())
-            err_msg = f"\n\nAstrBot 请求失败。\n错误类型: {type(e).__name__}\n错误信息: {str(e)}\n\n请在控制台查看和分享错误详情。\n"
+            err_msg = f"\n\nAstrBot 请求失败。\n错误类型：{type(e).__name__}\n错误信息：{e!s}\n\n请在控制台查看和分享错误详情。\n"
             if agent_runner.streaming:
                 yield MessageChain().message(err_msg)
             else:
@@ -332,7 +338,7 @@ class LLMRequestSubStage(Stage):
         for bwp in self.bot_wake_prefixs:
             if self.provider_wake_prefix.startswith(bwp):
                 logger.info(
-                    f"识别 LLM 聊天额外唤醒前缀 {self.provider_wake_prefix} 以机器人唤醒前缀 {bwp} 开头，已自动去除。"
+                    f"识别 LLM 聊天额外唤醒前缀 {self.provider_wake_prefix} 以机器人唤醒前缀 {bwp} 开头，已自动去除。",
                 )
                 self.provider_wake_prefix = self.provider_wake_prefix[len(bwp) :]
 
@@ -345,7 +351,7 @@ class LLMRequestSubStage(Stage):
         if sel_provider and isinstance(sel_provider, str):
             provider = _ctx.get_provider_by_id(sel_provider)
             if not provider:
-                logger.error(f"未找到指定的提供商: {sel_provider}。")
+                logger.error(f"未找到指定的提供商：{sel_provider}。")
             return provider
 
         return _ctx.get_using_provider(umo=event.unified_msg_origin)
@@ -367,15 +373,17 @@ class LLMRequestSubStage(Stage):
         return conversation
 
     async def process(
-        self, event: AstrMessageEvent, _nested: bool = False
-    ) -> Union[None, AsyncGenerator[None, None]]:
+        self,
+        event: AstrMessageEvent,
+        _nested: bool = False,
+    ) -> None | AsyncGenerator[None, None]:
         req: ProviderRequest | None = None
 
         if not self.ctx.astrbot_config["provider_settings"]["enable"]:
             logger.debug("未启用 LLM 能力，跳过处理。")
             return
 
-        # 检查会话级别的LLM启停状态
+        # 检查会话级别的 LLM 启停状态
         if not SessionServiceManager.should_process_llm_request(event):
             logger.debug(f"会话 {event.unified_msg_origin} 禁用了 LLM，跳过处理。")
             return
@@ -384,7 +392,7 @@ class LLMRequestSubStage(Stage):
         if provider is None:
             return
         if not isinstance(provider, Provider):
-            logger.error(f"选择的提供商类型无效({type(provider)})，跳过 LLM 请求处理。")
+            logger.error(f"选择的提供商类型无效 ({type(provider)})，跳过 LLM 请求处理。")
             return
 
         if event.get_extra("provider_request"):
@@ -423,10 +431,12 @@ class LLMRequestSubStage(Stage):
         # 应用知识库
         try:
             await inject_kb_context(
-                umo=event.unified_msg_origin, p_ctx=self.ctx, req=req
+                umo=event.unified_msg_origin,
+                p_ctx=self.ctx,
+                req=req,
             )
         except Exception as e:
-            logger.error(f"调用知识库时遇到问题: {e}")
+            logger.error(f"调用知识库时遇到问题：{e}")
 
         # 执行请求 LLM 前事件钩子。
         if await call_event_hook(event, EventType.OnLLMRequestEvent, req):
@@ -444,7 +454,7 @@ class LLMRequestSubStage(Stage):
             req.contexts = req.contexts[
                 -(self.max_context_length - self.dequeue_context_length + 1) * 2 :
             ]
-            # 找到第一个role 为 user 的索引，确保上下文格式正确
+            # 找到第一个 role 为 user 的索引，确保上下文格式正确
             index = next(
                 (
                     i
@@ -475,7 +485,7 @@ class LLMRequestSubStage(Stage):
             # 如果模型不支持工具使用，但请求中包含工具列表，则清空。
             if "tool_use" not in provider_cfg:
                 logger.debug(
-                    f"用户设置提供商 {provider} 不支持工具使用，清空工具列表。"
+                    f"用户设置提供商 {provider} 不支持工具使用，清空工具列表。",
                 )
                 req.func_tool = None
         # 插件可用性设置
@@ -498,7 +508,7 @@ class LLMRequestSubStage(Stage):
         # run agent
         agent_runner = AgentRunner()
         logger.debug(
-            f"handle provider[id: {provider.provider_config['id']}] request: {req}"
+            f"handle provider[id: {provider.provider_config['id']}] request: {req}",
         )
         astr_agent_ctx = AstrAgentContext(
             provider=provider,
@@ -522,8 +532,8 @@ class LLMRequestSubStage(Stage):
                 MessageEventResult()
                 .set_result_content_type(ResultContentType.STREAMING_RESULT)
                 .set_async_stream(
-                    run_agent(agent_runner, self.max_step, self.show_tool_use)
-                )
+                    run_agent(agent_runner, self.max_step, self.show_tool_use),
+                ),
             )
             yield
             if agent_runner.done():
@@ -540,7 +550,7 @@ class LLMRequestSubStage(Stage):
                         MessageEventResult(
                             chain=chain,
                             result_content_type=ResultContentType.STREAMING_FINISH,
-                        )
+                        ),
                     )
         else:
             async for _ in run_agent(agent_runner, self.max_step, self.show_tool_use):
@@ -560,17 +570,21 @@ class LLMRequestSubStage(Stage):
                 llm_tick=1,
                 model_name=agent_runner.provider.get_model(),
                 provider_type=agent_runner.provider.meta().type,
-            )
+            ),
         )
 
     async def _handle_webchat(
-        self, event: AstrMessageEvent, req: ProviderRequest, prov: Provider
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest,
+        prov: Provider,
     ):
         """处理 WebChat 平台的特殊情况，包括第一次 LLM 对话时总结对话内容生成 title"""
         if not req.conversation:
             return
         conversation = await self.conv_manager.get_conversation(
-            event.unified_msg_origin, req.conversation.cid
+            event.unified_msg_origin,
+            req.conversation.cid,
         )
         if conversation and not req.conversation.title:
             messages = json.loads(conversation.history)
@@ -594,7 +608,7 @@ class LLMRequestSubStage(Stage):
                 cleaned_text = "User: " + content.strip()
             else:
                 return
-            logger.debug(f"WebChat 对话标题生成请求，清理后的文本: {cleaned_text}")
+            logger.debug(f"WebChat 对话标题生成请求，清理后的文本：{cleaned_text}")
             llm_resp = await prov.text_chat(
                 system_prompt="You are expert in summarizing user's query.",
                 prompt=(
@@ -607,7 +621,7 @@ class LLMRequestSubStage(Stage):
             )
             if llm_resp and llm_resp.completion_text:
                 logger.debug(
-                    f"WebChat 对话标题生成响应: {llm_resp.completion_text.strip()}"
+                    f"WebChat 对话标题生成响应：{llm_resp.completion_text.strip()}",
                 )
                 title = llm_resp.completion_text.strip()
                 if not title or "<None>" in title:
@@ -650,7 +664,9 @@ class LLMRequestSubStage(Stage):
         messages.append({"role": "assistant", "content": llm_response.completion_text})
         messages = list(filter(lambda item: "_no_save" not in item, messages))
         await self.conv_manager.update_conversation(
-            event.unified_msg_origin, req.conversation.cid, history=messages
+            event.unified_msg_origin,
+            req.conversation.cid,
+            history=messages,
         )
 
     def fix_messages(self, messages: list[dict]) -> list[dict]:
