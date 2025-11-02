@@ -27,7 +27,7 @@ from astrbot.core.db.migration.migra_45_to_46 import migrate_45_to_46
 from astrbot.core.updator import AstrBotUpdator
 
 from astrbot.core import LogBroker, logger, sp
-from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+
 from astrbot.core.config.default import VERSION
 from astrbot.core.conversation_mgr import ConversationManager
 from astrbot.core.db import BaseDatabase
@@ -49,8 +49,8 @@ from .event_bus import EventBus
 
 
 class AstrBotCoreLifecycle:
-    """AstrBot 核心生命周期管理类，负责管理 AstrBot 的启动、停止、重启等操作。
-
+    """
+    AstrBot 核心生命周期管理类，负责管理 AstrBot 的启动、停止、重启等操作。
     该类负责初始化各个组件，包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、
     EventBus 等。
     该类还负责加载和执行插件，以及处理事件总线的分发。
@@ -126,6 +126,10 @@ class AstrBotCoreLifecycle:
             self.db,
             self.persona_mgr,
         )
+
+        # 预加载所有平台适配器以注册到 platform_registry
+        # 这样前端可以显示所有可用的平台类型，而不仅仅是已配置的平台
+        register_all_platforms()
 
         # 初始化平台管理器
         self.platform_manager = PlatformManager(self.astrbot_config, self.event_queue)

@@ -54,7 +54,7 @@ def validate_config(data, schema: dict, is_core: bool) -> tuple[list[str], dict]
                 continue
             meta = metadata[key]
             if "type" not in meta:
-                logger.debug(f"配置项 {path}{key} 没有类型定义, 跳过校验")
+                logger.debug(f"配置项 {path}{key} 没有类型定义，跳过校验")
                 continue
             # null 转换
             if value is None:
@@ -136,10 +136,10 @@ def save_config(post_config: dict, config: AstrBotConfig, is_core: bool = False)
             errors, post_config = validate_config(post_config, config.schema, is_core)
     except BaseException as e:
         logger.error(traceback.format_exc())
-        logger.warning(f"验证配置时出现异常: {e}")
-        raise ValueError(f"验证配置时出现异常: {e}")
+        logger.warning(f"验证配置时出现异常：{e}")
+        raise ValueError(f"验证配置时出现异常：{e}")
     if errors:
-        raise ValueError(f"格式校验未通过: {errors}")
+        raise ValueError(f"格式校验未通过：{errors}")
 
     config.save_config(post_config)
 
@@ -153,7 +153,7 @@ class ConfigRoute(Route):
         super().__init__(context)
         self.core_lifecycle = core_lifecycle
         self.config: AstrBotConfig = core_lifecycle.astrbot_config
-        self._logo_token_cache = {}  # 缓存logo token，避免重复注册
+        self._logo_token_cache = {}  # 缓存 logo token，避免重复注册
         self.acm = core_lifecycle.astrbot_config_mgr
         self.ucr = core_lifecycle.umop_config_router
         self.routes = {
@@ -204,7 +204,7 @@ class ConfigRoute(Route):
             return Response().ok(message="更新成功").__dict__
         except Exception as e:
             logger.error(traceback.format_exc())
-            return Response().error(f"更新路由表失败: {e!s}").__dict__
+            return Response().error(f"更新路由表失败：{e!s}").__dict__
 
     async def update_ucr(self):
         """更新 UMOP 配置路由表"""
@@ -223,7 +223,7 @@ class ConfigRoute(Route):
             return Response().ok(message="更新成功").__dict__
         except Exception as e:
             logger.error(traceback.format_exc())
-            return Response().error(f"更新路由表失败: {e!s}").__dict__
+            return Response().error(f"更新路由表失败：{e!s}").__dict__
 
     async def delete_ucr(self):
         """删除 UMOP 配置路由表中的一项"""
@@ -243,7 +243,7 @@ class ConfigRoute(Route):
             return Response().ok(message="删除成功").__dict__
         except Exception as e:
             logger.error(traceback.format_exc())
-            return Response().error(f"删除路由表项失败: {e!s}").__dict__
+            return Response().error(f"删除路由表项失败：{e!s}").__dict__
 
     async def get_default_config(self):
         """获取默认配置文件"""
@@ -315,7 +315,7 @@ class ConfigRoute(Route):
             return Response().error(str(e)).__dict__
         except Exception as e:
             logger.error(traceback.format_exc())
-            return Response().error(f"删除配置文件失败: {e!s}").__dict__
+            return Response().error(f"删除配置文件失败：{e!s}").__dict__
 
     async def update_abconf(self):
         """更新指定 AstrBot 配置文件信息"""
@@ -338,7 +338,7 @@ class ConfigRoute(Route):
             return Response().error(str(e)).__dict__
         except Exception as e:
             logger.error(traceback.format_exc())
-            return Response().error(f"更新配置文件失败: {e!s}").__dict__
+            return Response().error(f"更新配置文件失败：{e!s}").__dict__
 
     async def _test_single_provider(self, provider):
         """辅助函数：测试单个 provider 的可用性"""
@@ -532,7 +532,7 @@ class ConfigRoute(Route):
         log_fn=logger.error,
     ):
         log_fn(message)
-        # 记录更详细的traceback信息，但只在是严重错误时
+        # 记录更详细的 traceback 信息，但只在是严重错误时
         if status_code == 500:
             log_fn(traceback.format_exc())
         return Response().error(message).__dict__
@@ -666,13 +666,32 @@ class ConfigRoute(Route):
             return Response().ok({"embedding_dimensions": dim}).__dict__
         except Exception as e:
             logger.error(traceback.format_exc())
-            return Response().error(f"获取嵌入维度失败: {e!s}").__dict__
+            return Response().error(f"获取嵌入维度失败：{e!s}").__dict__
 
     async def get_platform_list(self):
-        """获取所有平台的列表"""
+        """获取所有平台的列表（包括已配置的平台和可用的平台类型）"""
         platform_list = []
+
+        # 已配置的平台实例
         for platform in self.config["platform"]:
             platform_list.append(platform)
+
+        # 如果需要显示所有可用的平台类型（用于选择器），添加未配置的平台类型
+        # 从 platform_registry 获取所有注册的平台类型
+        configured_types = {p.get("type", p.get("id")) for p in self.config["platform"]}
+
+        for platform_meta in platform_registry:
+            if platform_meta.name not in configured_types:
+                # 添加未配置的平台类型作为选项
+                platform_list.append(
+                    {
+                        "id": platform_meta.name,
+                        "type": platform_meta.name,
+                        "enable": False,
+                        "_unconfigured": True,  # 标记为未配置
+                    }
+                )
+
         return Response().ok({"platforms": platform_list}).__dict__
 
     async def post_astrbot_configs(self):
@@ -806,7 +825,7 @@ class ConfigRoute(Route):
         return Response().ok(tools).__dict__
 
     async def _register_platform_logo(self, platform, platform_default_tmpl):
-        """注册平台logo文件并生成访问令牌"""
+        """注册平台 logo 文件并生成访问令牌"""
         if not platform.logo_path:
             return
 
@@ -815,7 +834,7 @@ class ConfigRoute(Route):
             cache_key = f"{platform.name}:{platform.logo_path}"
             if cache_key in self._logo_token_cache:
                 cached_token = self._logo_token_cache[cache_key]
-                # 确保platform_default_tmpl[platform.name]存在且为字典
+                # 确保 platform_default_tmpl[platform.name] 存在且为字典
                 if platform.name not in platform_default_tmpl or not isinstance(
                     platform_default_tmpl[platform.name], dict
                 ):
@@ -834,7 +853,7 @@ class ConfigRoute(Route):
             module_file = inspect.getfile(platform_cls)
             plugin_dir = os.path.dirname(module_file)
 
-            # 解析logo文件路径
+            # 解析 logo 文件路径
             logo_file_path = os.path.join(plugin_dir, platform.logo_path)
 
             # 检查文件是否存在并注册令牌
@@ -844,7 +863,7 @@ class ConfigRoute(Route):
                     timeout=3600,
                 )
 
-                # 确保platform_default_tmpl[platform.name]存在且为字典
+                # 确保 platform_default_tmpl[platform.name] 存在且为字典
                 if platform.name not in platform_default_tmpl or not isinstance(
                     platform_default_tmpl[platform.name], dict
                 ):
@@ -852,7 +871,7 @@ class ConfigRoute(Route):
 
                 platform_default_tmpl[platform.name]["logo_token"] = logo_token
 
-                # 缓存token
+                # 缓存 token
                 self._logo_token_cache[cache_key] = logo_token
 
                 logger.debug(f"Logo token registered for platform {platform.name}")
@@ -880,18 +899,18 @@ class ConfigRoute(Route):
             "platform"
         ]["config_template"]
 
-        # 收集需要注册logo的平台
+        # 收集需要注册 logo 的平台
         logo_registration_tasks = []
         for platform in platform_registry:
             if platform.default_config_tmpl:
                 platform_default_tmpl[platform.name] = platform.default_config_tmpl
-                # 收集logo注册任务
+                # 收集 logo 注册任务
                 if platform.logo_path:
                     logo_registration_tasks.append(
                         self._register_platform_logo(platform, platform_default_tmpl),
                     )
 
-        # 并行执行logo注册
+        # 并行执行 logo 注册
         if logo_registration_tasks:
             await asyncio.gather(*logo_registration_tasks, return_exceptions=True)
 
