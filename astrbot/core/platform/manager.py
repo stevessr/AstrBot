@@ -31,7 +31,7 @@ class PlatformManager:
             try:
                 await self.load_platform(platform)
             except Exception as e:
-                logger.error(f"初始化 {platform} 平台适配器失败: {e}")
+                logger.error(f"初始化 {platform} 平台适配器失败：{e}")
 
         # 网页聊天
         webchat_inst = WebChatAdapter({}, self.settings, self.event_queue)
@@ -99,6 +99,10 @@ class PlatformManager:
                     from .sources.misskey.misskey_adapter import (
                         MisskeyPlatformAdapter,  # noqa: F401
                     )
+                case "matrix":
+                    from .sources.matrix.matrix_adapter import (
+                        MatrixPlatformAdapter,  # noqa: F401
+                    )
                 case "slack":
                     from .sources.slack.slack_adapter import SlackAdapter  # noqa: F401
                 case "satori":
@@ -107,7 +111,7 @@ class PlatformManager:
                     )
         except (ImportError, ModuleNotFoundError) as e:
             logger.error(
-                f"加载平台适配器 {platform_config['type']} 失败，原因：{e}。请检查依赖库是否安装。提示：可以在 管理面板->控制台->安装Pip库 中安装依赖库。",
+                f"加载平台适配器 {platform_config['type']} 失败，原因：{e}。请检查依赖库是否安装。提示：可以在 管理面板->控制台->安装 Pip 库 中安装依赖库。"
             )
         except Exception as e:
             logger.error(f"加载平台适配器 {platform_config['type']} 失败，原因：{e}。")
@@ -151,7 +155,7 @@ class PlatformManager:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"------- 任务 {task.get_name()} 发生错误: {e}")
+            logger.error(f"------- 任务 {task.get_name()} 发生错误：{e}")
             for line in traceback.format_exc().split("\n"):
                 logger.error(f"|    {line}")
             logger.error("-------")
