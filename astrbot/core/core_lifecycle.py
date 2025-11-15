@@ -1,11 +1,11 @@
 """
-Astrbot 核心生命周期管理类, 负责管理 AstrBot 的启动、停止、重启等操作。
-该类负责初始化各个组件, 包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、EventBus等。
-该类还负责加载和执行插件, 以及处理事件总线的分发。
+Astrbot 核心生命周期管理类，负责管理 AstrBot 的启动、停止、重启等操作。
+该类负责初始化各个组件，包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、EventBus 等。
+该类还负责加载和执行插件，以及处理事件总线的分发。
 
-工作流程:
+工作流程：
 1. 初始化所有组件
-2. 启动事件总线和任务, 所有任务都在这里运行
+2. 启动事件总线和任务，所有任务都在这里运行
 3. 执行启动完成事件钩子
 """
 
@@ -20,6 +20,7 @@ from asyncio import Queue
 from astrbot.core.pipeline.scheduler import PipelineScheduler, PipelineContext
 from astrbot.core.star import PluginManager
 from astrbot.core.platform.manager import PlatformManager
+from astrbot.core.platform.sources import register_all_platforms
 from astrbot.core.star.context import Context
 from astrbot.core.persona_mgr import PersonaManager
 from astrbot.core.provider.manager import ProviderManager
@@ -40,10 +41,10 @@ from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 
 class AstrBotCoreLifecycle:
     """
-    AstrBot 核心生命周期管理类, 负责管理 AstrBot 的启动、停止、重启等操作。
-    该类负责初始化各个组件, 包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、
+    AstrBot 核心生命周期管理类，负责管理 AstrBot 的启动、停止、重启等操作。
+    该类负责初始化各个组件，包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、
     EventBus 等。
-    该类还负责加载和执行插件, 以及处理事件总线的分发。
+    该类还负责加载和执行插件，以及处理事件总线的分发。
     """
 
     def __init__(self, log_broker: LogBroker, db: BaseDatabase):
@@ -72,7 +73,7 @@ class AstrBotCoreLifecycle:
 
     async def initialize(self):
         """
-        初始化 AstrBot 核心生命周期管理类, 负责初始化各个组件, 包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、EventBus、AstrBotUpdator等。
+        初始化 AstrBot 核心生命周期管理类，负责初始化各个组件，包括 ProviderManager、PlatformManager、ConversationManager、PluginManager、PipelineScheduler、EventBus、AstrBotUpdator 等。
         """
 
         # 初始化日志代理
@@ -112,6 +113,10 @@ class AstrBotCoreLifecycle:
         self.provider_manager = ProviderManager(
             self.astrbot_config_mgr, self.db, self.persona_mgr
         )
+
+        # 预加载所有平台适配器以注册到 platform_registry
+        # 这样前端可以显示所有可用的平台类型，而不仅仅是已配置的平台
+        register_all_platforms()
 
         # 初始化平台管理器
         self.platform_manager = PlatformManager(self.astrbot_config, self.event_queue)
@@ -177,7 +182,7 @@ class AstrBotCoreLifecycle:
         """加载事件总线和任务并初始化"""
 
         # 创建一个异步任务来执行事件总线的 dispatch() 方法
-        # dispatch是一个无限循环的协程, 从事件队列中获取事件并处理
+        # dispatch 是一个无限循环的协程，从事件队列中获取事件并处理
         event_bus_task = asyncio.create_task(
             self.event_bus.dispatch(), name="event_bus"
         )
@@ -196,7 +201,7 @@ class AstrBotCoreLifecycle:
         self.start_time = int(time.time())
 
     async def _task_wrapper(self, task: asyncio.Task):
-        """异步任务包装器, 用于处理异步任务执行中出现的各种异常
+        """异步任务包装器，用于处理异步任务执行中出现的各种异常
 
         Args:
             task (asyncio.Task): 要执行的异步任务
@@ -204,16 +209,16 @@ class AstrBotCoreLifecycle:
         try:
             await task
         except asyncio.CancelledError:
-            pass  # 任务被取消, 静默处理
+            pass  # 任务被取消，静默处理
         except Exception as e:
-            # 获取完整的异常堆栈信息, 按行分割并记录到日志中
-            logger.error(f"------- 任务 {task.get_name()} 发生错误: {e}")
+            # 获取完整的异常堆栈信息，按行分割并记录到日志中
+            logger.error(f"------- 任务 {task.get_name()} 发生错误：{e}")
             for line in traceback.format_exc().split("\n"):
                 logger.error(f"|    {line}")
             logger.error("-------")
 
     async def start(self):
-        """启动 AstrBot 核心生命周期管理类, 用load加载事件总线和任务并初始化, 执行启动完成事件钩子"""
+        """启动 AstrBot 核心生命周期管理类，用 load 加载事件总线和任务并初始化，执行启动完成事件钩子"""
         self._load()
         logger.info("AstrBot 启动完成。")
 
@@ -230,11 +235,11 @@ class AstrBotCoreLifecycle:
             except BaseException:
                 logger.error(traceback.format_exc())
 
-        # 同时运行curr_tasks中的所有任务
+        # 同时运行 curr_tasks 中的所有任务
         await asyncio.gather(*self.curr_tasks, return_exceptions=True)
 
     async def stop(self):
-        """停止 AstrBot 核心生命周期管理类, 取消所有当前任务并终止各个管理器"""
+        """停止 AstrBot 核心生命周期管理类，取消所有当前任务并终止各个管理器"""
         # 请求停止所有正在运行的异步任务
         for task in self.curr_tasks:
             task.cancel()
@@ -253,17 +258,17 @@ class AstrBotCoreLifecycle:
         await self.kb_manager.terminate()
         self.dashboard_shutdown_event.set()
 
-        # 再次遍历curr_tasks等待每个任务真正结束
+        # 再次遍历 curr_tasks 等待每个任务真正结束
         for task in self.curr_tasks:
             try:
                 await task
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                logger.error(f"任务 {task.get_name()} 发生错误: {e}")
+                logger.error(f"任务 {task.get_name()} 发生错误：{e}")
 
     async def restart(self):
-        """重启 AstrBot 核心生命周期管理类, 终止各个管理器并重新加载平台实例"""
+        """重启 AstrBot 核心生命周期管理类，终止各个管理器并重新加载平台实例"""
         await self.provider_manager.terminate()
         await self.platform_manager.terminate()
         await self.kb_manager.terminate()
