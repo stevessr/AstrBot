@@ -1,0 +1,4 @@
+name: matrix_web_client
+desc: Matrix 完整 Web 客户端 - 支持 OAuth2/OIDC/SSO 登录和完整的客户端功能
+author: AstrBot Team
+version: 1.0.0

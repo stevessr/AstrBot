@@ -374,6 +374,20 @@ CONFIG_METADATA_2 = {
                         "satori_heartbeat_interval": 10,
                         "satori_reconnect_delay": 5,
                     },
+                    "matrix": {
+                        "matrix_homeserver": "https://matrix.org",
+                        "matrix_user_id": "",
+                        "matrix_password": "",
+                        "matrix_access_token": "",
+                        "matrix_auth_method": "password",
+                        "matrix_device_name": "AstrBot",
+                        "matrix_device_id": "",
+                        "matrix_store_path": "./data/matrix_store",
+                        "matrix_auto_join_rooms": True,
+                        "matrix_sync_timeout": 30000,
+                        "matrix_bot_name": "AstrBot",
+                        "matrix_refresh_token": "",
+                    },
                     # "WebChat": {
                     #     "id": "webchat",
                     #     "type": "webchat",
@@ -415,6 +429,9 @@ CONFIG_METADATA_2 = {
                         "condition": {
                             "lark_connection_mode": "webhook",
                         },
+                    "matrix_auto_join_rooms":{
+                        "description": "自动加入房间",
+                        "type": "bool",
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",
