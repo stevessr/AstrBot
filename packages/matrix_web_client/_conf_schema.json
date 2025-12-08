@@ -1,0 +1,16 @@
+{
+  "port": {
+    "description": "Matrix Web Client 服务器端口",
+    "type": "int",
+    "hint": "设置 Matrix Web 客户端服务运行的端口",
+    "default": 8766,
+    "min": 1024,
+    "max": 65535
+  },
+  "host": {
+    "description": "Matrix Web Client 服务器主机地址",
+    "type": "string",
+    "hint": "设置 Matrix Web 客户端服务监听的地址",
+    "default": "0.0.0.0"
+  }
+}
