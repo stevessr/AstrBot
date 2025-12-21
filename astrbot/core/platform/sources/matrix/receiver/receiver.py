@@ -3,9 +3,9 @@ Matrix 消息接收组件
 """
 
 import hashlib
-import logging
 from pathlib import Path
 
+from astrbot.api import logger
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import *
 from astrbot.api.message_components import Image
@@ -17,8 +17,6 @@ from astrbot.core.utils import astrbot_path
 # Update import: Client event types are in ..client.event_types
 from ..client.event_types import MatrixRoom
 from ..utils.utils import MatrixUtils
-
-logger = logging.getLogger("astrbot.matrix.receiver")
 
 
 class MatrixReceiver:
@@ -87,6 +85,67 @@ class MatrixReceiver:
             # AstrBot 的 Reply 组件结构可能需要适配
             reply_comp = Reply(id=reply_event_id)
             chain.chain.append(reply_comp)
+
+            # 尝试获取引用消息中的图片
+            if self.client:
+                try:
+                    original_event = await self.client.get_event(
+                        room.room_id, reply_event_id
+                    )
+                    if original_event:
+                        original_content = original_event.get("content", {})
+                        original_msgtype = original_content.get("msgtype")
+
+                        # 如果引用的消息是图片，下载并添加到消息链
+                        if original_msgtype == "m.image":
+                            original_mxc_url = original_content.get("url")
+                            if original_mxc_url:
+                                try:
+                                    # 使用相同的缓存机制
+                                    cache_key = hashlib.md5(
+                                        original_mxc_url.encode()
+                                    ).hexdigest()
+                                    cache_dir = (
+                                        Path(astrbot_path.get_astrbot_data_path())
+                                        / "temp"
+                                        / "matrix_media"
+                                    )
+                                    cache_dir.mkdir(parents=True, exist_ok=True)
+
+                                    filename = original_content.get(
+                                        "body", "image.jpg"
+                                    )
+                                    ext = Path(filename).suffix or ".jpg"
+                                    cache_path = cache_dir / f"{cache_key}{ext}"
+
+                                    if (
+                                        cache_path.exists()
+                                        and cache_path.stat().st_size > 0
+                                    ):
+                                        logger.debug(
+                                            f"Using cached quoted image: {cache_path}"
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"Downloading quoted image: {original_mxc_url}"
+                                        )
+                                        image_data = await self.client.download_file(
+                                            original_mxc_url
+                                        )
+                                        cache_path.write_bytes(image_data)
+
+                                    chain.chain.append(
+                                        Image.fromFileSystem(str(cache_path))
+                                    )
+                                    logger.debug(
+                                        f"Added quoted image to chain: {cache_path}"
+                                    )
+                                except Exception as img_err:
+                                    logger.warning(
+                                        f"Failed to download quoted image: {img_err}"
+                                    )
+                except Exception as e:
+                    logger.debug(f"Could not fetch original event for reply: {e}")
 
         # 处理消息内容
         msgtype = event.content.get("msgtype")
