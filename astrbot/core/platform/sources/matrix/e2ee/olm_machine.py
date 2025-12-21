@@ -18,7 +18,7 @@ try:
     from vodozemac import (
         Account,
         InboundGroupSession,
-        OutboundGroupSession,
+        GroupSession,  # 出站会话 (vodozemac 中称为 GroupSession)
         Session,
     )
 
@@ -54,6 +54,13 @@ class OlmMachine:
         self.user_id = user_id
         self.device_id = device_id
 
+        # 生成 pickle key (用于加密存储的 Olm 状态)
+        # 基于 user_id 和 device_id 生成稳定的密钥
+        import hashlib
+
+        key_material = f"{user_id}:{device_id}:astrbot_e2ee".encode()
+        self._pickle_key = hashlib.sha256(key_material).digest()
+
         # Olm 账户
         self._account: Account | None = None
 
@@ -62,7 +69,7 @@ class OlmMachine:
 
         # Megolm 会话缓存
         self._megolm_inbound: dict[str, InboundGroupSession] = {}
-        self._megolm_outbound: dict[str, OutboundGroupSession] = {}
+        self._megolm_outbound: dict[str, GroupSession] = {}
 
         # 初始化或加载账户
         self._init_account()
@@ -74,7 +81,7 @@ class OlmMachine:
         if pickle:
             # 从 pickle 恢复账户
             try:
-                self._account = Account.from_pickle(pickle)
+                self._account = Account.from_pickle(pickle, self._pickle_key)
                 logger.info("从存储恢复 Olm 账户")
             except Exception as e:
                 logger.error(f"恢复 Olm 账户失败：{e}")
@@ -91,7 +98,7 @@ class OlmMachine:
     def _save_account(self):
         """保存 Olm 账户到存储"""
         if self._account:
-            pickle = self._account.pickle()
+            pickle = self._account.pickle(self._pickle_key)
             self.store.save_account_pickle(pickle)
 
     # ========== 设备密钥 ==========
@@ -101,8 +108,9 @@ class OlmMachine:
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
 
-        curve25519 = self._account.curve25519_key
-        ed25519 = self._account.ed25519_key
+        # vodozemac 返回的是 Key 对象，需要转换为字符串
+        curve25519 = str(self._account.curve25519_key)
+        ed25519 = str(self._account.ed25519_key)
 
         return {
             f"curve25519:{self.device_id}": curve25519,
@@ -130,9 +138,9 @@ class OlmMachine:
             "keys": keys,
         }
 
-        # 生成签名
+        # 生成签名 (vodozemac sign 需要 bytes 输入，返回 Ed25519Signature 对象)
         device_keys_json = self._canonical_json(device_keys)
-        signature = self._account.sign(device_keys_json)
+        signature = str(self._account.sign(device_keys_json.encode()))
 
         device_keys["signatures"] = {
             self.user_id: {f"ed25519:{self.device_id}": signature}
@@ -159,16 +167,17 @@ class OlmMachine:
         # 获取一次性密钥
         one_time_keys = self._account.one_time_keys
 
-        # 签名每个密钥
+        # 签名每个密钥 (key 是 Curve25519PublicKey 对象，需要转为字符串)
         signed_keys = {}
         for key_id, key in one_time_keys.items():
+            key_str = str(key)  # 转换为字符串
             signed_key = {
-                "key": key,
+                "key": key_str,
             }
 
-            # 生成签名
+            # 生成签名 (vodozemac sign 需要 bytes 输入)
             key_json = self._canonical_json(signed_key)
-            signature = self._account.sign(key_json)
+            signature = str(self._account.sign(key_json.encode()))
             signed_key["signatures"] = {
                 self.user_id: {f"ed25519:{self.device_id}": signature}
             }
@@ -212,7 +221,7 @@ class OlmMachine:
         self._olm_sessions[their_identity_key].append(session)
 
         # 保存会话
-        self.store.add_olm_session(their_identity_key, session.pickle())
+        self.store.add_olm_session(their_identity_key, session.pickle(self._pickle_key))
         self._save_account()
 
         return session
@@ -240,7 +249,9 @@ class OlmMachine:
             try:
                 plaintext = session.decrypt(message_type, ciphertext)
                 # 更新会话
-                self.store.update_olm_session(sender_key, i, session.pickle())
+                self.store.update_olm_session(
+                    sender_key, i, session.pickle(self._pickle_key)
+                )
                 return plaintext
             except Exception:
                 continue
@@ -257,7 +268,7 @@ class OlmMachine:
             if sender_key not in self._olm_sessions:
                 self._olm_sessions[sender_key] = []
             self._olm_sessions[sender_key].append(session)
-            self.store.add_olm_session(sender_key, session.pickle())
+            self.store.add_olm_session(sender_key, session.pickle(self._pickle_key))
             self._save_account()
 
             return plaintext
@@ -281,7 +292,7 @@ class OlmMachine:
         try:
             session = InboundGroupSession(session_key)
             self._megolm_inbound[session_id] = session
-            self.store.save_megolm_inbound(session_id, session.pickle())
+            self.store.save_megolm_inbound(session_id, session.pickle(self._pickle_key))
             logger.debug(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
         except Exception as e:
             logger.error(f"添加 Megolm 入站会话失败：{e}")
@@ -305,7 +316,7 @@ class OlmMachine:
             pickle = self.store.get_megolm_inbound(session_id)
             if pickle:
                 try:
-                    session = InboundGroupSession.from_pickle(pickle)
+                    session = InboundGroupSession.from_pickle(pickle, self._pickle_key)
                     self._megolm_inbound[session_id] = session
                 except Exception as e:
                     logger.error(f"加载 Megolm 会话失败：{e}")
@@ -333,9 +344,9 @@ class OlmMachine:
         Returns:
             (session_id, session_key) 元组
         """
-        session = OutboundGroupSession()
+        session = GroupSession()
         self._megolm_outbound[room_id] = session
-        self.store.save_megolm_outbound(room_id, session.pickle())
+        self.store.save_megolm_outbound(room_id, session.pickle(self._pickle_key))
 
         return session.session_id, session.session_key
 
@@ -367,11 +378,11 @@ class OlmMachine:
         ciphertext = session.encrypt(payload_json)
 
         # 更新存储
-        self.store.save_megolm_outbound(room_id, session.pickle())
+        self.store.save_megolm_outbound(room_id, session.pickle(self._pickle_key))
 
         return {
             "algorithm": "m.megolm.v1.aes-sha2",
-            "sender_key": self._account.curve25519_key if self._account else "",
+            "sender_key": str(self._account.curve25519_key) if self._account else "",
             "session_id": session.session_id,
             "ciphertext": ciphertext,
             "device_id": self.device_id,
@@ -391,11 +402,11 @@ class OlmMachine:
         """获取本设备的 curve25519 密钥"""
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
-        return self._account.curve25519_key
+        return str(self._account.curve25519_key)
 
     @property
     def ed25519_key(self) -> str:
         """获取本设备的 ed25519 密钥"""
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
-        return self._account.ed25519_key
+        return str(self._account.ed25519_key)

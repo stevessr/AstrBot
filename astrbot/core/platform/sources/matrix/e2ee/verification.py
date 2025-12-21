@@ -18,7 +18,7 @@ from astrbot.api import logger
 
 # 尝试导入 vodozemac
 try:
-    from vodozemac.sas import Sas, SasBytes
+    from vodozemac import EstablishedSas, Sas  # noqa: F401
 
     VODOZEMAC_SAS_AVAILABLE = True
 except ImportError:
