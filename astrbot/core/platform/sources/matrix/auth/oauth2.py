@@ -4,10 +4,11 @@ Implements OAuth2 authentication flow with HTTP callback server
 """
 
 import asyncio
-import secrets
 import logging
-from typing import Optional, Dict, Any, Callable
-from urllib.parse import urlencode, parse_qs, urlparse
+import secrets
+from typing import Any
+from urllib.parse import urlencode
+
 import aiohttp
 from aiohttp import web
 
@@ -50,10 +51,10 @@ class OAuth2CallbackServer:
         self.host = host
         self.port = port
         self.app = web.Application()
-        self.runner: Optional[web.AppRunner] = None
-        self.site: Optional[web.TCPSite] = None
-        self.callback_future: Optional[asyncio.Future] = None
-        self.state: Optional[str] = None
+        self.runner: web.AppRunner | None = None
+        self.site: web.TCPSite | None = None
+        self.callback_future: asyncio.Future | None = None
+        self.state: str | None = None
 
         # Setup routes
         self.app.router.add_get("/callback", self._handle_callback)
@@ -62,8 +63,7 @@ class OAuth2CallbackServer:
     async def _handle_root(self, request: web.Request) -> web.Response:
         """Handle root path"""
         return web.Response(
-            text="Matrix OAuth2 Authentication Server\n"
-            "Waiting for OAuth2 callback...",
+            text="Matrix OAuth2 Authentication Server\nWaiting for OAuth2 callback...",
             content_type="text/plain",
         )
 
@@ -203,10 +203,10 @@ class MatrixOAuth2:
         self,
         client,
         homeserver: str,
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
-        redirect_uri: Optional[str] = None,
-        scopes: Optional[list] = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        redirect_uri: str | None = None,
+        scopes: list | None = None,
     ):
         """
         Initialize OAuth2 handler
@@ -229,20 +229,20 @@ class MatrixOAuth2:
             "urn:matrix:org.matrix.msc2967.client:api:*",
         ]
 
-        self.callback_server: Optional[OAuth2CallbackServer] = None
-        self.access_token: Optional[str] = None
-        self.refresh_token: Optional[str] = None
-        self.token_type: Optional[str] = None
-        self.expires_in: Optional[int] = None
+        self.callback_server: OAuth2CallbackServer | None = None
+        self.access_token: str | None = None
+        self.refresh_token: str | None = None
+        self.token_type: str | None = None
+        self.expires_in: int | None = None
 
         # OAuth2 configuration discovered from server
-        self.issuer: Optional[str] = None
-        self.authorization_endpoint: Optional[str] = None
-        self.token_endpoint: Optional[str] = None
-        self.registration_endpoint: Optional[str] = None
-        self.account_management_uri: Optional[str] = None
+        self.issuer: str | None = None
+        self.authorization_endpoint: str | None = None
+        self.token_endpoint: str | None = None
+        self.registration_endpoint: str | None = None
+        self.account_management_uri: str | None = None
 
-    async def _discover_oauth_endpoints(self) -> Dict[str, Any]:
+    async def _discover_oauth_endpoints(self) -> dict[str, Any]:
         """
         Discover OAuth2 configuration from Matrix homeserver
 
@@ -275,9 +275,9 @@ class MatrixOAuth2:
                 async with session.get(well_known_url) as response:
                     if response.status == 404:
                         raise Exception(
-                            f"Server does not have /.well-known/matrix/client endpoint. "
-                            f"OAuth2 authentication is not supported by this homeserver. "
-                            f"Please use 'password' or 'token' authentication instead."
+                            "Server does not have /.well-known/matrix/client endpoint. "
+                            "OAuth2 authentication is not supported by this homeserver. "
+                            "Please use 'password' or 'token' authentication instead."
                         )
                     elif response.status != 200:
                         raise Exception(
@@ -288,11 +288,44 @@ class MatrixOAuth2:
                     _log("debug", f"Well-known data: {well_known_data}")
 
                     # Extract authentication configuration
+                    # Try standard m.authentication first
                     auth_config = well_known_data.get("m.authentication", {})
 
+                    # If not found, try MSC4143 (new standard)
                     if not auth_config:
+                        auth_config = well_known_data.get(
+                            "org.matrix.msc4143.authentication", {}
+                        )
+
+                    # If still not found, try MSC2965 (matrix.org uses this)
+                    if not auth_config:
+                        auth_config = well_known_data.get(
+                            "org.matrix.msc2965.authentication", {}
+                        )
+
+                    if not auth_config:
+                        _log(
+                            "error",
+                            "❌ Failed to discover OAuth2 configuration: No authentication configuration found in well-known.",
+                        )
+                        _log(
+                            "error",
+                            "💡 This homeserver does not support OAuth2 authentication.",
+                        )
+                        _log(
+                            "error",
+                            "💡 Please change matrix_auth_method to 'password' or 'token' in your configuration.",
+                        )
+                        _log(
+                            "debug",
+                            f"Available keys in well-known: {list(well_known_data.keys())}",
+                        )
+                        _log(
+                            "debug",
+                            "Authentication keys checked: m.authentication, org.matrix.msc4143.authentication, org.matrix.msc2965.authentication",
+                        )
                         raise Exception(
-                            "No m.authentication found in well-known. "
+                            "No authentication configuration found in well-known. "
                             "OAuth2 authentication is not supported by this homeserver. "
                             "Please use 'password' or 'token' authentication instead."
                         )
@@ -316,11 +349,26 @@ class MatrixOAuth2:
                         _log("info", f"Account management URI: {account}")
 
                     # Step 2: Get OIDC configuration from issuer
-                    oidc_config_url = f"{issuer}/.well-known/openid-configuration"
+                    # Ensure issuer URL ends with /
+                    if not issuer.endswith("/"):
+                        issuer = issuer + "/"
+
+                    oidc_config_url = f"{issuer}.well-known/openid-configuration"
                     _log("debug", f"Fetching OIDC configuration from {oidc_config_url}")
 
                     async with session.get(oidc_config_url) as oidc_response:
                         if oidc_response.status != 200:
+                            _log(
+                                "error",
+                                f"Failed to fetch OIDC configuration: HTTP {oidc_response.status}",
+                            )
+                            _log("error", f"URL requested: {oidc_config_url}")
+                            # Try to get response body for debugging
+                            try:
+                                error_text = await oidc_response.text()
+                                _log("error", f"Response body: {error_text[:200]}")
+                            except Exception:
+                                pass
                             raise Exception(
                                 f"Failed to fetch OIDC configuration: HTTP {oidc_response.status}"
                             )
@@ -329,20 +377,30 @@ class MatrixOAuth2:
                         _log("debug", f"OIDC configuration: {oidc_config}")
 
                         # Extract endpoints
-                        self.authorization_endpoint = oidc_config.get("authorization_endpoint")
+                        self.authorization_endpoint = oidc_config.get(
+                            "authorization_endpoint"
+                        )
                         self.token_endpoint = oidc_config.get("token_endpoint")
-                        self.registration_endpoint = oidc_config.get("registration_endpoint")
+                        self.registration_endpoint = oidc_config.get(
+                            "registration_endpoint"
+                        )
 
                         if not self.authorization_endpoint or not self.token_endpoint:
                             raise Exception(
                                 "Missing required endpoints in OIDC configuration"
                             )
 
-                        _log("info", f"✅ OAuth2 discovery successful!")
-                        _log("info", f"  Authorization endpoint: {self.authorization_endpoint}")
+                        _log("info", "✅ OAuth2 discovery successful!")
+                        _log(
+                            "info",
+                            f"  Authorization endpoint: {self.authorization_endpoint}",
+                        )
                         _log("info", f"  Token endpoint: {self.token_endpoint}")
                         if self.registration_endpoint:
-                            _log("info", f"  Registration endpoint: {self.registration_endpoint}")
+                            _log(
+                                "info",
+                                f"  Registration endpoint: {self.registration_endpoint}",
+                            )
 
                         # Return configuration
                         return {
@@ -359,14 +417,16 @@ class MatrixOAuth2:
 
             # Provide helpful guidance based on the error
             if "404" in error_msg or "not supported" in error_msg.lower():
-                _log("error",
+                _log(
+                    "error",
                     "💡 This homeserver does not support OAuth2 authentication. "
-                    "Please change matrix_auth_method to 'password' or 'token' in your configuration."
+                    "Please change matrix_auth_method to 'password' or 'token' in your configuration.",
                 )
             else:
-                _log("error",
+                _log(
+                    "error",
                     "Please ensure your Matrix homeserver supports OAuth2/OIDC authentication. "
-                    "Check the server's /.well-known/matrix/client endpoint."
+                    "Check the server's /.well-known/matrix/client endpoint.",
                 )
             raise
 
@@ -388,14 +448,14 @@ class MatrixOAuth2:
         Returns:
             PKCE code challenge (base64url-encoded SHA256 hash)
         """
-        import hashlib
         import base64
+        import hashlib
 
         digest = hashlib.sha256(verifier.encode()).digest()
         challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
         return challenge
 
-    async def _register_client(self, redirect_uri: str) -> Dict[str, str]:
+    async def _register_client(self, redirect_uri: str) -> dict[str, str]:
         """
         Dynamically register OAuth2 client with the server
 
@@ -434,7 +494,7 @@ class MatrixOAuth2:
                 async with session.post(
                     self.registration_endpoint,
                     json=registration_data,
-                    headers={"Content-Type": "application/json"}
+                    headers={"Content-Type": "application/json"},
                 ) as response:
                     if response.status not in [200, 201]:
                         error_text = await response.text()
@@ -461,7 +521,7 @@ class MatrixOAuth2:
             _log("error", f"❌ Failed to register OAuth2 client: {e}")
             raise
 
-    async def login(self) -> Dict[str, Any]:
+    async def login(self) -> dict[str, Any]:
         """
         Perform OAuth2 login flow with automatic server discovery
 
@@ -494,7 +554,10 @@ class MatrixOAuth2:
 
             # Step 3: Register client if no client_id provided
             if not self.client_id:
-                _log("info", "No client_id provided, attempting dynamic client registration...")
+                _log(
+                    "info",
+                    "No client_id provided, attempting dynamic client registration...",
+                )
                 try:
                     registration = await self._register_client(self.redirect_uri)
                     self.client_id = registration["client_id"]
@@ -591,7 +654,7 @@ class MatrixOAuth2:
                 await self.callback_server.stop()
                 self.callback_server = None
 
-    async def refresh_access_token(self) -> Dict[str, Any]:
+    async def refresh_access_token(self) -> dict[str, Any]:
         """
         Refresh access token using refresh token
 
@@ -641,4 +704,3 @@ class MatrixOAuth2:
         except Exception as e:
             _log("error", f"Failed to refresh access token: {e}")
             raise
-

@@ -2,8 +2,8 @@
 Matrix Event Types - Replacement for matrix-nio event types
 """
 
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -14,12 +14,12 @@ class MatrixEvent:
     sender: str
     origin_server_ts: int
     room_id: str
-    content: Dict[str, Any]
+    content: dict[str, Any]
     event_type: str
-    unsigned: Optional[Dict[str, Any]] = None
+    unsigned: dict[str, Any] | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], room_id: str):
+    def from_dict(cls, data: dict[str, Any], room_id: str):
         """Create event from dictionary"""
         return cls(
             event_id=data.get("event_id", ""),
@@ -38,11 +38,11 @@ class RoomMessageEvent(MatrixEvent):
 
     msgtype: str = ""
     body: str = ""
-    url: Optional[str] = None
-    info: Optional[Dict[str, Any]] = None
+    url: str | None = None
+    info: dict[str, Any] | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], room_id: str):
+    def from_dict(cls, data: dict[str, Any], room_id: str):
         """Create room message event from dictionary"""
         content = data.get("content", {})
         return cls(
@@ -65,7 +65,7 @@ class RoomMessageText(RoomMessageEvent):
     """Text message event"""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], room_id: str):
+    def from_dict(cls, data: dict[str, Any], room_id: str):
         event = super().from_dict(data, room_id)
         event.msgtype = "m.text"
         return event
@@ -76,7 +76,7 @@ class RoomMessageImage(RoomMessageEvent):
     """Image message event"""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], room_id: str):
+    def from_dict(cls, data: dict[str, Any], room_id: str):
         event = super().from_dict(data, room_id)
         event.msgtype = "m.image"
         return event
@@ -87,7 +87,7 @@ class RoomMessageFile(RoomMessageEvent):
     """File message event"""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], room_id: str):
+    def from_dict(cls, data: dict[str, Any], room_id: str):
         event = super().from_dict(data, room_id)
         event.msgtype = "m.file"
         return event
@@ -98,7 +98,7 @@ class InviteEvent(MatrixEvent):
     """Room invite event"""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], room_id: str):
+    def from_dict(cls, data: dict[str, Any], room_id: str):
         """Create invite event from dictionary"""
         return cls(
             event_id=data.get("event_id", ""),
@@ -119,12 +119,7 @@ class MatrixRoom:
     display_name: str = ""
     topic: str = ""
     member_count: int = 0
-    encrypted: bool = False
-    members: Dict[str, str] = None  # user_id -> display_name
-
-    def __post_init__(self):
-        if self.members is None:
-            self.members = {}
+    members: dict[str, str] = field(default_factory=dict)  # user_id -> display_name
 
     def user_name(self, user_id: str) -> str:
         """Get display name for a user"""
@@ -136,7 +131,7 @@ class MatrixRoom:
         return self.member_count > 2
 
 
-def parse_event(event_data: Dict[str, Any], room_id: str) -> MatrixEvent:
+def parse_event(event_data: dict[str, Any], room_id: str) -> MatrixEvent:
     """
     Parse event data into appropriate event type
 

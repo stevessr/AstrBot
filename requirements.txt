@@ -53,3 +53,5 @@ jieba>=0.42.1
 markitdown-no-magika[docx,xls,xlsx]>=0.1.2
 xinference-client
 tenacity>=9.1.2
+markdown-it-py>=4.0.0
+bleach>=6.3.0

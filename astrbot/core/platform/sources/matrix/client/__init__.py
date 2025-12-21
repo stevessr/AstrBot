@@ -2,7 +2,7 @@
 Matrix Client - Direct implementation without matrix-nio dependency
 """
 
+from .event_types import InviteEvent, MatrixEvent, RoomMessageEvent
 from .http_client import MatrixHTTPClient
-from .event_types import MatrixEvent, RoomMessageEvent, InviteEvent
 
 __all__ = ["MatrixHTTPClient", "MatrixEvent", "RoomMessageEvent", "InviteEvent"]

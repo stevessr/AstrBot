@@ -3,10 +3,12 @@ Matrix HTTP Client - Direct implementation without matrix-nio
 Implements the Matrix Client-Server API using aiohttp
 """
 
-import aiohttp
-import os
 import json
-from typing import Optional, Dict, Any, List
+import os
+from typing import Any
+
+import aiohttp
+
 from astrbot.api import logger
 
 
@@ -24,11 +26,11 @@ class MatrixHTTPClient:
             homeserver: Matrix homeserver URL (e.g., https://matrix.org)
         """
         self.homeserver = homeserver.rstrip("/")
-        self.access_token: Optional[str] = None
-        self.user_id: Optional[str] = None
-        self.device_id: Optional[str] = None
-        self.session: Optional[aiohttp.ClientSession] = None
-        self._next_batch: Optional[str] = None
+        self.access_token: str | None = None
+        self.user_id: str | None = None
+        self.device_id: str | None = None
+        self.session: aiohttp.ClientSession | None = None
+        self._next_batch: str | None = None
 
     async def _ensure_session(self):
         """Ensure aiohttp session exists"""
@@ -40,7 +42,7 @@ class MatrixHTTPClient:
         if self.session and not self.session.closed:
             await self.session.close()
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for authenticated requests"""
         headers = {"Content-Type": "application/json"}
         if self.access_token:
@@ -51,10 +53,10 @@ class MatrixHTTPClient:
         self,
         method: str,
         endpoint: str,
-        data: Optional[Dict] = None,
-        params: Optional[Dict] = None,
+        data: dict | None = None,
+        params: dict | None = None,
         authenticated: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Make HTTP request to Matrix server
 
@@ -84,14 +86,40 @@ class MatrixHTTPClient:
             async with self.session.request(
                 method, url, json=data, params=params, headers=headers
             ) as response:
-                response_data = await response.json()
-
+                # 检查响应状态
                 if response.status >= 400:
-                    error_code = response_data.get("errcode", "UNKNOWN")
-                    error_msg = response_data.get("error", "Unknown error")
-                    raise Exception(
-                        f"Matrix API error: {error_code} - {error_msg} (status: {response.status})"
-                    )
+                    # 尝试获取错误信息，但处理非 JSON 响应
+                    try:
+                        response_data = await response.json()
+                        error_code = response_data.get("errcode", "UNKNOWN")
+                        error_msg = response_data.get("error", "Unknown error")
+                        error_detail = f"Matrix API error: {error_code} - {error_msg} (status: {response.status})"
+                    except Exception:
+                        # 如果不是 JSON 响应，获取文本内容
+                        content_type = response.headers.get("content-type", "").lower()
+                        if "text/html" in content_type:
+                            error_detail = f"Matrix API error: HTML error page returned (status: {response.status})"
+                        else:
+                            text = await response.text()
+                            error_detail = f"Matrix API error: Non-JSON response (status: {response.status}): {text[:200]}"
+
+                    raise Exception(error_detail)
+
+                # 对于成功响应，尝试解析 JSON
+                try:
+                    response_data = await response.json()
+                except Exception:
+                    # 如果不是 JSON 响应，获取文本内容
+                    content_type = response.headers.get("content-type", "").lower()
+                    if "text/html" in content_type:
+                        raise Exception(
+                            f"Matrix API error: HTML response instead of JSON (status: {response.status})"
+                        )
+                    else:
+                        text = await response.text()
+                        raise Exception(
+                            f"Matrix API error: Non-JSON response (status: {response.status}): {text[:200]}"
+                        )
 
                 return response_data
 
@@ -104,8 +132,8 @@ class MatrixHTTPClient:
         user_id: str,
         password: str,
         device_name: str = "AstrBot",
-        device_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        device_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Login with password
 
@@ -138,7 +166,7 @@ class MatrixHTTPClient:
         return response
 
     def restore_login(
-        self, user_id: str, access_token: str, device_id: Optional[str] = None
+        self, user_id: str, access_token: str, device_id: str | None = None
     ):
         """
         Restore login session with access token
@@ -152,7 +180,7 @@ class MatrixHTTPClient:
         self.access_token = access_token
         self.device_id = device_id
 
-    async def whoami(self) -> Dict[str, Any]:
+    async def whoami(self) -> dict[str, Any]:
         """
         Get information about the current user
 
@@ -161,13 +189,34 @@ class MatrixHTTPClient:
         """
         return await self._request("GET", "/_matrix/client/v3/account/whoami")
 
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
+        """
+        Refresh access token using a refresh token
+
+        Args:
+            refresh_token: Refresh token from previous login
+
+        Returns:
+            Response with new access_token and optionally a new refresh_token
+        """
+        endpoint = "/_matrix/client/v3/refresh"
+        data = {"refresh_token": refresh_token}
+
+        response = await self._request("POST", endpoint, data=data, authenticated=False)
+
+        # Update client with new access token
+        if "access_token" in response:
+            self.access_token = response["access_token"]
+
+        return response
+
     async def sync(
         self,
-        since: Optional[str] = None,
+        since: str | None = None,
         timeout: int = 30000,
         full_state: bool = False,
-        filter_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        filter_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Sync with the Matrix server
 
@@ -190,14 +239,21 @@ class MatrixHTTPClient:
 
         response = await self._request("GET", "/_matrix/client/v3/sync", params=params)
 
+        # Log to_device events
+        to_device = response.get("to_device", {}).get("events", [])
+        if to_device:
+            logger.info(
+                f"SYNC: Received {len(to_device)} to_device events: {[e.get('type') for e in to_device]}"
+            )
+
         # Store next_batch for future syncs
         self._next_batch = response.get("next_batch")
 
         return response
 
     async def send_message(
-        self, room_id: str, msg_type: str, content: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, room_id: str, msg_type: str, content: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Send a message to a room
 
@@ -220,8 +276,8 @@ class MatrixHTTPClient:
     # to avoid duplicate definitions.
 
     async def send_room_event(
-        self, room_id: str, event_type: str, content: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, room_id: str, event_type: str, content: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Send a custom event to a room
 
@@ -241,7 +297,7 @@ class MatrixHTTPClient:
 
     async def upload_file(
         self, data: bytes, content_type: str, filename: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Upload a file to the Matrix media repository
 
@@ -280,7 +336,7 @@ class MatrixHTTPClient:
         """
         Download a file from the Matrix media repository
         按照 Matrix spec 正确实现媒体下载
-        
+
         参考：https://spec.matrix.org/latest/client-server-api/#get_matrixmediav3downloadservernamemediaid
 
         Args:
@@ -304,7 +360,7 @@ class MatrixHTTPClient:
         # 按照 Matrix spec，所有媒体下载都通过用户的 homeserver
         # 不管媒体来自哪个服务器，都使用认证请求
         # 参考：https://spec.matrix.org/latest/client-server-api/#id429
-        
+
         # Try multiple download endpoints
         # 1. 新的认证媒体 API (Matrix v1.11+) - 需要认证
         # 2. 传统媒体 API (v3/r0) - 可能需要认证
@@ -334,10 +390,14 @@ class MatrixHTTPClient:
 
             try:
                 logger.debug(f"Downloading media from: {url}")
-                async with self.session.get(url, headers=headers, allow_redirects=True) as response:
+                async with self.session.get(
+                    url, headers=headers, allow_redirects=True
+                ) as response:
                     last_status = response.status
                     if response.status == 200:
-                        logger.debug(f"✅ Successfully downloaded media from {endpoint}")
+                        logger.debug(
+                            f"✅ Successfully downloaded media from {endpoint}"
+                        )
                         return await response.read()
                     elif response.status == 404:
                         logger.debug(f"Got 404 on {endpoint}, trying next endpoint...")
@@ -345,7 +405,9 @@ class MatrixHTTPClient:
                         continue
                     elif response.status == 403:
                         # 403 通常意味着认证问题或权限问题
-                        logger.warning(f"Got 403 on {endpoint} (auth problem or private media)")
+                        logger.warning(
+                            f"Got 403 on {endpoint} (auth problem or private media)"
+                        )
                         last_error = f"Access denied: {response.status}"
                         continue
                     else:
@@ -370,15 +432,17 @@ class MatrixHTTPClient:
                 f"/_matrix/media/v3/thumbnail/{server_name}/{media_id}?width=800&height=600",
                 f"/_matrix/media/r0/thumbnail/{server_name}/{media_id}?width=800&height=600",
             ]
-            
+
             for endpoint in thumbnail_endpoints:
                 url = f"{self.homeserver}{endpoint}"
                 headers = {}
                 if self.access_token:
                     headers["Authorization"] = f"Bearer {self.access_token}"
-                
+
                 try:
-                    async with self.session.get(url, headers=headers, allow_redirects=True) as response:
+                    async with self.session.get(
+                        url, headers=headers, allow_redirects=True
+                    ) as response:
                         if response.status == 200:
                             logger.info("✅ Downloaded thumbnail instead of full media")
                             return await response.read()
@@ -390,7 +454,7 @@ class MatrixHTTPClient:
         logger.error(error_msg)
         raise Exception(error_msg)
 
-    async def join_room(self, room_id: str) -> Dict[str, Any]:
+    async def join_room(self, room_id: str) -> dict[str, Any]:
         """
         Join a room
 
@@ -403,7 +467,7 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/join/{room_id}"
         return await self._request("POST", endpoint, data={})
 
-    async def leave_room(self, room_id: str) -> Dict[str, Any]:
+    async def leave_room(self, room_id: str) -> dict[str, Any]:
         """
         Leave a room
 
@@ -416,7 +480,7 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/leave"
         return await self._request("POST", endpoint, data={})
 
-    async def get_room_state(self, room_id: str) -> List[Dict[str, Any]]:
+    async def get_room_state(self, room_id: str) -> dict[str, Any]:
         """
         Get room state events
 
@@ -429,7 +493,7 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/state"
         return await self._request("GET", endpoint)
 
-    async def get_room_members(self, room_id: str) -> Dict[str, Any]:
+    async def get_room_members(self, room_id: str) -> dict[str, Any]:
         """
         Get room members
 
@@ -442,7 +506,7 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/members"
         return await self._request("GET", endpoint)
 
-    async def set_display_name(self, display_name: str) -> Dict[str, Any]:
+    async def set_display_name(self, display_name: str) -> dict[str, Any]:
         """
         Set user display name
 
@@ -469,7 +533,7 @@ class MatrixHTTPClient:
         response = await self._request("GET", endpoint, authenticated=False)
         return response.get("displayname", user_id)
 
-    async def get_avatar_url(self, user_id: str) -> Optional[str]:
+    async def get_avatar_url(self, user_id: str) -> str | None:
         """
         Get user avatar URL
 
@@ -489,11 +553,11 @@ class MatrixHTTPClient:
     async def room_messages(
         self,
         room_id: str,
-        from_token: Optional[str] = None,
-        to_token: Optional[str] = None,
+        from_token: str | None = None,
+        to_token: str | None = None,
         direction: str = "b",
         limit: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get messages from a room
 
@@ -519,7 +583,7 @@ class MatrixHTTPClient:
 
         return await self._request("GET", endpoint, params=params)
 
-    async def get_joined_rooms(self) -> List[str]:
+    async def get_joined_rooms(self) -> list[str]:
         """
         Get list of joined room IDs
 
@@ -533,9 +597,9 @@ class MatrixHTTPClient:
         self,
         room_id: str,
         original_event_id: str,
-        new_content: Dict[str, Any],
+        new_content: dict[str, Any],
         msg_type: str = "m.text",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Edit an existing message
 
@@ -569,68 +633,7 @@ class MatrixHTTPClient:
 
         return await self._request("PUT", endpoint, data=content)
 
-    async def upload_keys(
-        self,
-        device_keys: Dict[str, Any],
-        one_time_keys: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Upload device and one-time keys to the server
-
-        Args:
-            device_keys: Device identity keys
-            one_time_keys: One-time keys (optional)
-
-        Returns:
-            Upload response with one_time_key_counts
-        """
-        endpoint = "/_matrix/client/v3/keys/upload"
-
-        data = {"device_keys": device_keys}
-
-        if one_time_keys:
-            data["one_time_keys"] = one_time_keys
-
-        return await self._request("POST", endpoint, data=data)
-
-    async def query_keys(
-        self, device_keys: Dict[str, List[str]], timeout: int = 10000
-    ) -> Dict[str, Any]:
-        """
-        Query keys for other devices
-
-        Args:
-            device_keys: Dict of user_id -> list of device_ids
-            timeout: Query timeout in milliseconds
-
-        Returns:
-            Device keys information
-        """
-        endpoint = "/_matrix/client/v3/keys/query"
-
-        data = {"device_keys": device_keys, "timeout": timeout}
-
-        return await self._request("POST", endpoint, data=data)
-
-    async def claim_keys(
-        self, one_time_keys: Dict[str, Dict[str, str]]
-    ) -> Dict[str, Any]:
-        """
-        Claim one-time keys for establishing Olm sessions
-
-        Args:
-            one_time_keys: Dict of user_id -> device_id -> key_algorithm
-
-        Returns:
-            Claimed one-time keys
-        """
-        endpoint = "/_matrix/client/v3/keys/claim"
-
-        data = {"one_time_keys": one_time_keys}
-
-        return await self._request("POST", endpoint, data=data)
-
-    async def get_devices(self) -> Dict[str, Any]:
+    async def get_devices(self) -> dict[str, Any]:
         """
         Get the list of devices for the current user
 
@@ -641,7 +644,7 @@ class MatrixHTTPClient:
 
         return await self._request("GET", endpoint)
 
-    async def get_device(self, device_id: str) -> Dict[str, Any]:
+    async def get_device(self, device_id: str) -> dict[str, Any]:
         """
         Get information about a specific device
 
@@ -656,8 +659,8 @@ class MatrixHTTPClient:
         return await self._request("GET", endpoint)
 
     async def update_device(
-        self, device_id: str, display_name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, device_id: str, display_name: str | None = None
+    ) -> dict[str, Any]:
         """
         Update device information
 
@@ -677,8 +680,8 @@ class MatrixHTTPClient:
         return await self._request("PUT", endpoint, data=data)
 
     async def delete_device(
-        self, device_id: str, auth: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, device_id: str, auth: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Delete a device
 
@@ -697,15 +700,62 @@ class MatrixHTTPClient:
 
         return await self._request("DELETE", endpoint, data=data)
 
+    async def set_typing(
+        self, room_id: str, typing: bool = True, timeout: int = 30000
+    ) -> dict[str, Any]:
+        """
+        Set typing status in a room
+
+        Args:
+            room_id: Room ID
+            typing: Whether the user is typing
+            timeout: Typing timeout in milliseconds
+
+        Returns:
+            Response data
+        """
+        endpoint = f"/_matrix/client/v3/rooms/{room_id}/typing/{self.user_id}"
+        data = {"typing": typing, "timeout": timeout} if typing else {"typing": False}
+        return await self._request("PUT", endpoint, data=data)
+
+    async def send_read_receipt(self, room_id: str, event_id: str) -> dict[str, Any]:
+        """
+        Send read receipt for an event
+
+        Args:
+            room_id: Room ID
+            event_id: Event ID to acknowledge
+
+        Returns:
+            Response data
+        """
+        endpoint = f"/_matrix/client/v3/rooms/{room_id}/receipt/m.read/{event_id}"
+        return await self._request("POST", endpoint, data={})
+
+    async def get_event(self, room_id: str, event_id: str) -> dict[str, Any]:
+        """
+        Get a single event from a room
+
+        Args:
+            room_id: Room ID
+            event_id: Event ID to fetch
+
+        Returns:
+            Event data
+        """
+        endpoint = f"/_matrix/client/v3/rooms/{room_id}/event/{event_id}"
+
+        return await self._request("GET", endpoint)
+
     async def send_to_device(
-        self, event_type: str, messages: Dict[str, Dict[str, Any]], txn_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, event_type: str, messages: dict[str, Any], txn_id: str | None = None
+    ) -> dict[str, Any]:
         """
         Send to-device events to specific devices
 
         Args:
             event_type: The type of event to send
-            messages: Dict of user_id -> device_id -> content
+            messages: Dict of user_id -> device_id -> content or Dict of user_id -> content
             txn_id: Transaction ID (auto-generated if not provided)
 
         Returns:
@@ -717,7 +767,24 @@ class MatrixHTTPClient:
             txn_id = secrets.token_hex(16)
 
         endpoint = f"/_matrix/client/v3/sendToDevice/{event_type}/{txn_id}"
-        data = {"messages": messages}
+
+        # 处理不同的消息格式
+        if isinstance(messages, dict):
+            # 检查是否是 user_id -> device_id -> content 格式
+            if messages and isinstance(list(messages.values())[0], dict):
+                # 可能是 user_id -> device_id -> content 格式
+                first_value = list(messages.values())[0]
+                if isinstance(first_value, dict) and not first_value.get("messages"):
+                    # 确保格式正确
+                    data = {"messages": messages}
+                else:
+                    # 已经是正确格式
+                    data = messages
+            else:
+                # 假设已经是正确格式
+                data = messages
+        else:
+            data = {"messages": messages}
 
         # Control verbose logging via environment variable to avoid accidental secret leaks
         verbose_env = os.environ.get("ASTRBOT_VERBOSE_TO_DEVICE", "").lower()
@@ -757,8 +824,12 @@ class MatrixHTTPClient:
                     )
 
                     if verbose:
-                        api_logger.debug(f"send_to_device request payload: {_short(data, maxlen=2000)}")
-                        api_logger.debug(f"send_to_device full response: {_short(resp_body, maxlen=2000)}")
+                        api_logger.debug(
+                            f"send_to_device request payload: {_short(data, maxlen=2000)}"
+                        )
+                        api_logger.debug(
+                            f"send_to_device full response: {_short(resp_body, maxlen=2000)}"
+                        )
                 except Exception:
                     pass
 
@@ -778,5 +849,7 @@ class MatrixHTTPClient:
                 return resp_body
 
         except aiohttp.ClientError as e:
-            logger.error(f"send_to_device network error for {event_type} txn {txn_id}: {e}")
+            logger.error(
+                f"send_to_device network error for {event_type} txn {txn_id}: {e}"
+            )
             raise

@@ -12,5 +12,11 @@
     "type": "string",
     "hint": "设置 Matrix Web 客户端服务监听的地址",
     "default": "0.0.0.0"
+  },
+  "oauth2_client_id": {
+    "description": "OAuth2 客户端 ID",
+    "type": "string",
+    "hint": "设置 OAuth2 登录时使用的客户端 ID。留空则使用默认值或动态注册",
+    "default": ""
   }
 }
