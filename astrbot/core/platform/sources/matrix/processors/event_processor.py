@@ -4,7 +4,6 @@ Handles processing of Matrix events (messages, etc.)
 """
 
 from collections.abc import Callable
-from typing import Any
 
 from astrbot.api import logger
 

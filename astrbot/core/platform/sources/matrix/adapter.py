@@ -8,19 +8,20 @@ from astrbot.api.message_components import Plain
 from astrbot.api.platform import Platform, PlatformMetadata, register_platform_adapter
 from astrbot.core.platform.astr_message_event import MessageSesion
 
+from .auth.auth import MatrixAuth
+
 # 自定义 Matrix 客户端（不依赖 matrix-nio）
 from .client import MatrixHTTPClient
-from .auth.auth import MatrixAuth
 
 # 组件导入 - Updated to new structure
 from .config import MatrixConfig
+from .event import MatrixPlatformEvent
 from .processors.event_handler import MatrixEventHandler
 from .processors.event_processor import MatrixEventProcessor
 from .receiver.receiver import MatrixReceiver
 from .sender.sender import MatrixSender
 from .sync.sync_manager import MatrixSyncManager
 from .utils.utils import MatrixUtils
-from .event import MatrixPlatformEvent
 
 
 @register_platform_adapter(

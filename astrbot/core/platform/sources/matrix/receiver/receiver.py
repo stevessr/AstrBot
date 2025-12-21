@@ -2,22 +2,20 @@
 Matrix 消息接收组件
 """
 
+import hashlib
 import logging
-import time
+from pathlib import Path
 
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import *
+from astrbot.api.message_components import Image
 from astrbot.api.platform import AstrBotMessage
 from astrbot.core.platform.astrbot_message import MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.utils import astrbot_path
-from astrbot.api.message_components import Image
-from pathlib import Path
-import hashlib
-from astrbot.core.utils import astrbot_path
 
 # Update import: Client event types are in ..client.event_types
-from ..client.event_types import MatrixRoom, parse_event
+from ..client.event_types import MatrixRoom
 from ..utils.utils import MatrixUtils
 
 logger = logging.getLogger("astrbot.matrix.receiver")
