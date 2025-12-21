@@ -39,10 +39,8 @@ class MatrixConfig:
         self.auto_join_rooms = self.config.get("matrix_auto_join_rooms", True)
         self.sync_timeout = self.config.get("matrix_sync_timeout", 30000)
 
-
         # Threading configuration
         self.enable_threading = self.config.get("matrix_enable_threading", True)
-
 
         self._validate()
 

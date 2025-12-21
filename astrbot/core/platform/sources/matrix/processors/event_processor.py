@@ -117,7 +117,9 @@ class MatrixEventProcessor:
 
             if event_type == "m.room.encrypted" or event_content.get("algorithm"):
                 # This is an encrypted message
-                logger.error(f"收到加密消息 (room_id={room.room_id}, event_id={event.event_id})。无法解密。")
+                logger.error(
+                    f"收到加密消息 (room_id={room.room_id}, event_id={event.event_id})。无法解密。"
+                )
                 return
 
             # Filter historical messages: ignore events before startup
@@ -165,7 +167,6 @@ class MatrixEventProcessor:
         except Exception as e:
             logger.error(f"处理消息事件时出错: {e}")
 
-
     async def process_to_device_events(self, events: list):
         """
         Process to-device events
@@ -176,7 +177,6 @@ class MatrixEventProcessor:
         for event in events:
             event_type = event.get("type")
             sender = event.get("sender")
-
 
             if event_type in [
                 "m.room.encrypted",

@@ -106,7 +106,7 @@ class MatrixAuth:
         Supports: password, token, oauth2
         """
         return self._login_wrapper()
-        
+
     async def _login_wrapper(self):
         if self.auth_method == "oauth2":
             await self._login_via_oauth2()
