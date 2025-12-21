@@ -3,6 +3,7 @@ Matrix 配置与初始化组件
 """
 
 import uuid
+
 from astrbot.api import logger
 
 
@@ -33,11 +34,15 @@ class MatrixConfig:
         # Only refresh_token is stored locally (auto-saved after login)
         self.refresh_token = self.config.get("matrix_refresh_token")
 
-
         # Ensure these attributes exist for other components
         self.store_path = self.config.get("matrix_store_path", "./data/matrix_store")
         self.auto_join_rooms = self.config.get("matrix_auto_join_rooms", True)
         self.sync_timeout = self.config.get("matrix_sync_timeout", 30000)
+
+
+        # Threading configuration
+        self.enable_threading = self.config.get("matrix_enable_threading", True)
+
 
         self._validate()
 

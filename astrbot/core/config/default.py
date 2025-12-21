@@ -387,6 +387,7 @@ CONFIG_METADATA_2 = {
                         "matrix_sync_timeout": 30000,
                         "matrix_bot_name": "AstrBot",
                         "matrix_refresh_token": "",
+                        "matrix_enable_threading": True,
                     },
                     # "WebChat": {
                     #     "id": "webchat",
@@ -429,9 +430,74 @@ CONFIG_METADATA_2 = {
                         "condition": {
                             "lark_connection_mode": "webhook",
                         },
-                    "matrix_auto_join_rooms":{
+                    },
+                    "matrix_homeserver": {
+                        "description": "Matrix 服务器地址",
+                        "type": "string",
+                        "hint": "例如: https://matrix.org",
+                    },
+                    "matrix_user_id": {
+                        "description": "Matrix 用户ID",
+                        "type": "string",
+                        "hint": "格式通常为 @user:domain",
+                    },
+                    "matrix_password": {
+                        "description": "Matrix 账户密码",
+                        "type": "string",
+                        "hint": "若使用密码登录需填写此项",
+                        "condition": {"matrix_auth_method": "password"},
+                    },
+                    "matrix_access_token": {
+                        "description": "Matrix 访问令牌 (Access Token)",
+                        "type": "string",
+                        "hint": "若使用Token登录需填写，请注意保密",
+                        "condition": {"matrix_auth_method": "token"},
+                    },
+                    "matrix_refresh_token": {
+                        "description": "Matrix 刷新令牌 (Refresh Token)",
+                        "type": "string",
+                        "hint": "若填写，则优先使用此token获取access_token",
+                        "condition": {"matrix_auth_method": "token"},
+                    },
+                    "matrix_auth_method": {
+                        "description": "认证方式",
+                        "type": "string",
+                        "options": ["password", "token", "oauth2"],
+                        "hint": "通常为 'password' 或 'token'",
+                    },
+                    "matrix_device_name": {
+                        "description": "Matrix 设备显示名称",
+                        "type": "string",
+                        "hint": "显示在会话列表中的设备名称",
+                    },
+                    "matrix_store_path": {
+                        "description": "Matrix 数据存储路径",
+                        "type": "string",
+                        "hint": "用于持久化存储加密密钥或Session数据",
+                    },
+                    "matrix_sync_timeout": {
+                        "description": "同步超时时间",
+                        "type": "int",
+                        "hint": "设置Sync请求的超时时间（毫秒）",
+                    },
+                    "matrix_bot_name": {
+                        "description": "Matrix 机器人名称",
+                        "type": "string",
+                        "hint": "机器人的显示昵称或标识",
+                    },
+                    "matrix_auto_join_rooms": {
                         "description": "自动加入房间",
                         "type": "bool",
+                    },
+                    "matrix_device_id": {
+                        "description": "matrix 设备ID",
+                        "type": "string",
+                        "hint": "用于matrix设备验证",
+                    },
+                    "matrix_enable_threading": {
+                        "description": "启用线程回复",
+                        "type": "bool",
+                        "hint": "启用后，AstrBot 将会使用 Matrix 的线程功能回复消息。",
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",
@@ -1741,6 +1807,7 @@ CONFIG_METADATA_2 = {
                                 "type": "string",
                                 "hint": "负面或有害评论",
                                 "options": [
+                                    "OFF",
                                     "BLOCK_NONE",
                                     "BLOCK_ONLY_HIGH",
                                     "BLOCK_MEDIUM_AND_ABOVE",
@@ -1752,6 +1819,7 @@ CONFIG_METADATA_2 = {
                                 "type": "string",
                                 "hint": "粗鲁、无礼或亵渎性质内容",
                                 "options": [
+                                    "OFF",
                                     "BLOCK_NONE",
                                     "BLOCK_ONLY_HIGH",
                                     "BLOCK_MEDIUM_AND_ABOVE",
@@ -1763,6 +1831,7 @@ CONFIG_METADATA_2 = {
                                 "type": "string",
                                 "hint": "包含性行为或其他淫秽内容的引用",
                                 "options": [
+                                    "OFF",
                                     "BLOCK_NONE",
                                     "BLOCK_ONLY_HIGH",
                                     "BLOCK_MEDIUM_AND_ABOVE",
@@ -1774,6 +1843,7 @@ CONFIG_METADATA_2 = {
                                 "type": "string",
                                 "hint": "宣扬、助长或鼓励有害行为的信息",
                                 "options": [
+                                    "OFF",
                                     "BLOCK_NONE",
                                     "BLOCK_ONLY_HIGH",
                                     "BLOCK_MEDIUM_AND_ABOVE",

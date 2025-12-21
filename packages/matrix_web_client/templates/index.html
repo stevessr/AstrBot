@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Web Client</title>
+    <!-- Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.2/dist/markdown-it.min.js"></script>
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginContainer" class="login-container">
+        <h1>Matrix Web Client</h1>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('password')">密码登录</div>
+            <div class="tab" onclick="switchTab('token')">Token 登录</div>
+            <div class="tab" onclick="switchTab('oauth2')">OAuth2/SSO</div>
+            <div class="tab" onclick="switchTab('astrbot')">AstrBot 配置</div>
+        </div>
+        
+        <!-- 密码登录 -->
+        <div id="passwordTab" class="tab-content active">
+            <div class="form-group">
+                <label>Homeserver</label>
+                <input type="text" id="homeserver1" value="https://matrix.org" placeholder="https://matrix.org">
+            </div>
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="username" placeholder="@user:matrix.org">
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" placeholder="密码">
+            </div>
+            <button class="btn" onclick="loginWithPassword()">登录</button>
+        </div>
+        
+        <!-- Token 登录 -->
+        <div id="tokenTab" class="tab-content">
+            <div class="form-group">
+                <label>Homeserver</label>
+                <input type="text" id="homeserver2" value="https://matrix.org" placeholder="https://matrix.org">
+            </div>
+            <div class="form-group">
+                <label>Access Token</label>
+                <input type="text" id="accessToken" placeholder="syt_...">
+            </div>
+            <div class="form-group">
+                <label>User ID (可选)</label>
+                <input type="text" id="userId" placeholder="@user:matrix.org">
+            </div>
+            <button class="btn btn-secondary" onclick="loginWithToken()">登录</button>
+        </div>
+        
+        <!-- OAuth2/SSO 登录 -->
+        <div id="oauth2Tab" class="tab-content">
+            <div class="form-group">
+                <label>Homeserver</label>
+                <input type="text" id="homeserver3" value="https://matrix.org" placeholder="https://matrix.org">
+            </div>
+            <button class="btn btn-oauth" onclick="loginWithOAuth2()">使用 OAuth2/SSO 登录</button>
+            <p style="margin-top: 15px; color: #666; font-size: 14px;">
+                点击后将打开新窗口进行 OAuth2/OIDC 授权。适用于需要 SSO 登录的服务器。
+            </p>
+        </div>
+        
+        <!-- AstrBot 配置登录 -->
+        <div id="astrbotTab" class="tab-content">
+            <div class="form-group">
+                <label>选择 AstrBot 配置的 Matrix 账户</label>
+                <select id="astrbotConfigSelect">
+                    <option value="">加载中...</option>
+                </select>
+            </div>
+            <button class="btn" onclick="loginWithAstrBotConfig()" style="background: #9C27B0;">使用 AstrBot 配置登录</button>
+            <p style="margin-top: 15px; color: #666; font-size: 14px;">
+                使用 AstrBot 配置文件中的 Matrix 账户登录。支持密码和 Token 认证方式。
+            </p>
+        </div>
+        
+        <div id="loginError" class="error hidden"></div>
+        <div id="loginSuccess" class="success hidden"></div>
+    </div>
+    
+    <!-- 客户端界面 -->
+    <div id="clientContainer" class="container hidden">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>Matrix Client</h2>
+                <div class="user-info" id="userInfo">
+                    加载中...
+                </div>
+                <button onclick="showKeyManagement()" style="margin-top: 10px; padding: 6px 12px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; width: 100%;">
+                    🔐 密钥管理
+                </button>
+            </div>
+            <div class="room-list" id="roomList">
+                <div class="loading">加载房间列表...</div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="chat-header" id="chatHeader">
+                <h3>选择一个房间开始聊天</h3>
+            </div>
+            <div class="messages" id="messages">
+                <div class="loading">选择一个房间查看消息</div>
+            </div>
+            <div class="message-input hidden" id="messageInput">
+                <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt">
+                <button class="file-btn" onclick="document.getElementById('fileInput').click()">📎</button>
+                <input type="text" id="messageText" placeholder="输入消息 (支持 Markdown)..." onkeypress="handleMessageKeyPress(event)">
+                <button onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 密钥管理模态框 -->
+    <div id="keyManagementModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔐 密钥管理</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            
+            <h3>设备列表</h3>
+            <div id="deviceList" class="device-list">
+                <div class="loading">加载设备列表...</div>
+            </div>
+            
+            <h3 style="margin-top: 20px;">端到端加密状态</h3>
+            <div id="e2eeStatusContainer">
+                <div class="loading">加载 E2EE 状态...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SAS 验证模态框 -->
+    <div id="sasVerificationModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔐 设备验证</h2>
+                <span class="close" onclick="closeSasModal()">&times;</span>
+            </div>
+
+            <div class="sas-content" style="text-align: center; padding: 20px;">
+                <h3>请比较以下内容</h3>
+                <p>请确保其他设备上显示相同的表情符号或数字。</p>
+
+                <div id="sasEmojis" style="font-size: 2em; margin: 20px 0; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                    <!-- Emojis will be inserted here -->
+                </div>
+
+                <div id="sasDecimals" style="font-size: 1.5em; margin: 20px 0; font-family: monospace; display: none;">
+                    <!-- Decimals will be inserted here -->
+                </div>
+
+                <div class="sas-actions" style="margin-top: 30px;">
+                    <button class="btn" onclick="confirmSas()" style="background: #4CAF50;">✅ 匹配</button>
+                    <button class="btn" onclick="cancelSas()" style="background: #f44336; margin-left: 10px;">❌ 不匹配</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/room.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/e2ee.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

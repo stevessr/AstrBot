@@ -4,9 +4,9 @@ from astrbot.core.config import AstrBotConfig
 from astrbot.core.config.default import DB_PATH
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.file_token_service import FileTokenService
-from astrbot.core.utils.pip_installer import PipInstaller
 from astrbot.core.utils.shared_preferences import SharedPreferences
 from astrbot.core.utils.t2i.renderer import HtmlRenderer
+from astrbot.core.utils.uv_installer import UvInstaller
 
 from .log import LogBroker, LogManager  # noqa
 from .utils.astrbot_path import get_astrbot_data_path
@@ -25,7 +25,7 @@ db_helper = SQLiteDatabase(DB_PATH)
 sp = SharedPreferences(db_helper=db_helper)
 # 文件令牌服务
 file_token_service = FileTokenService()
-pip_installer = PipInstaller(
+pip_installer = UvInstaller(
     astrbot_config.get("pip_install_arg", ""),
     astrbot_config.get("pypi_index_url", None),
 )

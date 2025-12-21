@@ -12,10 +12,10 @@ class MatrixEventHandler:
         self.client = client
         self.auto_join_rooms = auto_join_rooms
 
-    async def invite_callback(self, room, event):
+    async def invite_callback(self, room_id, invite_data): # Fixed signature to match call
         try:
             logger.info(
-                f"Received invite to room {room.room_id} from {event.sender}",
+                f"Received invite to room {room_id}",
                 extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
             )
             if not self.auto_join_rooms:
@@ -25,10 +25,10 @@ class MatrixEventHandler:
                 )
                 return
             logger.info(
-                f"Attempting to join room {room.room_id}...",
+                f"Attempting to join room {room_id}...",
                 extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
             )
-            result = await self.client.join_room(room.room_id)
+            result = await self.client.join_room(room_id)
             if result and result.get("room_id"):
                 logger.info(
                     f"Successfully joined room {result['room_id']}",
@@ -36,7 +36,7 @@ class MatrixEventHandler:
                 )
             else:
                 logger.error(
-                    f"Failed to join room {room.room_id}: {result}",
+                    f"Failed to join room {room_id}: {result}",
                     extra={"plugin_tag": "matrix", "short_levelname": "ERRO"},
                 )
         except Exception as e:

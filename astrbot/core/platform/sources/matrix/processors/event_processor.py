@@ -1,15 +1,17 @@
 """
 Matrix Event Processor
-Handles processing of Matrix events (messages, ignoring encrypted events)
+Handles processing of Matrix events (messages, etc.)
 """
 
-from typing import Optional, Callable, Set
+from collections.abc import Callable
+from typing import Any
+
 from astrbot.api import logger
 
 
 class MatrixEventProcessor:
     """
-    Processes Matrix events, ignoring encrypted events
+    Processes Matrix events
     """
 
     def __init__(
@@ -31,11 +33,11 @@ class MatrixEventProcessor:
         self.startup_ts = startup_ts
 
         # Message deduplication
-        self._processed_messages: Set[str] = set()
+        self._processed_messages: set[str] = set()
         self._max_processed_messages = 1000
 
         # Event callbacks
-        self.on_message: Optional[Callable] = None
+        self.on_message: Callable | None = None
 
     def set_message_callback(self, callback: Callable):
         """
@@ -54,6 +56,7 @@ class MatrixEventProcessor:
             room_id: Room ID
             room_data: Room data from sync response
         """
+        # Update import: Client event types in ..client.event_types
         from ..client.event_types import MatrixRoom
 
         timeline = room_data.get("timeline", {})
@@ -89,19 +92,14 @@ class MatrixEventProcessor:
 
         event_type = event_data.get("type")
 
-        if event_type == "m.room.message":
-            # Parse plaintext message event
+        if event_type == "m.room.message" or event_type == "m.room.encrypted":
+            # Parse plaintext message event or encrypted event
             event = parse_event(event_data, room.room_id)
             await self._process_message_event(room, event)
 
-        elif event_type == "m.room.encrypted":
-            # Ignore encrypted messages - E2EE is disabled
-            logger.debug(f"Ignoring encrypted message in room {room.room_id} (E2EE disabled)")
-            return
-
     async def _process_message_event(self, room, event):
         """
-        Process a message event (after decryption if needed)
+        Process a message event
 
         Args:
             room: Room object
@@ -110,16 +108,27 @@ class MatrixEventProcessor:
         try:
             # Ignore messages from self
             if event.sender == self.user_id:
-                logger.debug(f"Ignoring message from self: {event.event_id}")
+                logger.debug(f"忽略来自自身的消息: {event.event_id}")
+                return
+
+            # Check if message is encrypted
+            event_type = event.event_type
+            event_content = event.content
+
+            if event_type == "m.room.encrypted" or event_content.get("algorithm"):
+                # This is an encrypted message
+                logger.error(f"收到加密消息 (room_id={room.room_id}, event_id={event.event_id})。无法解密。")
                 return
 
             # Filter historical messages: ignore events before startup
             evt_ts = getattr(event, "origin_server_ts", None)
             if evt_ts is None:
                 evt_ts = getattr(event, "server_timestamp", None)
-            if evt_ts is not None and evt_ts < (self.startup_ts - 1000):  # Allow 1s drift
+            if evt_ts is not None and evt_ts < (
+                self.startup_ts - 1000
+            ):  # Allow 1s drift
                 logger.debug(
-                    f"Ignoring historical message before startup: "
+                    f"忽略启动前的历史消息: "
                     f"id={getattr(event, 'event_id', '<unknown>')} "
                     f"ts={evt_ts} startup={self.startup_ts}"
                 )
@@ -127,7 +136,7 @@ class MatrixEventProcessor:
 
             # Message deduplication: check if already processed
             if event.event_id in self._processed_messages:
-                logger.debug(f"Ignoring duplicate message: {event.event_id}")
+                logger.debug(f"忽略重复消息: {event.event_id}")
                 return
 
             # Record processed message ID
@@ -146,12 +155,20 @@ class MatrixEventProcessor:
             if self.on_message:
                 await self.on_message(room, event)
 
+                # Send read receipt after successful processing
+                try:
+                    await self.client.send_read_receipt(room.room_id, event.event_id)
+                    logger.debug(f"已发送事件 {event.event_id} 的已读回执")
+                except Exception as e:
+                    logger.debug(f"发送已读回执失败: {e}")
+
         except Exception as e:
-            logger.error(f"Error processing message event: {e}")
+            logger.error(f"处理消息事件时出错: {e}")
+
 
     async def process_to_device_events(self, events: list):
         """
-        Process to-device events (ignoring all E2EE-related events)
+        Process to-device events
 
         Args:
             events: List of to-device events
@@ -160,10 +177,10 @@ class MatrixEventProcessor:
             event_type = event.get("type")
             sender = event.get("sender")
 
-            # Ignore all E2EE-related events
+
             if event_type in [
-                "m.room.encrypted",  # Encrypted messages
-                "m.key.verification.request",  # Verification requests
+                "m.room.encrypted",
+                "m.key.verification.request",
                 "m.key.verification.ready",
                 "m.key.verification.start",
                 "m.key.verification.accept",
@@ -171,14 +188,14 @@ class MatrixEventProcessor:
                 "m.key.verification.mac",
                 "m.key.verification.done",
                 "m.key.verification.cancel",
-                "m.room_key",  # Room keys
-                "m.forwarded_room_key",  # Forwarded room keys
+                "m.room_key",
+                "m.forwarded_room_key",
             ]:
-                logger.debug(f"Ignoring E2EE event: {event_type} from {sender}")
+                logger.debug(f"忽略 E2EE 事件: {event_type} 来自 {sender}")
                 continue
 
             # Log other event types
-            logger.debug(f"Received to-device event: {event_type} from {sender}")
+            logger.debug(f"收到设备间事件: {event_type} 来自 {sender}")
 
     def clear_processed_messages(self):
         """Clear the processed messages cache"""
@@ -187,4 +204,3 @@ class MatrixEventProcessor:
     def get_processed_message_count(self) -> int:
         """Get the number of processed messages in cache"""
         return len(self._processed_messages)
-

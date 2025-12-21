@@ -113,7 +113,7 @@ class PlatformManager:
                         SatoriPlatformAdapter,  # noqa: F401
                     )
                 case "matrix":
-                    from .sources.matrix.matrix_adapter import (
+                    from .sources.matrix import (
                         MatrixPlatformAdapter,  # noqa: F401
                     )
         except (ImportError, ModuleNotFoundError) as e:
