@@ -1,1 +1,1 @@
-from .receiver import MatrixReceiver
+from .receiver import MatrixReceiver as MatrixReceiver

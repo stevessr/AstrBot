@@ -1,2 +1,2 @@
-from .event_handler import MatrixEventHandler
-from .event_processor import MatrixEventProcessor
+from .event_handler import MatrixEventHandler as MatrixEventHandler
+from .event_processor import MatrixEventProcessor as MatrixEventProcessor

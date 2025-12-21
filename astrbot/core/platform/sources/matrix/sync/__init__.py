@@ -1,1 +1,1 @@
-from .sync_manager import MatrixSyncManager
+from .sync_manager import MatrixSyncManager as MatrixSyncManager
