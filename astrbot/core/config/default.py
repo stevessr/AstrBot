@@ -388,6 +388,8 @@ CONFIG_METADATA_2 = {
                         "matrix_bot_name": "AstrBot",
                         "matrix_refresh_token": "",
                         "matrix_enable_threading": True,
+                        "matrix_enable_e2ee": False,
+                        "matrix_e2ee_store_path": "./data/matrix_e2ee",
                     },
                     # "WebChat": {
                     #     "id": "webchat",
@@ -498,6 +500,17 @@ CONFIG_METADATA_2 = {
                         "description": "启用线程回复（试验性）",
                         "type": "bool",
                         "hint": "（试验性功能）启用后，AstrBot 将使用 Matrix 的线程（Thread）功能回复消息，而非普通的时间线回复。",
+                    },
+                    "matrix_enable_e2ee": {
+                        "description": "启用端到端加密（试验性）",
+                        "type": "bool",
+                        "hint": "（试验性功能）启用后，AstrBot 可以接收和发送加密消息。需要安装 vodozemac 库：pip install vodozemac",
+                    },
+                    "matrix_e2ee_store_path": {
+                        "description": "E2EE 密钥存储路径",
+                        "type": "string",
+                        "hint": "用于存储端到端加密的密钥和会话数据",
+                        "condition": {"matrix_enable_e2ee": True},
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",

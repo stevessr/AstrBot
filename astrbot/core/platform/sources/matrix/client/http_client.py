@@ -872,3 +872,104 @@ class MatrixHTTPClient:
                 f"send_to_device network error for {event_type} txn {txn_id}: {e}"
             )
             raise
+
+    # ========== E2EE API ==========
+
+    async def upload_keys(
+        self,
+        device_keys: dict[str, Any] | None = None,
+        one_time_keys: dict[str, Any] | None = None,
+        fallback_keys: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Upload device keys, one-time keys, and fallback keys
+
+        Args:
+            device_keys: Device identity keys
+            one_time_keys: One-time pre-keys
+            fallback_keys: Fallback keys
+
+        Returns:
+            Response with one_time_key_counts
+        """
+        endpoint = "/_matrix/client/v3/keys/upload"
+        data: dict[str, Any] = {}
+
+        if device_keys:
+            data["device_keys"] = device_keys
+        if one_time_keys:
+            data["one_time_keys"] = one_time_keys
+        if fallback_keys:
+            data["fallback_keys"] = fallback_keys
+
+        return await self._request("POST", endpoint, data=data)
+
+    async def query_keys(
+        self,
+        device_keys: dict[str, list[str]],
+        timeout: int = 10000,
+    ) -> dict[str, Any]:
+        """
+        Query device keys for users
+
+        Args:
+            device_keys: Dict of user_id -> list of device_ids (empty list = all devices)
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Response with device_keys
+        """
+        endpoint = "/_matrix/client/v3/keys/query"
+        data = {"device_keys": device_keys, "timeout": timeout}
+        return await self._request("POST", endpoint, data=data)
+
+    async def claim_keys(
+        self,
+        one_time_keys: dict[str, dict[str, str]],
+        timeout: int = 10000,
+    ) -> dict[str, Any]:
+        """
+        Claim one-time keys from other users' devices
+
+        Args:
+            one_time_keys: Dict of user_id -> {device_id -> algorithm}
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Response with claimed one_time_keys
+        """
+        endpoint = "/_matrix/client/v3/keys/claim"
+        data = {"one_time_keys": one_time_keys, "timeout": timeout}
+        return await self._request("POST", endpoint, data=data)
+
+    async def get_room_state(self, room_id: str) -> list[dict[str, Any]]:
+        """
+        Get full state for a room
+
+        Args:
+            room_id: Room ID
+
+        Returns:
+            List of state events
+        """
+        endpoint = f"/_matrix/client/v3/rooms/{room_id}/state"
+        return await self._request("GET", endpoint)
+
+    async def is_room_encrypted(self, room_id: str) -> bool:
+        """
+        Check if a room has encryption enabled
+
+        Args:
+            room_id: Room ID
+
+        Returns:
+            True if room is encrypted
+        """
+        try:
+            state = await self.get_room_state(room_id)
+            for event in state:
+                if event.get("type") == "m.room.encryption":
+                    return True
+            return False
+        except Exception:
+            return False

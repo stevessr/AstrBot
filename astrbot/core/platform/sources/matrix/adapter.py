@@ -92,6 +92,25 @@ class MatrixPlatformAdapter(Platform):
             startup_ts=self._startup_ts,
         )
 
+        # Initialize E2EE manager (if enabled)
+        self.e2ee_manager = None
+        if self._matrix_config.enable_e2ee:
+            from .e2ee import E2EEManager, VODOZEMAC_AVAILABLE
+
+            if VODOZEMAC_AVAILABLE:
+                self.e2ee_manager = E2EEManager(
+                    client=self.client,
+                    user_id=self._matrix_config.user_id,
+                    device_id=self._matrix_config.device_id,
+                    store_path=self._matrix_config.e2ee_store_path,
+                )
+                # 传递给 event_processor 用于解密
+                self.event_processor.e2ee_manager = self.e2ee_manager
+            else:
+                logger.warning(
+                    "E2EE 已启用但 vodozemac 未安装。请运行：pip install vodozemac"
+                )
+
         # Set up callbacks
         self.sync_manager.set_room_event_callback(
             self.event_processor.process_room_events
@@ -119,7 +138,7 @@ class MatrixPlatformAdapter(Platform):
             try:
                 await self.client.set_typing(room_id, typing=True, timeout=5000)
             except Exception as e:
-                logger.debug(f"发送输入通知失败: {e}")
+                logger.debug(f"发送输入通知失败：{e}")
 
             if reply_to is None:
                 try:
@@ -148,7 +167,7 @@ class MatrixPlatformAdapter(Platform):
                             # 检查被回复消息是否已经是嘟文串的一部分
                             relates_to = resp["content"].get("m.relates_to", {})
                             if relates_to.get("rel_type") == "m.thread":
-                                # 如果是嘟文串的一部分，获取根消息ID
+                                # 如果是嘟文串的一部分，获取根消息 ID
                                 thread_root = relates_to.get("event_id")
                                 use_thread = True
                             else:
@@ -163,7 +182,7 @@ class MatrixPlatformAdapter(Platform):
                                 if use_thread:
                                     thread_root = reply_to  # 将当前消息作为嘟文串的根
                 except Exception as e:
-                    logger.warning(f"获取事件用于嘟文串失败: {e}")
+                    logger.warning(f"获取事件用于嘟文串失败：{e}")
 
             # 检查是否有 Markdown 内容，渲染为 HTML
             # Updated import
@@ -235,9 +254,9 @@ class MatrixPlatformAdapter(Platform):
             try:
                 await self.client.set_typing(room_id, typing=False)
             except Exception as e:
-                logger.debug(f"停止输入通知失败: {e}")
+                logger.debug(f"停止输入通知失败：{e}")
         except Exception as e:
-            logger.error(f"通过会话发送消息失败: {e}")
+            logger.error(f"通过会话发送消息失败：{e}")
 
     async def _send_segment(
         self,
@@ -306,17 +325,24 @@ class MatrixPlatformAdapter(Platform):
                 await self.client.set_presence("online")
                 logger.info("Matrix 在线状态已设置为 online")
             except Exception as e:
-                logger.debug(f"设置在线状态失败: {e}")
+                logger.debug(f"设置在线状态失败：{e}")
+
+            # 初始化 E2EE
+            if self.e2ee_manager:
+                try:
+                    await self.e2ee_manager.initialize()
+                except Exception as e:
+                    logger.error(f"E2EE 初始化失败：{e}")
 
             logger.info(
-                f"Matrix平台适配器正在为 {self._matrix_config.user_id} 在 {self._matrix_config.homeserver} 上运行"
+                f"Matrix 平台适配器正在为 {self._matrix_config.user_id} 在 {self._matrix_config.homeserver} 上运行"
             )
             await self.sync_manager.sync_forever()
         except KeyboardInterrupt:
-            logger.info("Matrix适配器收到关闭信号")
+            logger.info("Matrix 适配器收到关闭信号")
             raise
         except Exception as e:
-            logger.error(f"Matrix适配器错误: {e}")
+            logger.error(f"Matrix 适配器错误：{e}")
             logger.error("Matrix 适配器启动失败。请检查配置并查看上方详细错误信息。")
             raise
 
@@ -354,14 +380,14 @@ class MatrixPlatformAdapter(Platform):
                         platform["matrix_access_token"] = (
                             self._matrix_config.access_token
                         )
-                        logger.info("已保存access_token到配置以供将来使用")
+                        logger.info("已保存 access_token 到配置以供将来使用")
                     break
 
                     # Save the updated config
             main_config.save_config()
-            logger.debug("Matrix适配器配置保存成功")
+            logger.debug("Matrix 适配器配置保存成功")
         except Exception as e:
-            logger.warning(f"保存Matrix配置失败: {e}")
+            logger.warning(f"保存 Matrix 配置失败：{e}")
 
     async def message_callback(self, room, event):
         """
@@ -375,11 +401,11 @@ class MatrixPlatformAdapter(Platform):
             # Convert to AstrBot message format
             abm = await self.receiver.convert_message(room, event)
             if abm is None:
-                logger.warning(f"转换消息失败: {event}")
+                logger.warning(f"转换消息失败：{event}")
                 return
             await self.handle_msg(abm)
         except Exception as e:
-            logger.error(f"消息回调时出错: {e}")
+            logger.error(f"消息回调时出错：{e}")
 
     # 消息转换已由 receiver 组件处理
 
@@ -400,20 +426,20 @@ class MatrixPlatformAdapter(Platform):
                 f"Message event committed: session={getattr(message, 'session_id', 'N/A')}, type={getattr(message, 'type', 'N/A')}, sender={getattr(message.sender, 'user_id', 'N/A') if hasattr(message, 'sender') else 'N/A'}"
             )
         except Exception as e:
-            logger.error(f"处理消息失败: {e}")
+            logger.error(f"处理消息失败：{e}")
 
     def get_client(self):
         return self.client
 
     async def terminate(self):
         try:
-            logger.info("正在关闭Matrix适配器...")
+            logger.info("正在关闭 Matrix 适配器...")
 
             # 设置离线状态
             try:
                 await self.client.set_presence("offline")
             except Exception as e:
-                logger.debug(f"设置离线状态失败: {e}")
+                logger.debug(f"设置离线状态失败：{e}")
 
             # Stop sync manager
             if hasattr(self, "sync_manager"):

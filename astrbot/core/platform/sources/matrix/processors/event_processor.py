@@ -38,6 +38,9 @@ class MatrixEventProcessor:
         # Event callbacks
         self.on_message: Callable | None = None
 
+        # E2EE manager (set by adapter if E2EE is enabled)
+        self.e2ee_manager = None
+
     def set_message_callback(self, callback: Callable):
         """
         Set callback for processed messages
@@ -116,10 +119,30 @@ class MatrixEventProcessor:
 
             if event_type == "m.room.encrypted" or event_content.get("algorithm"):
                 # This is an encrypted message
-                logger.error(
-                    f"收到加密消息 (room_id={room.room_id}, event_id={event.event_id})。无法解密。"
-                )
-                return
+                if self.e2ee_manager:
+                    # 尝试解密
+                    decrypted = await self.e2ee_manager.decrypt_event(
+                        event_content, event.sender, room.room_id
+                    )
+                    if decrypted:
+                        # 替换事件内容为解密后的内容
+                        event.content = decrypted.get("content", {})
+                        event.event_type = decrypted.get("type", "m.room.message")
+                        event.msgtype = event.content.get("msgtype", "")
+                        event.body = event.content.get("body", "")
+                        logger.debug(
+                            f"成功解密消息 (room_id={room.room_id}, event_id={event.event_id})"
+                        )
+                    else:
+                        logger.warning(
+                            f"无法解密消息 (room_id={room.room_id}, event_id={event.event_id})"
+                        )
+                        return
+                else:
+                    logger.error(
+                        f"收到加密消息但 E2EE 未启用 (room_id={room.room_id})"
+                    )
+                    return
 
             # Filter historical messages: ignore events before startup
             evt_ts = getattr(event, "origin_server_ts", None)
