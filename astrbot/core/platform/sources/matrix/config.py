@@ -44,6 +44,13 @@ class MatrixConfig:
         # 这是一个试验性功能，可能不是所有 Matrix 客户端都支持
         self.enable_threading = self.config.get("matrix_enable_threading", False)
 
+        # E2EE 端到端加密配置（试验性）
+        # 启用后 Bot 可以在加密房间中接收和发送消息
+        self.enable_e2ee = self.config.get("matrix_enable_e2ee", False)
+        self.e2ee_store_path = self.config.get(
+            "matrix_e2ee_store_path", "./data/matrix_e2ee"
+        )
+
         self._validate()
 
     def _validate(self):
