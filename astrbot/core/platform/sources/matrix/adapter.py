@@ -98,7 +98,9 @@ class MatrixPlatformAdapter(Platform):
         self.sync_manager.set_to_device_event_callback(
             self.event_processor.process_to_device_events
         )
-        self.sync_manager.set_invite_callback(self.event_handler.invite_callback) # Fixed: using event_handler method
+        self.sync_manager.set_invite_callback(
+            self.event_handler.invite_callback
+        )  # Fixed: using event_handler method
         self.event_processor.set_message_callback(self.message_callback)
 
         logger.info("Matrix Adapter 初始化完成")
@@ -110,6 +112,7 @@ class MatrixPlatformAdapter(Platform):
             room_id = session.session_id
             thread_root = None
             use_thread = False
+            original_message_info = None
 
             # Send typing notification
             try:
@@ -133,24 +136,31 @@ class MatrixPlatformAdapter(Platform):
                 try:
                     # 获取被回复消息的事件信息
                     resp = await self.client.get_event(room_id, reply_to)
-                    if resp and "content" in resp:
-                        # 检查被回复消息是否已经是嘟文串的一部分
-                        relates_to = resp["content"].get("m.relates_to", {})
-                        if relates_to.get("rel_type") == "m.thread":
-                            # 如果是嘟文串的一部分，获取根消息ID
-                            thread_root = relates_to.get("event_id")
-                            use_thread = True
-                        else:
-                            # 如果不是嘟文串，检查是否应该创建新的嘟文串
-                            # 可以通过配置或消息内容来判断是否使用嘟文串模式
-                            # 这里默认对长对话使用嘟文串模式
-                            use_thread = (
-                                self._matrix_config.enable_threading
-                                if hasattr(self._matrix_config, "enable_threading")
-                                else False
-                            )
-                            if use_thread:
-                                thread_root = reply_to  # 将当前消息作为嘟文串的根
+                    if resp:
+                        # 提取原始消息信息用于 fallback
+                        original_message_info = {
+                            "sender": resp.get("sender", ""),
+                            "body": resp.get("content", {}).get("body", ""),
+                        }
+
+                        if "content" in resp:
+                            # 检查被回复消息是否已经是嘟文串的一部分
+                            relates_to = resp["content"].get("m.relates_to", {})
+                            if relates_to.get("rel_type") == "m.thread":
+                                # 如果是嘟文串的一部分，获取根消息ID
+                                thread_root = relates_to.get("event_id")
+                                use_thread = True
+                            else:
+                                # 如果不是嘟文串，检查是否应该创建新的嘟文串
+                                # 可以通过配置或消息内容来判断是否使用嘟文串模式
+                                # 这里默认对长对话使用嘟文串模式
+                                use_thread = (
+                                    self._matrix_config.enable_threading
+                                    if hasattr(self._matrix_config, "enable_threading")
+                                    else False
+                                )
+                                if use_thread:
+                                    thread_root = reply_to  # 将当前消息作为嘟文串的根
                 except Exception as e:
                     logger.warning(f"获取事件用于嘟文串失败: {e}")
 
@@ -181,14 +191,22 @@ class MatrixPlatformAdapter(Platform):
                 # 发送第一段（包含头部信息）
                 first_seg = plain_comps[0]
                 await self._send_segment(
-                    room_id, first_seg, header_comps, reply_to, thread_root, use_thread
+                    room_id,
+                    first_seg,
+                    header_comps,
+                    reply_to,
+                    thread_root,
+                    use_thread,
+                    original_message_info,
                 )
 
-                # 发送剩余段落（不包含头部信息，也不使用嘟文串模式）
+                # 发送剩余段落（不包含头部信息，也不使用嘟文串模式，也不使用回复引用）
                 for seg in plain_comps[1:]:
                     # 对于后续段落，使用普通回复模式，不使用嘟文串
-                    await self._send_segment(room_id, seg, [], reply_to, None, False)
-
+                    # 也不传递 original_message_info，避免重复引用
+                    await self._send_segment(
+                        room_id, seg, [], reply_to, None, False, None
+                    )
 
                 # 发送其他组件（如图片、文件等）
                 for seg in other_comps:
@@ -199,6 +217,7 @@ class MatrixPlatformAdapter(Platform):
                         reply_to=reply_to,
                         thread_root=thread_root,
                         use_thread=use_thread,
+                        original_message_info=original_message_info,
                     )
             else:
                 # 非分段回复，按原有逻辑处理
@@ -207,10 +226,13 @@ class MatrixPlatformAdapter(Platform):
                     if isinstance(seg, Plain):
                         # Simple check for Markdown
                         text = seg.text
-                        if any(
-                            x in text
-                            for x in ["**", "*", "`", "#", "- ", "> ", "[", "]("]
-                        ) or reply_to:
+                        if (
+                            any(
+                                x in text
+                                for x in ["**", "*", "`", "#", "- ", "> ", "[", "]("]
+                            )
+                            or reply_to
+                        ):
                             html = markdown_to_html(text)
                             full_text = text
                             full_html = html
@@ -238,6 +260,7 @@ class MatrixPlatformAdapter(Platform):
                     reply_to=reply_to,
                     thread_root=thread_root,
                     use_thread=use_thread,
+                    original_message_info=original_message_info,
                 )
 
             await super().send_by_session(session, message_chain)
@@ -258,6 +281,7 @@ class MatrixPlatformAdapter(Platform):
         reply_to: str,
         thread_root: str,
         use_thread: bool,
+        original_message_info: dict | None = None,
     ):
         """发送单个消息段落"""
         # Updated import
@@ -268,7 +292,9 @@ class MatrixPlatformAdapter(Platform):
         # 处理 Markdown 渲染
         if isinstance(segment, Plain):
             text = segment.text
-            if any(x in text for x in ["**", "*", "`", "#", "- ", "> ", "[", "]("]) or (reply_to and len(header_comps) > 0):
+            if any(x in text for x in ["**", "*", "`", "#", "- ", "> ", "[", "]("]) or (
+                reply_to and len(header_comps) > 0
+            ):
                 html = markdown_to_html(text)
                 full_text = text
                 full_html = html
@@ -290,7 +316,6 @@ class MatrixPlatformAdapter(Platform):
             [*header_comps, processed_segment] if header_comps else [processed_segment]
         )
 
-
         # 发送消息
         await MatrixPlatformEvent.send_with_client(
             self.client,
@@ -299,6 +324,7 @@ class MatrixPlatformAdapter(Platform):
             reply_to=reply_to,
             thread_root=thread_root,
             use_thread=use_thread,
+            original_message_info=original_message_info,
         )
 
     def meta(self) -> PlatformMetadata:
@@ -308,7 +334,6 @@ class MatrixPlatformAdapter(Platform):
     async def run(self):
         try:
             await self.auth.login()
-
 
             logger.info(
                 f"Matrix平台适配器正在为 {self._matrix_config.user_id} 在 {self._matrix_config.homeserver} 上运行"
@@ -324,7 +349,7 @@ class MatrixPlatformAdapter(Platform):
 
     async def _handle_invite(self, room_id: str, invite_data: dict):
         """处理房间邀请"""
-        # This wrapper can be removed since we use event_handler directly, 
+        # This wrapper can be removed since we use event_handler directly,
         # but sticking to existing logic, it seems I removed it and used event_handler.invite_callback directly above
         # Keeping it for now if needed, but it seems unused in my updated __init__
         try:
@@ -413,7 +438,6 @@ class MatrixPlatformAdapter(Platform):
             # Stop sync manager
             if hasattr(self, "sync_manager"):
                 self.sync_manager.stop()
-
 
             # Close HTTP client
             if self.client:
