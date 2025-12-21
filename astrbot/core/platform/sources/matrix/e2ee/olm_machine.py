@@ -2,12 +2,10 @@
 Olm Machine - Olm/Megolm 加密操作封装
 
 使用 vodozemac 实现加密/解密操作。
-注意: 此模块需要安装 vodozemac 库。
+注意：此模块需要安装 vodozemac 库。
 """
 
-import base64
 import json
-import secrets
 from typing import Any
 
 from astrbot.api import logger
@@ -27,16 +25,14 @@ try:
     VODOZEMAC_AVAILABLE = True
 except ImportError:
     VODOZEMAC_AVAILABLE = False
-    logger.warning(
-        "vodozemac 未安装，E2EE 功能将不可用。请运行: pip install vodozemac"
-    )
+    logger.warning("vodozemac 未安装，E2EE 功能将不可用。请运行：pip install vodozemac")
 
 
 class OlmMachine:
     """
     Olm/Megolm 加密操作封装
 
-    提供:
+    提供：
     - 设备密钥生成
     - Olm 会话管理
     - Megolm 加密/解密
@@ -61,7 +57,7 @@ class OlmMachine:
         # Olm 账户
         self._account: Account | None = None
 
-        # Olm 会话缓存: sender_key -> [Session]
+        # Olm 会话缓存：sender_key -> [Session]
         self._olm_sessions: dict[str, list[Session]] = {}
 
         # Megolm 会话缓存
@@ -81,7 +77,7 @@ class OlmMachine:
                 self._account = Account.from_pickle(pickle)
                 logger.info("从存储恢复 Olm 账户")
             except Exception as e:
-                logger.error(f"恢复 Olm 账户失败: {e}")
+                logger.error(f"恢复 Olm 账户失败：{e}")
                 self._create_new_account()
         else:
             self._create_new_account()
@@ -286,9 +282,9 @@ class OlmMachine:
             session = InboundGroupSession(session_key)
             self._megolm_inbound[session_id] = session
             self.store.save_megolm_inbound(session_id, session.pickle())
-            logger.debug(f"添加 Megolm 入站会话: {session_id[:8]}... 房间: {room_id}")
+            logger.debug(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
         except Exception as e:
-            logger.error(f"添加 Megolm 入站会话失败: {e}")
+            logger.error(f"添加 Megolm 入站会话失败：{e}")
 
     def decrypt_megolm(self, session_id: str, ciphertext: str) -> dict | None:
         """
@@ -312,11 +308,11 @@ class OlmMachine:
                     session = InboundGroupSession.from_pickle(pickle)
                     self._megolm_inbound[session_id] = session
                 except Exception as e:
-                    logger.error(f"加载 Megolm 会话失败: {e}")
+                    logger.error(f"加载 Megolm 会话失败：{e}")
                     return None
 
         if not session:
-            logger.warning(f"未找到 Megolm 会话: {session_id[:8]}...")
+            logger.warning(f"未找到 Megolm 会话：{session_id[:8]}...")
             return None
 
         try:
@@ -324,7 +320,7 @@ class OlmMachine:
             # 解析解密后的 JSON
             return json.loads(plaintext.plaintext)
         except Exception as e:
-            logger.error(f"Megolm 解密失败: {e}")
+            logger.error(f"Megolm 解密失败：{e}")
             return None
 
     def create_megolm_outbound_session(self, room_id: str) -> tuple[str, str]:
@@ -386,7 +382,9 @@ class OlmMachine:
     @staticmethod
     def _canonical_json(obj: dict) -> str:
         """生成规范化的 JSON 字符串 (用于签名)"""
-        return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(
+            obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
 
     @property
     def curve25519_key(self) -> str:

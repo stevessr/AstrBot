@@ -95,7 +95,7 @@ class MatrixPlatformAdapter(Platform):
         # Initialize E2EE manager (if enabled)
         self.e2ee_manager = None
         if self._matrix_config.enable_e2ee:
-            from .e2ee import E2EEManager, VODOZEMAC_AVAILABLE
+            from .e2ee import VODOZEMAC_AVAILABLE, E2EEManager
 
             if VODOZEMAC_AVAILABLE:
                 self.e2ee_manager = E2EEManager(
@@ -103,6 +103,9 @@ class MatrixPlatformAdapter(Platform):
                     user_id=self._matrix_config.user_id,
                     device_id=self._matrix_config.device_id,
                     store_path=self._matrix_config.e2ee_store_path,
+                    auto_verify_mode=self._matrix_config.e2ee_auto_verify,
+                    enable_key_backup=self._matrix_config.e2ee_key_backup,
+                    recovery_key=self._matrix_config.e2ee_recovery_key,
                 )
                 # 传递给 event_processor 用于解密
                 self.event_processor.e2ee_manager = self.e2ee_manager
@@ -246,6 +249,7 @@ class MatrixPlatformAdapter(Platform):
                     thread_root=thread_root,
                     use_thread=use_thread,
                     original_message_info=original_message_info,
+                    e2ee_manager=self.e2ee_manager,
                 )
 
             await super().send_by_session(session, message_chain)
@@ -310,6 +314,7 @@ class MatrixPlatformAdapter(Platform):
             thread_root=thread_root,
             use_thread=use_thread,
             original_message_info=original_message_info,
+            e2ee_manager=self.e2ee_manager,
         )
 
     def meta(self) -> PlatformMetadata:

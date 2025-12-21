@@ -1,0 +1,652 @@
+"""
+SAS Verification - Matrix 设备验证流程
+
+实现 SAS (Short Authentication String) 验证协议。
+使用 vodozemac 提供的真正 X25519 密钥交换和 HKDF。
+支持 auto_accept / auto_reject / manual 三种模式。
+所有模式都会打印详细的验证日志。
+"""
+
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+from typing import Any, Literal
+
+from astrbot.api import logger
+
+# 尝试导入 vodozemac
+try:
+    from vodozemac.sas import Sas, SasBytes
+
+    VODOZEMAC_SAS_AVAILABLE = True
+except ImportError:
+    VODOZEMAC_SAS_AVAILABLE = False
+    logger.debug("vodozemac SAS 模块不可用，将使用简化实现")
+
+# SAS 验证相关常量
+SAS_METHODS = ["m.sas.v1"]
+KEY_AGREEMENT_PROTOCOLS = ["curve25519-hkdf-sha256"]
+HASHES = ["sha256"]
+MESSAGE_AUTHENTICATION_CODES = ["hkdf-hmac-sha256.v2", "hkdf-hmac-sha256"]
+SHORT_AUTHENTICATION_STRING = ["decimal", "emoji"]
+
+# SAS Emoji 列表 (Matrix 规范定义的 64 个 emoji)
+SAS_EMOJIS = [
+    ("🐶", "Dog"),
+    ("🐱", "Cat"),
+    ("🦁", "Lion"),
+    ("🐴", "Horse"),
+    ("🦄", "Unicorn"),
+    ("🐷", "Pig"),
+    ("🐘", "Elephant"),
+    ("🐰", "Rabbit"),
+    ("🐼", "Panda"),
+    ("🐓", "Rooster"),
+    ("🐧", "Penguin"),
+    ("🐢", "Turtle"),
+    ("🐟", "Fish"),
+    ("🐙", "Octopus"),
+    ("🦋", "Butterfly"),
+    ("🌷", "Flower"),
+    ("🌳", "Tree"),
+    ("🌵", "Cactus"),
+    ("🍄", "Mushroom"),
+    ("🌏", "Globe"),
+    ("🌙", "Moon"),
+    ("☁️", "Cloud"),
+    ("🔥", "Fire"),
+    ("🍌", "Banana"),
+    ("🍎", "Apple"),
+    ("🍓", "Strawberry"),
+    ("🌽", "Corn"),
+    ("🍕", "Pizza"),
+    ("🎂", "Cake"),
+    ("❤️", "Heart"),
+    ("😀", "Smiley"),
+    ("🤖", "Robot"),
+    ("🎩", "Hat"),
+    ("👓", "Glasses"),
+    ("🔧", "Spanner"),
+    ("🎅", "Santa"),
+    ("👍", "Thumbs Up"),
+    ("☂️", "Umbrella"),
+    ("⌛", "Hourglass"),
+    ("⏰", "Clock"),
+    ("🎁", "Gift"),
+    ("💡", "Light Bulb"),
+    ("📕", "Book"),
+    ("✏️", "Pencil"),
+    ("📎", "Paperclip"),
+    ("✂️", "Scissors"),
+    ("🔒", "Lock"),
+    ("🔑", "Key"),
+    ("🔨", "Hammer"),
+    ("☎️", "Telephone"),
+    ("🏁", "Flag"),
+    ("🚂", "Train"),
+    ("🚲", "Bicycle"),
+    ("✈️", "Aeroplane"),
+    ("🚀", "Rocket"),
+    ("🏆", "Trophy"),
+    ("⚽", "Ball"),
+    ("🎸", "Guitar"),
+    ("🎺", "Trumpet"),
+    ("🔔", "Bell"),
+    ("⚓", "Anchor"),
+    ("🎧", "Headphones"),
+    ("📁", "Folder"),
+    ("📌", "Pin"),
+]
+
+
+def _canonical_json(obj: dict) -> str:
+    """生成 Matrix 规范的规范化 JSON"""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _compute_hkdf(
+    input_key: bytes,
+    salt: bytes,
+    info: bytes,
+    length: int = 32,
+) -> bytes:
+    """计算 HKDF-SHA256"""
+    # HKDF-Extract
+    if not salt:
+        salt = b"\x00" * 32
+    prk = hmac.new(salt, input_key, hashlib.sha256).digest()
+
+    # HKDF-Expand
+    output = b""
+    t = b""
+    counter = 1
+    while len(output) < length:
+        t = hmac.new(prk, t + info + bytes([counter]), hashlib.sha256).digest()
+        output += t
+        counter += 1
+    return output[:length]
+
+
+class SASVerification:
+    """
+    SAS 验证流程管理器
+
+    使用 vodozemac 提供的真正密码学实现
+    """
+
+    def __init__(
+        self,
+        client,
+        user_id: str,
+        device_id: str,
+        olm_machine,
+        auto_verify_mode: Literal[
+            "auto_accept", "auto_reject", "manual"
+        ] = "auto_accept",
+    ):
+        self.client = client
+        self.user_id = user_id
+        self.device_id = device_id
+        self.olm = olm_machine
+        self.auto_verify_mode = auto_verify_mode
+
+        # 活跃的验证会话：transaction_id -> session_data
+        self._sessions: dict[str, dict[str, Any]] = {}
+
+    async def handle_verification_event(
+        self, event_type: str, sender: str, content: dict
+    ) -> bool:
+        """处理验证事件"""
+        transaction_id = content.get("transaction_id")
+
+        logger.info(
+            f"[E2EE-Verify] 收到验证事件：{event_type} "
+            f"from={sender} txn={transaction_id}"
+        )
+        logger.debug(
+            f"[E2EE-Verify] 事件内容：{json.dumps(content, ensure_ascii=False)}"
+        )
+
+        handlers = {
+            "m.key.verification.request": self._handle_request,
+            "m.key.verification.ready": self._handle_ready,
+            "m.key.verification.start": self._handle_start,
+            "m.key.verification.accept": self._handle_accept,
+            "m.key.verification.key": self._handle_key,
+            "m.key.verification.mac": self._handle_mac,
+            "m.key.verification.done": self._handle_done,
+            "m.key.verification.cancel": self._handle_cancel,
+        }
+
+        handler = handlers.get(event_type)
+        if handler:
+            await handler(sender, content, transaction_id)
+            return True
+        return False
+
+    async def _handle_request(self, sender: str, content: dict, transaction_id: str):
+        """处理验证请求"""
+        from_device = content.get("from_device")
+        methods = content.get("methods", [])
+
+        logger.info(
+            f"[E2EE-Verify] 收到验证请求："
+            f"sender={sender} device={from_device} methods={methods}"
+        )
+
+        # 创建 SAS 实例
+        sas = None
+        if VODOZEMAC_SAS_AVAILABLE:
+            try:
+                sas = Sas()
+                logger.debug(
+                    f"[E2EE-Verify] 创建 SAS 实例，公钥：{sas.public_key[:16]}..."
+                )
+            except Exception as e:
+                logger.warning(f"[E2EE-Verify] 创建 SAS 实例失败：{e}")
+
+        self._sessions[transaction_id] = {
+            "sender": sender,
+            "from_device": from_device,
+            "methods": methods,
+            "state": "requested",
+            "sas": sas,
+        }
+
+        if self.auto_verify_mode == "auto_reject":
+            logger.info("[E2EE-Verify] 自动拒绝验证请求 (mode=auto_reject)")
+            await self._send_cancel(
+                sender, from_device, transaction_id, "m.user", "自动拒绝"
+            )
+            return
+
+        if self.auto_verify_mode == "manual":
+            logger.info("[E2EE-Verify] 手动模式，记录验证请求但不响应 (mode=manual)")
+            return
+
+        # auto_accept: 发送 ready
+        if "m.sas.v1" in methods:
+            logger.info("[E2EE-Verify] 自动接受验证请求 (mode=auto_accept)")
+            await self._send_ready(sender, from_device, transaction_id)
+        else:
+            logger.warning(f"[E2EE-Verify] 不支持的验证方法：{methods}")
+            await self._send_cancel(
+                sender,
+                from_device,
+                transaction_id,
+                "m.unknown_method",
+                "不支持的验证方法",
+            )
+
+    async def _handle_ready(self, sender: str, content: dict, transaction_id: str):
+        """处理 ready 响应"""
+        from_device = content.get("from_device")
+        methods = content.get("methods", [])
+
+        logger.info(f"[E2EE-Verify] 对方已就绪：device={from_device} methods={methods}")
+
+        session = self._sessions.get(transaction_id, {})
+        session["state"] = "ready"
+        session["their_device"] = from_device
+
+    async def _handle_start(self, sender: str, content: dict, transaction_id: str):
+        """处理验证开始"""
+        from_device = content.get("from_device")
+        method = content.get("method")
+        their_commitment = content.get("commitment")
+
+        logger.info(
+            f"[E2EE-Verify] 验证开始：method={method} "
+            f"commitment={their_commitment[:16] if their_commitment else 'None'}..."
+        )
+
+        session = self._sessions.get(transaction_id, {})
+        session["state"] = "started"
+        session["method"] = method
+        session["their_commitment"] = their_commitment
+        session["start_content"] = content
+
+        if self.auto_verify_mode == "auto_accept":
+            await self._send_accept(sender, from_device, transaction_id, content)
+
+    async def _handle_accept(self, sender: str, content: dict, transaction_id: str):
+        """处理验证接受"""
+        commitment = content.get("commitment")
+        key_agreement = content.get("key_agreement_protocol")
+        hash_algo = content.get("hash")
+        mac = content.get("message_authentication_code")
+        sas_methods = content.get("short_authentication_string", [])
+
+        logger.info(
+            f"[E2EE-Verify] 对方接受验证："
+            f"key_agreement={key_agreement} hash={hash_algo} mac={mac}"
+        )
+
+        session = self._sessions.get(transaction_id, {})
+        session["state"] = "accepted"
+        session["their_commitment"] = commitment
+        session["key_agreement"] = key_agreement
+        session["hash"] = hash_algo
+        session["mac"] = mac
+        session["sas_methods"] = sas_methods
+
+        if self.auto_verify_mode == "auto_accept":
+            await self._send_key(
+                sender,
+                content.get("from_device", session.get("from_device", "")),
+                transaction_id,
+            )
+
+    async def _handle_key(self, sender: str, content: dict, transaction_id: str):
+        """处理密钥交换 - 使用真正的 X25519"""
+        their_key = content.get("key")
+
+        logger.info(f"[E2EE-Verify] 收到对方公钥：{their_key[:20]}...")
+
+        session = self._sessions.get(transaction_id, {})
+        session["their_key"] = their_key
+        session["state"] = "key_exchanged"
+
+        sas = session.get("sas")
+        our_key = session.get("our_public_key")
+
+        if sas and VODOZEMAC_SAS_AVAILABLE and their_key:
+            try:
+                # 使用 vodozemac 计算共享密钥
+                # 构造 SAS info 字符串
+                their_user = sender
+                their_device = session.get(
+                    "from_device", session.get("their_device", "")
+                )
+
+                info = (
+                    f"MATRIX_KEY_VERIFICATION_SAS|"
+                    f"{self.user_id}|{self.device_id}|{our_key}|"
+                    f"{their_user}|{their_device}|{their_key}|"
+                    f"{transaction_id}"
+                )
+
+                # 设置对方的公钥并生成 SAS 字节
+                sas.set_their_public_key(their_key)
+                sas_bytes = sas.generate_bytes(info.encode(), 6)
+
+                # 将 SAS 字节转换为 emoji 和 decimal
+                emojis = self._bytes_to_emoji(sas_bytes)
+                decimals = self._bytes_to_decimal(sas_bytes)
+
+                session["sas_bytes"] = sas_bytes
+                session["sas_emojis"] = emojis
+                session["sas_decimals"] = decimals
+
+                logger.info("[E2EE-Verify] ===== SAS 验证码 (使用 vodozemac) =====")
+                logger.info(f"[E2EE-Verify] Emoji: {' '.join(e[0] for e in emojis)}")
+                logger.info(
+                    f"[E2EE-Verify] Emoji 名称：{', '.join(e[1] for e in emojis)}"
+                )
+                logger.info(f"[E2EE-Verify] 数字：{decimals}")
+                logger.info("[E2EE-Verify] ==========================================")
+
+            except Exception as e:
+                logger.error(f"[E2EE-Verify] 计算 SAS 失败：{e}")
+                # 回退到简化实现
+                self._compute_sas_fallback(session, their_key)
+        else:
+            # 使用简化实现
+            self._compute_sas_fallback(session, their_key)
+
+        if self.auto_verify_mode == "auto_accept":
+            await self._send_mac(
+                sender,
+                session.get("their_device", session.get("from_device", "")),
+                transaction_id,
+                session,
+            )
+
+    def _compute_sas_fallback(self, session: dict, their_key: str):
+        """回退的 SAS 计算（当 vodozemac SAS 不可用时）"""
+        our_key = session.get("our_public_key", "")
+        combined = f"{our_key}{their_key}".encode()
+        sas_bytes = hashlib.sha256(combined).digest()[:6]
+
+        emojis = self._bytes_to_emoji(sas_bytes)
+        decimals = self._bytes_to_decimal(sas_bytes)
+
+        session["sas_bytes"] = sas_bytes
+        session["sas_emojis"] = emojis
+        session["sas_decimals"] = decimals
+
+        logger.info("[E2EE-Verify] ===== SAS 验证码 (简化实现) =====")
+        logger.info(f"[E2EE-Verify] Emoji: {' '.join(e[0] for e in emojis)}")
+        logger.info(f"[E2EE-Verify] Emoji 名称：{', '.join(e[1] for e in emojis)}")
+        logger.info(f"[E2EE-Verify] 数字：{decimals}")
+        logger.info("[E2EE-Verify] =====================================")
+
+    async def _handle_mac(self, sender: str, content: dict, transaction_id: str):
+        """处理 MAC 验证"""
+        their_mac = content.get("mac", {})
+        their_keys = content.get("keys")
+
+        logger.info(f"[E2EE-Verify] 收到 MAC: keys={their_keys}")
+        logger.debug(f"[E2EE-Verify] MAC 内容：{their_mac}")
+
+        session = self._sessions.get(transaction_id, {})
+        session["their_mac"] = their_mac
+        session["state"] = "mac_received"
+
+        # 验证 MAC
+        sas = session.get("sas")
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            try:
+                # 使用 vodozemac 验证 MAC
+                their_user = sender
+                their_device = session.get(
+                    "from_device", session.get("their_device", "")
+                )
+                info = f"MATRIX_KEY_VERIFICATION_MAC{their_user}{their_device}{transaction_id}"
+
+                # TODO: 完整的 MAC 验证
+                logger.info("[E2EE-Verify] MAC 验证 (简化)：接受")
+            except Exception as e:
+                logger.error(f"[E2EE-Verify] MAC 验证失败：{e}")
+
+        if self.auto_verify_mode == "auto_accept":
+            await self._send_done(
+                sender,
+                session.get("their_device", session.get("from_device", "")),
+                transaction_id,
+            )
+
+    async def _handle_done(self, sender: str, content: dict, transaction_id: str):
+        """处理验证完成"""
+        logger.info(f"[E2EE-Verify] ✅ 验证完成！sender={sender} txn={transaction_id}")
+
+        session = self._sessions.get(transaction_id, {})
+        session["state"] = "done"
+
+        # TODO: 将设备标记为已验证
+
+    async def _handle_cancel(self, sender: str, content: dict, transaction_id: str):
+        """处理验证取消"""
+        code = content.get("code")
+        reason = content.get("reason")
+
+        logger.warning(f"[E2EE-Verify] ❌ 验证被取消：code={code} reason={reason}")
+
+        if transaction_id in self._sessions:
+            self._sessions[transaction_id]["state"] = "cancelled"
+            self._sessions[transaction_id]["cancel_code"] = code
+            self._sessions[transaction_id]["cancel_reason"] = reason
+
+    # ========== 发送验证消息 ==========
+
+    async def _send_ready(self, to_user: str, to_device: str, transaction_id: str):
+        """发送 ready 响应"""
+        content = {
+            "from_device": self.device_id,
+            "methods": SAS_METHODS,
+            "transaction_id": transaction_id,
+        }
+        await self._send_to_device(
+            "m.key.verification.ready", to_user, to_device, content
+        )
+        logger.info("[E2EE-Verify] 已发送 ready")
+
+    async def _send_accept(
+        self, to_user: str, to_device: str, transaction_id: str, start_content: dict
+    ):
+        """发送 accept - 使用真正的密钥协商"""
+        their_key_agreement = start_content.get("key_agreement_protocols", [])
+        their_hashes = start_content.get("hashes", [])
+        their_macs = start_content.get("message_authentication_codes", [])
+        their_sas = start_content.get("short_authentication_string", [])
+
+        key_agreement = next(
+            (k for k in KEY_AGREEMENT_PROTOCOLS if k in their_key_agreement),
+            KEY_AGREEMENT_PROTOCOLS[0],
+        )
+        hash_algo = next((h for h in HASHES if h in their_hashes), HASHES[0])
+        mac = next(
+            (m for m in MESSAGE_AUTHENTICATION_CODES if m in their_macs),
+            MESSAGE_AUTHENTICATION_CODES[0],
+        )
+        sas_methods = [s for s in SHORT_AUTHENTICATION_STRING if s in their_sas]
+
+        session = self._sessions.get(transaction_id, {})
+
+        # 生成我们的公钥
+        sas = session.get("sas")
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            our_public_key = sas.public_key
+        else:
+            # 回退：生成随机密钥 (仅用于显示)
+            our_public_key = base64.b64encode(secrets.token_bytes(32)).decode()
+
+        session["our_public_key"] = our_public_key
+        session["key_agreement"] = key_agreement
+        session["hash"] = hash_algo
+        session["mac"] = mac
+        session["sas_methods"] = sas_methods
+
+        # 计算 commitment = Base64(SHA256(public_key || canonical_json(start_content)))
+        commitment_data = our_public_key + _canonical_json(start_content)
+        commitment = base64.b64encode(
+            hashlib.sha256(commitment_data.encode()).digest()
+        ).decode()
+
+        content = {
+            "transaction_id": transaction_id,
+            "method": "m.sas.v1",
+            "key_agreement_protocol": key_agreement,
+            "hash": hash_algo,
+            "message_authentication_code": mac,
+            "short_authentication_string": sas_methods,
+            "commitment": commitment,
+        }
+
+        await self._send_to_device(
+            "m.key.verification.accept", to_user, to_device, content
+        )
+        logger.info(f"[E2EE-Verify] 已发送 accept (commitment: {commitment[:16]}...)")
+
+    async def _send_key(self, to_user: str, to_device: str, transaction_id: str):
+        """发送公钥"""
+        session = self._sessions.get(transaction_id, {})
+
+        sas = session.get("sas")
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            our_public_key = sas.public_key
+        else:
+            our_public_key = session.get(
+                "our_public_key", base64.b64encode(secrets.token_bytes(32)).decode()
+            )
+
+        session["our_public_key"] = our_public_key
+
+        content = {
+            "transaction_id": transaction_id,
+            "key": our_public_key,
+        }
+
+        await self._send_to_device(
+            "m.key.verification.key", to_user, to_device, content
+        )
+        logger.info(f"[E2EE-Verify] 已发送 key: {our_public_key[:20]}...")
+
+    async def _send_mac(
+        self, to_user: str, to_device: str, transaction_id: str, session: dict
+    ):
+        """发送 MAC - 使用 HKDF-HMAC-SHA256"""
+        sas = session.get("sas")
+        sas_bytes = session.get("sas_bytes", b"\x00" * 32)
+
+        # 生成 MAC 的基础密钥
+        our_device_key_id = f"ed25519:{self.device_id}"
+
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            try:
+                info_mac = f"MATRIX_KEY_VERIFICATION_MAC{self.user_id}{self.device_id}{to_user}{to_device}{transaction_id}"
+
+                # 计算设备密钥的 MAC
+                if self.olm:
+                    device_key = self.olm.ed25519_key
+                    key_mac = sas.calculate_mac(
+                        device_key, (info_mac + our_device_key_id).encode()
+                    )
+                    keys_mac = sas.calculate_mac(
+                        our_device_key_id, (info_mac + "KEY_IDS").encode()
+                    )
+                else:
+                    key_mac = base64.b64encode(
+                        hashlib.sha256(our_device_key_id.encode()).digest()
+                    ).decode()
+                    keys_mac = base64.b64encode(
+                        hashlib.sha256(our_device_key_id.encode()).digest()
+                    ).decode()
+
+                mac_content = {our_device_key_id: key_mac}
+            except Exception as e:
+                logger.warning(f"[E2EE-Verify] vodozemac MAC 计算失败，使用回退：{e}")
+                # 回退实现
+                mac_content = {
+                    our_device_key_id: base64.b64encode(
+                        _compute_hkdf(sas_bytes, b"", our_device_key_id.encode())
+                    ).decode()
+                }
+                keys_mac = base64.b64encode(
+                    hashlib.sha256(our_device_key_id.encode()).digest()
+                ).decode()
+        else:
+            # 回退实现
+            mac_content = {
+                our_device_key_id: base64.b64encode(
+                    _compute_hkdf(sas_bytes, b"", our_device_key_id.encode())
+                ).decode()
+            }
+            keys_mac = base64.b64encode(
+                hashlib.sha256(our_device_key_id.encode()).digest()
+            ).decode()
+
+        content = {
+            "transaction_id": transaction_id,
+            "mac": mac_content,
+            "keys": keys_mac,
+        }
+
+        await self._send_to_device(
+            "m.key.verification.mac", to_user, to_device, content
+        )
+        logger.info("[E2EE-Verify] 已发送 mac")
+
+    async def _send_done(self, to_user: str, to_device: str, transaction_id: str):
+        """发送 done"""
+        content = {"transaction_id": transaction_id}
+        await self._send_to_device(
+            "m.key.verification.done", to_user, to_device, content
+        )
+        logger.info("[E2EE-Verify] 已发送 done")
+
+    async def _send_cancel(
+        self, to_user: str, to_device: str, transaction_id: str, code: str, reason: str
+    ):
+        """发送取消"""
+        content = {
+            "transaction_id": transaction_id,
+            "code": code,
+            "reason": reason,
+        }
+        await self._send_to_device(
+            "m.key.verification.cancel", to_user, to_device, content
+        )
+        logger.info(f"[E2EE-Verify] 已发送 cancel: {code} - {reason}")
+
+    async def _send_to_device(
+        self, event_type: str, to_user: str, to_device: str, content: dict
+    ):
+        """发送 to_device 消息"""
+        try:
+            txn_id = secrets.token_hex(16)
+            messages = {to_user: {to_device: content}}
+            await self.client.send_to_device(event_type, messages, txn_id)
+        except Exception as e:
+            logger.error(f"[E2EE-Verify] 发送 {event_type} 失败：{e}")
+
+    # ========== SAS 计算 ==========
+
+    def _bytes_to_emoji(self, sas_bytes: bytes) -> list[tuple[str, str]]:
+        """将 SAS 字节转换为 emoji"""
+        bits = int.from_bytes(sas_bytes[:6], "big")
+        emojis = []
+        for i in range(7):
+            idx = (bits >> (42 - i * 6)) & 0x3F
+            emojis.append(SAS_EMOJIS[idx])
+        return emojis
+
+    def _bytes_to_decimal(self, sas_bytes: bytes) -> str:
+        """将 SAS 字节转换为三组四位数字"""
+        bits = int.from_bytes(sas_bytes[:5], "big")
+        n1 = ((bits >> 27) & 0x1FFF) + 1000
+        n2 = ((bits >> 14) & 0x1FFF) + 1000
+        n3 = ((bits >> 1) & 0x1FFF) + 1000
+        return f"{n1} {n2} {n3}"

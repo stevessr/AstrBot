@@ -50,6 +50,16 @@ class MatrixConfig:
         self.e2ee_store_path = self.config.get(
             "matrix_e2ee_store_path", "./data/matrix_e2ee"
         )
+        # 自动验证模式：auto_accept (自动接受) / auto_reject (自动拒绝) / manual (手动)
+        # 无论哪种模式都会打印详细的验证日志
+        self.e2ee_auto_verify = self.config.get(
+            "matrix_e2ee_auto_verify", "auto_accept"
+        )
+        # 是否启用密钥备份
+        self.e2ee_key_backup = self.config.get("matrix_e2ee_key_backup", False)
+        # 用户手动配置的恢复密钥（base64 编码的 32 字节密钥）
+        # 如果为空，将自动生成新密钥并在日志中输出
+        self.e2ee_recovery_key = self.config.get("matrix_e2ee_recovery_key", "")
 
         self._validate()
 

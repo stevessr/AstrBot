@@ -38,6 +38,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
         thread_root: str | None = None,
         use_thread: bool = False,
         original_message_info: dict | None = None,
+        e2ee_manager=None,
     ) -> int:
         """使用提供的 client 将指定消息链发送到指定房间。
 
@@ -48,11 +49,23 @@ class MatrixPlatformEvent(AstrMessageEvent):
             reply_to: 可选，被引用的消息 event_id
             thread_root: 可选，嘟文串根消息的 event_id
             use_thread: 是否使用嘟文串模式回复
+            original_message_info: 可选，原始消息信息（用于回复）
+            e2ee_manager: 可选，E2EEManager 实例（用于加密消息）
 
         Returns:
             已发送的消息段数量
         """
         sent_count = 0
+
+        # 检查房间是否需要加密
+        is_encrypted_room = False
+        if e2ee_manager:
+            try:
+                is_encrypted_room = await client.is_room_encrypted(room_id)
+                if is_encrypted_room:
+                    logger.debug(f"房间 {room_id} 已加密，将使用 E2EE 发送消息")
+            except Exception as e:
+                logger.debug(f"检查房间加密状态失败：{e}")
 
         # 若未显式传入 reply_to，则尝试从消息链中提取 Reply 段
         if reply_to is None:
@@ -148,10 +161,31 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
 
                 try:
-                    await client.send_message(
-                        room_id=room_id, msg_type="m.room.message", content=content
-                    )
-                    sent_count += 1
+                    # 如果房间已加密，使用 E2EE 加密消息
+                    if is_encrypted_room and e2ee_manager:
+                        encrypted = await e2ee_manager.encrypt_message(
+                            room_id, "m.room.message", content
+                        )
+                        if encrypted:
+                            await client.send_message(
+                                room_id=room_id,
+                                msg_type="m.room.encrypted",
+                                content=encrypted,
+                            )
+                            sent_count += 1
+                        else:
+                            logger.warning("加密消息失败，尝试发送未加密消息")
+                            await client.send_message(
+                                room_id=room_id,
+                                msg_type="m.room.message",
+                                content=content,
+                            )
+                            sent_count += 1
+                    else:
+                        await client.send_message(
+                            room_id=room_id, msg_type="m.room.message", content=content
+                        )
+                        sent_count += 1
                 except Exception as e:
                     logger.error(f"发送文本消息失败：{e}")
 
@@ -399,7 +433,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                         "body": resp.get("content", {}).get("body", ""),
                                     }
                                     if resp and "content" in resp:
-                                        relates_to = resp["content"].get("m.relates_to", {})
+                                        relates_to = resp["content"].get(
+                                            "m.relates_to", {}
+                                        )
                                         if relates_to.get("rel_type") == "m.thread":
                                             thread_root = relates_to.get("event_id")
                                             use_thread = True
@@ -410,7 +446,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                             use_thread = False
                                             thread_root = None
                             except Exception as e:
-                                logger.warning(f"Failed to get event for threading: {e}")
+                                logger.warning(
+                                    f"Failed to get event for threading: {e}"
+                                )
 
                         first_chain_processed = True
 
@@ -463,7 +501,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         original_event_id=reply_to,
                         room_id=room_id,
                     )
-                    content["formatted_body"] = fallback_html + content["formatted_body"]
+                    content["formatted_body"] = (
+                        fallback_html + content["formatted_body"]
+                    )
 
                 # 添加嘟文串支持
                 if use_thread and thread_root:
@@ -501,4 +541,3 @@ class MatrixPlatformEvent(AstrMessageEvent):
                 logger.error(f"发送非文本组件失败: {e}")
 
         return await super().send_streaming(generator, use_fallback)
-

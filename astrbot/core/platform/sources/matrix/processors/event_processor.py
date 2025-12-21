@@ -110,7 +110,7 @@ class MatrixEventProcessor:
         try:
             # Ignore messages from self
             if event.sender == self.user_id:
-                logger.debug(f"忽略来自自身的消息: {event.event_id}")
+                logger.debug(f"忽略来自自身的消息：{event.event_id}")
                 return
 
             # Check if message is encrypted
@@ -139,9 +139,7 @@ class MatrixEventProcessor:
                         )
                         return
                 else:
-                    logger.error(
-                        f"收到加密消息但 E2EE 未启用 (room_id={room.room_id})"
-                    )
+                    logger.error(f"收到加密消息但 E2EE 未启用 (room_id={room.room_id})")
                     return
 
             # Filter historical messages: ignore events before startup
@@ -152,7 +150,7 @@ class MatrixEventProcessor:
                 self.startup_ts - 1000
             ):  # Allow 1s drift
                 logger.debug(
-                    f"忽略启动前的历史消息: "
+                    f"忽略启动前的历史消息："
                     f"id={getattr(event, 'event_id', '<unknown>')} "
                     f"ts={evt_ts} startup={self.startup_ts}"
                 )
@@ -160,7 +158,7 @@ class MatrixEventProcessor:
 
             # Message deduplication: check if already processed
             if event.event_id in self._processed_messages:
-                logger.debug(f"忽略重复消息: {event.event_id}")
+                logger.debug(f"忽略重复消息：{event.event_id}")
                 return
 
             # Record processed message ID
@@ -184,10 +182,10 @@ class MatrixEventProcessor:
                     await self.client.send_read_receipt(room.room_id, event.event_id)
                     logger.debug(f"已发送事件 {event.event_id} 的已读回执")
                 except Exception as e:
-                    logger.debug(f"发送已读回执失败: {e}")
+                    logger.debug(f"发送已读回执失败：{e}")
 
         except Exception as e:
-            logger.error(f"处理消息事件时出错: {e}")
+            logger.error(f"处理消息事件时出错：{e}")
 
     async def process_to_device_events(self, events: list):
         """
@@ -199,25 +197,69 @@ class MatrixEventProcessor:
         for event in events:
             event_type = event.get("type")
             sender = event.get("sender")
+            content = event.get("content", {})
 
-            if event_type in [
-                "m.room.encrypted",
-                "m.key.verification.request",
-                "m.key.verification.ready",
-                "m.key.verification.start",
-                "m.key.verification.accept",
-                "m.key.verification.key",
-                "m.key.verification.mac",
-                "m.key.verification.done",
-                "m.key.verification.cancel",
-                "m.room_key",
-                "m.forwarded_room_key",
-            ]:
-                logger.debug(f"忽略 E2EE 事件: {event_type} 来自 {sender}")
+            # 处理验证事件
+            if event_type.startswith("m.key.verification."):
+                if self.e2ee_manager:
+                    try:
+                        await self.e2ee_manager.handle_verification_event(
+                            event_type, sender, content
+                        )
+                    except Exception as e:
+                        logger.error(f"处理验证事件失败：{e}")
+                else:
+                    logger.debug(f"E2EE 未启用，忽略验证事件：{event_type}")
+                continue
+
+            # 处理 m.room_key 事件 (Megolm 密钥分发)
+            if event_type == "m.room_key":
+                if self.e2ee_manager:
+                    try:
+                        sender_key = content.get("sender_key", "")
+                        # 如果是加密的，需要先解密
+                        if "ciphertext" in content:
+                            decrypted = await self.e2ee_manager.decrypt_event(
+                                content, sender, ""
+                            )
+                            if decrypted:
+                                await self.e2ee_manager.handle_room_key(
+                                    decrypted, sender_key
+                                )
+                        else:
+                            await self.e2ee_manager.handle_room_key(content, sender_key)
+                    except Exception as e:
+                        logger.error(f"处理 m.room_key 事件失败：{e}")
+                else:
+                    logger.debug("E2EE 未启用，忽略 m.room_key 事件")
+                continue
+
+            # 处理 m.room.encrypted to_device 消息 (通常包含 m.room_key)
+            if event_type == "m.room.encrypted":
+                if self.e2ee_manager:
+                    try:
+                        decrypted = await self.e2ee_manager.decrypt_event(
+                            content, sender, ""
+                        )
+                        if decrypted:
+                            inner_type = decrypted.get("type")
+                            if inner_type == "m.room_key":
+                                sender_key = content.get("sender_key", "")
+                                await self.e2ee_manager.handle_room_key(
+                                    decrypted.get("content", decrypted), sender_key
+                                )
+                                logger.debug("成功处理加密的 m.room_key 事件")
+                    except Exception as e:
+                        logger.error(f"处理加密 to_device 事件失败：{e}")
+                continue
+
+            # 忽略其他 E2EE 相关事件
+            if event_type in ["m.forwarded_room_key"]:
+                logger.debug(f"忽略 {event_type} 事件 (暂未支持)")
                 continue
 
             # Log other event types
-            logger.debug(f"收到设备间事件: {event_type} 来自 {sender}")
+            logger.debug(f"收到设备间事件：{event_type} 来自 {sender}")
 
     def clear_processed_messages(self):
         """Clear the processed messages cache"""
