@@ -12,7 +12,9 @@ class MatrixEventHandler:
         self.client = client
         self.auto_join_rooms = auto_join_rooms
 
-    async def invite_callback(self, room_id, invite_data): # Fixed signature to match call
+    async def invite_callback(
+        self, room_id, invite_data
+    ):  # Fixed signature to match call
         try:
             logger.info(
                 f"Received invite to room {room_id}",

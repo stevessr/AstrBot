@@ -106,8 +106,6 @@ class MatrixSyncManager:
         """
         self.on_invite = callback
 
-
-
     async def sync_forever(self):
         """
         Run the sync loop forever

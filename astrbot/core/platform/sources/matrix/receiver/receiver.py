@@ -11,6 +11,10 @@ from astrbot.api.platform import AstrBotMessage
 from astrbot.core.platform.astrbot_message import MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.utils import astrbot_path
+from astrbot.api.message_components import Image
+from pathlib import Path
+import hashlib
+from astrbot.core.utils import astrbot_path
 
 # Update import: Client event types are in ..client.event_types
 from ..client.event_types import MatrixRoom, parse_event
@@ -106,44 +110,38 @@ class MatrixReceiver:
                 chain.chain.append(Plain(text))
 
         elif msgtype == "m.image":
-            from astrbot.api.message_components import Image
-            import os
-            import hashlib
-            from astrbot.core.utils import astrbot_path
-
             mxc_url = event.content.get("url")
             if mxc_url and self.client:
                 try:
                     # Create a cache key from the MXC URL
                     cache_key = hashlib.md5(mxc_url.encode()).hexdigest()
-                    cache_dir = os.path.join(
-                        astrbot_path.get_astrbot_data_path(), "temp", "matrix_media"
+                    cache_dir = (
+                        Path(astrbot_path.get_astrbot_data_path())
+                        / "temp"
+                        / "matrix_media"
                     )
-                    os.makedirs(cache_dir, exist_ok=True)
+                    cache_dir.mkdir(parents=True, exist_ok=True)
 
                     # Determine file extension from filename or default to .jpg
                     filename = event.content.get("body", "image.jpg")
-                    _, ext = os.path.splitext(filename)
-                    if not ext:
-                        ext = ".jpg"
+                    ext = Path(filename).suffix or ".jpg"
 
-                    cache_path = os.path.join(cache_dir, f"{cache_key}{ext}")
+                    cache_path = cache_dir / f"{cache_key}{ext}"
 
                     # Check if cached file exists and is valid
-                    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+                    if cache_path.exists() and cache_path.stat().st_size > 0:
                         logger.debug(f"Using cached image: {cache_path}")
-                        chain.chain.append(Image.fromFileSystem(cache_path))
+                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
                     else:
                         # Download using authenticated client
                         logger.info(f"Downloading Matrix image: {mxc_url}")
                         image_data = await self.client.download_file(mxc_url)
 
                         # Save to cache
-                        with open(cache_path, "wb") as f:
-                            f.write(image_data)
+                        cache_path.write_bytes(image_data)
                         logger.debug(f"Saved Matrix image to cache: {cache_path}")
 
-                        chain.chain.append(Image.fromFileSystem(cache_path))
+                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
                 except Exception as e:
                     logger.error(f"Failed to download Matrix image: {e}")
                     # Fallback to plain text

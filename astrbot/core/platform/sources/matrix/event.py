@@ -6,6 +6,7 @@ from astrbot import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import File, Image, Plain, Reply
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
+
 # Update import: markdown_utils is now in utils.markdown_utils
 from .utils.markdown_utils import (
     markdown_to_html,
@@ -61,11 +62,15 @@ class MatrixPlatformEvent(AstrMessageEvent):
         # Merge adjacent Plain components
         merged_chain = []
         for segment in message_chain.chain:
-            if isinstance(segment, Plain) and merged_chain and isinstance(merged_chain[-1], Plain):
+            if (
+                isinstance(segment, Plain)
+                and merged_chain
+                and isinstance(merged_chain[-1], Plain)
+            ):
                 merged_chain[-1].text += segment.text
             else:
                 merged_chain.append(segment)
-        
+
         # Use a temporary chain for iteration
         chain_to_send = merged_chain
 
@@ -79,7 +84,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     "msgtype": "m.text",
                     "body": segment.text,
                 }
-                
+
                 # 如果有回复引用信息，预处理 body 以包含 fallback (纯文本部分)
                 # Matrix 规范建议: body 包含 fallback，formatted_body 包含 HTML fallback
                 if original_message_info and reply_to:
@@ -115,11 +120,12 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     # 如果有回复引用信息，添加 HTML fallback
                     if original_message_info and reply_to:
                         from .utils.utils import MatrixUtils
+
                         fallback_html = MatrixUtils.create_reply_fallback(
                             original_body=original_message_info.get("body", ""),
                             original_sender=original_message_info.get("sender", ""),
                             original_event_id=reply_to,
-                            room_id=room_id
+                            room_id=room_id,
                         )
                         formatted_body = fallback_html + formatted_body
                         # 确保 format 字段被设置
@@ -142,7 +148,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                 try:
                     # 记录发送消息的日志
                     if reply_to:
-                        logger.info(f"发送回复消息到房间 {room_id}，回复事件ID: {reply_to}")
+                        logger.info(
+                            f"发送回复消息到房间 {room_id}，回复事件ID: {reply_to}"
+                        )
                     else:
                         logger.info(f"发送消息到房间 {room_id}")
 
@@ -152,7 +160,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     sent_count += 1
 
                     # 记录发送成功
-                    logger.debug(f"消息发送成功，房间: {room_id}，内容预览: {segment.text[:50]}...")
+                    logger.debug(
+                        f"消息发送成功，房间: {room_id}，内容预览: {segment.text[:50]}..."
+                    )
                 except Exception as e:
                     logger.error(f"发送文本消息失败：{e}")
 
@@ -183,11 +193,15 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         content["m.relates_to"] = {
                             "rel_type": "m.thread",
                             "event_id": thread_root,
-                            "m.in_reply_to": {"event_id": reply_to} if reply_to else None,
+                            "m.in_reply_to": {"event_id": reply_to}
+                            if reply_to
+                            else None,
                         }
                     elif reply_to:
                         # 普通回复模式
-                        content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+                        content["m.relates_to"] = {
+                            "m.in_reply_to": {"event_id": reply_to}
+                        }
 
                     # 记录发送消息的日志
                     logger.info(f"发送图片消息到房间 {room_id}，文件: {filename}")
@@ -368,7 +382,11 @@ class MatrixPlatformEvent(AstrMessageEvent):
 
                     # 如果 message chain 中没有 Reply，则使用原始消息 ID 作为回复目标
                     # 这是因为流式输出跳过了 ResultDecorateStage，不会自动添加 Reply 组件
-                    if not reply_to and self.message_obj and self.message_obj.message_id:
+                    if (
+                        not reply_to
+                        and self.message_obj
+                        and self.message_obj.message_id
+                    ):
                         reply_to = str(self.message_obj.message_id)
 
                     # 如果有回复，检查是否需要使用嘟文串模式
@@ -451,22 +469,37 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                     # 如果有回复引用信息，预处理 body 以包含 fallback
                                     if original_message_info and reply_to:
                                         # 简单构建纯文本 fallback
-                                        orig_sender = original_message_info.get("sender", "")
-                                        orig_body = original_message_info.get("body", "")
+                                        orig_sender = original_message_info.get(
+                                            "sender", ""
+                                        )
+                                        orig_body = original_message_info.get(
+                                            "body", ""
+                                        )
                                         if len(orig_body) > 50:
                                             orig_body = orig_body[:50] + "..."
-                                        fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
-                                        content["body"] = fallback_text + content["body"]
+                                        fallback_text = (
+                                            f"> <{orig_sender}> {orig_body}\n\n"
+                                        )
+                                        content["body"] = (
+                                            fallback_text + content["body"]
+                                        )
 
                                         # 为 formatted_body 添加 HTML fallback
                                         from .utils.utils import MatrixUtils
+
                                         fallback_html = MatrixUtils.create_reply_fallback(
-                                            original_body=original_message_info.get("body", ""),
-                                            original_sender=original_message_info.get("sender", ""),
+                                            original_body=original_message_info.get(
+                                                "body", ""
+                                            ),
+                                            original_sender=original_message_info.get(
+                                                "sender", ""
+                                            ),
                                             original_event_id=reply_to,
-                                            room_id=room_id
+                                            room_id=room_id,
                                         )
-                                        content["formatted_body"] = fallback_html + content["formatted_body"]
+                                        content["formatted_body"] = (
+                                            fallback_html + content["formatted_body"]
+                                        )
 
                                     # 添加嘟文串支持
                                     if use_thread and thread_root:
@@ -491,7 +524,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                     current_content = delta
 
                                     # 记录流式发送第一条消息
-                                    logger.info(f"流式发送第一条消息到房间 {room_id}，事件ID: {message_event_id}")
+                                    logger.info(
+                                        f"流式发送第一条消息到房间 {room_id}，事件ID: {message_event_id}"
+                                    )
                                     if reply_to:
                                         logger.info(f"  回复事件ID: {reply_to}")
                                 except Exception as e:
@@ -560,13 +595,18 @@ class MatrixPlatformEvent(AstrMessageEvent):
 
                                 # 为 formatted_body 添加 HTML fallback
                                 from .utils.utils import MatrixUtils
+
                                 fallback_html = MatrixUtils.create_reply_fallback(
                                     original_body=original_message_info.get("body", ""),
-                                    original_sender=original_message_info.get("sender", ""),
+                                    original_sender=original_message_info.get(
+                                        "sender", ""
+                                    ),
                                     original_event_id=reply_to,
-                                    room_id=room_id
+                                    room_id=room_id,
                                 )
-                                content["formatted_body"] = fallback_html + content["formatted_body"]
+                                content["formatted_body"] = (
+                                    fallback_html + content["formatted_body"]
+                                )
 
                             # 添加嘟文串支持
                             if use_thread and thread_root:
@@ -592,7 +632,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                             last_edit_time = asyncio.get_event_loop().time()
 
                             # 记录流式发送消息
-                            logger.info(f"流式发送消息到房间 {room_id}，事件ID: {message_event_id}")
+                            logger.info(
+                                f"流式发送消息到房间 {room_id}，事件ID: {message_event_id}"
+                            )
                             if reply_to:
                                 logger.info(f"  回复事件ID: {reply_to}")
                         except Exception as e:
@@ -638,13 +680,16 @@ class MatrixPlatformEvent(AstrMessageEvent):
 
                         # 为 formatted_body 添加 HTML fallback
                         from .utils.utils import MatrixUtils
+
                         fallback_html = MatrixUtils.create_reply_fallback(
                             original_body=original_message_info.get("body", ""),
                             original_sender=original_message_info.get("sender", ""),
                             original_event_id=reply_to,
-                            room_id=room_id
+                            room_id=room_id,
                         )
-                        content["formatted_body"] = fallback_html + content["formatted_body"]
+                        content["formatted_body"] = (
+                            fallback_html + content["formatted_body"]
+                        )
 
                     # 添加嘟文串支持
                     if use_thread and thread_root:
