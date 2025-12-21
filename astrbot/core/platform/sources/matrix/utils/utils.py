@@ -65,7 +65,6 @@ class MatrixUtils:
         if not body:
             return ""
 
-        import re
 
         # 1. 匹配标准 fallback 格式: 以 > <@user:id> 开头，可能跨越多行
         # 匹配模式:
