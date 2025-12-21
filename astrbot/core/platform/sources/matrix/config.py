@@ -39,8 +39,10 @@ class MatrixConfig:
         self.auto_join_rooms = self.config.get("matrix_auto_join_rooms", True)
         self.sync_timeout = self.config.get("matrix_sync_timeout", 30000)
 
-        # Threading configuration
-        self.enable_threading = self.config.get("matrix_enable_threading", True)
+        # 嘟文串（Threading）配置
+        # 当启用时，回复消息会创建/加入线程而非普通的时间线回复
+        # 这是一个试验性功能，可能不是所有 Matrix 客户端都支持
+        self.enable_threading = self.config.get("matrix_enable_threading", False)
 
         self._validate()
 

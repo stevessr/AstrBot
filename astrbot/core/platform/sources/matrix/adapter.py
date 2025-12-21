@@ -435,6 +435,7 @@ class MatrixPlatformAdapter(Platform):
                 platform_meta=self.meta(),
                 session_id=message.session_id,
                 client=self.client,
+                enable_threading=self._matrix_config.enable_threading,
             )
             self.commit_event(message_event)
             logger.debug(

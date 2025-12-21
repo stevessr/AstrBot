@@ -23,9 +23,11 @@ class MatrixPlatformEvent(AstrMessageEvent):
         platform_meta: PlatformMetadata,
         session_id: str,
         client,
+        enable_threading: bool = False,
     ):
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.client = client  # MatrixHTTPClient instance
+        self.enable_threading = enable_threading  # 试验性：是否默认开启嘟文串模式
 
     @staticmethod
     async def send_with_client(
@@ -318,6 +320,10 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         # 如果是嘟文串的一部分，获取根消息ID
                         thread_root = relates_to.get("event_id")
                         use_thread = True
+                    elif self.enable_threading:
+                        # 试验性功能：如果启用嘟文串模式，创建新的嘟文串
+                        use_thread = True
+                        thread_root = reply_to  # 将被回复的消息作为嘟文串根
                     else:
                         # 如果不是嘟文串，不要强制开启嘟文串模式，使用标准回复
                         use_thread = False
@@ -408,6 +414,10 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                         # 如果是嘟文串的一部分，获取根消息ID
                                         thread_root = relates_to.get("event_id")
                                         use_thread = True
+                                    elif self.enable_threading:
+                                        # 试验性功能：如果启用嘟文串模式，创建新的嘟文串
+                                        use_thread = True
+                                        thread_root = reply_to
                                     else:
                                         # 如果不是嘟文串，默认使用普通回复模式
                                         use_thread = False
