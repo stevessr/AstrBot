@@ -155,6 +155,11 @@ def parse_event(event_data: dict[str, Any], room_id: str) -> MatrixEvent:
             return RoomMessageFile.from_dict(event_data, room_id)
         else:
             return RoomMessageEvent.from_dict(event_data, room_id)
+    elif event_type == "m.sticker":
+        # 贴纸事件使用 RoomMessageEvent 结构，设置 msgtype 为 m.sticker
+        event = RoomMessageEvent.from_dict(event_data, room_id)
+        event.msgtype = "m.sticker"
+        return event
     elif event_type == "m.room.member" and content.get("membership") == "invite":
         return InviteEvent.from_dict(event_data, room_id)
     else:

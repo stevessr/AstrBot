@@ -163,6 +163,18 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     with open(img_path, "rb") as f:
                         image_data = f.read()
 
+                    # 获取图片尺寸
+                    width, height = None, None
+                    try:
+                        import io
+
+                        from PIL import Image as PILImage
+
+                        with PILImage.open(io.BytesIO(image_data)) as img:
+                            width, height = img.size
+                    except Exception as e:
+                        logger.debug(f"无法获取图片尺寸: {e}")
+
                     # 猜测内容类型，默认使用 image/png
                     content_type = mimetypes.guess_type(filename)[0] or "image/png"
                     upload_resp = await client.upload_file(
@@ -170,10 +182,21 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     )
 
                     content_uri = upload_resp["content_uri"]
+
+                    # 构建 info 字段
+                    info: dict[str, Any] = {
+                        "mimetype": content_type,
+                        "size": len(image_data),
+                    }
+                    if width and height:
+                        info["w"] = width
+                        info["h"] = height
+
                     content = {
                         "msgtype": "m.image",
                         "body": filename,
                         "url": content_uri,
+                        "info": info,
                     }
 
                     # 处理回复关系
@@ -322,15 +345,11 @@ class MatrixPlatformEvent(AstrMessageEvent):
         return await super().send(message_chain)
 
     async def send_streaming(self, generator, use_fallback: bool = False):
-        """Matrix 流式发送 - 通过不断编辑同一条消息"""
-        import asyncio
-
+        """Matrix 流式发送 - 直接消费上游流式输出，累积后整块发送"""
         room_id = self.session_id
-        delta = ""  # 累积的文本内容
-        current_content = ""  # 当前已发送的内容
-        message_event_id = None  # 消息的 event_id
-        last_edit_time = 0  # 上次编辑消息的时间
-        throttle_interval = 0.8  # 编辑消息的间隔时间 (秒)
+        accumulated_text = ""  # 累积的文本内容
+        non_text_components = []  # 非文本组件列表
+        typing_timeout = 30000  # 输入指示超时时间 (毫秒)
 
         # 嘟文串相关变量
         reply_to = None
@@ -341,339 +360,145 @@ class MatrixPlatformEvent(AstrMessageEvent):
         # 检查第一个消息链是否包含回复信息
         first_chain_processed = False
 
-        async for chain in generator:
-            if isinstance(chain, MessageChain):
-                # 只在第一个消息链中检查回复信息
-                if not first_chain_processed:
-                    try:
-                        from astrbot.api.message_components import Reply as _Reply
+        # 开启输入指示
+        try:
+            await self.client.set_typing(room_id, typing=True, timeout=typing_timeout)
+        except Exception as e:
+            logger.debug(f"发送输入指示失败: {e}")
 
-                        for seg in chain.chain:
-                            if isinstance(seg, _Reply) and getattr(seg, "id", None):
-                                reply_to = str(seg.id)
-                                break
-                    except Exception:
-                        pass
-
-                    # 如果 message chain 中没有 Reply，则使用原始消息 ID 作为回复目标
-                    # 这是因为流式输出跳过了 ResultDecorateStage，不会自动添加 Reply 组件
-                    if (
-                        not reply_to
-                        and self.message_obj
-                        and self.message_obj.message_id
-                    ):
-                        reply_to = str(self.message_obj.message_id)
-
-                    # 如果有回复，检查是否需要使用嘟文串模式
-                    if reply_to:
+        try:
+            async for chain in generator:
+                if isinstance(chain, MessageChain):
+                    # 只在第一个消息链中检查回复信息
+                    if not first_chain_processed:
                         try:
-                            # 获取被回复消息的事件信息
-                            resp = await self.client.get_event(room_id, reply_to)
-                            if resp:
-                                # 提取原始消息信息用于 fallback
-                                original_message_info = {
-                                    "sender": resp.get("sender", ""),
-                                    "body": resp.get("content", {}).get("body", ""),
-                                }
+                            from astrbot.api.message_components import Reply as _Reply
 
-                                if resp and "content" in resp:
-                                    # 检查被回复消息是否已经是嘟文串的一部分
-                                    relates_to = resp["content"].get("m.relates_to", {})
-                                    if relates_to.get("rel_type") == "m.thread":
-                                        # 如果是嘟文串的一部分，获取根消息ID
-                                        thread_root = relates_to.get("event_id")
-                                        use_thread = True
-                                    elif self.enable_threading:
-                                        # 试验性功能：如果启用嘟文串模式，创建新的嘟文串
-                                        use_thread = True
-                                        thread_root = reply_to
-                                    else:
-                                        # 如果不是嘟文串，默认使用普通回复模式
-                                        use_thread = False
-                                        thread_root = None
-                        except Exception as e:
-                            logger.warning(f"Failed to get event for threading: {e}")
+                            for seg in chain.chain:
+                                if isinstance(seg, _Reply) and getattr(seg, "id", None):
+                                    reply_to = str(seg.id)
+                                    break
+                        except Exception:
+                            pass
 
-                    first_chain_processed = True
+                        # 如果 message chain 中没有 Reply，则使用原始消息 ID 作为回复目标
+                        if (
+                            not reply_to
+                            and self.message_obj
+                            and self.message_obj.message_id
+                        ):
+                            reply_to = str(self.message_obj.message_id)
 
-                # 处理消息链中的每个组件
-                for component in chain.chain:
-                    if isinstance(component, Plain):
-                        delta += component.text
-                    else:
-                        # 对于非文本组件（图片、文件等），先发送当前的文本
-                        if delta and delta != current_content:
-                            if message_event_id:
-                                try:
-                                    # 生成 formatted_body
-                                    try:
-                                        formatted_body = markdown_to_html(delta)
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Failed to render markdown: {e}"
-                                        )
-                                        formatted_body = delta.replace("\n", "<br>")
-
-                                    await self.client.edit_message(
-                                        room_id=room_id,
-                                        original_event_id=message_event_id,
-                                        new_content={
-                                            "body": delta,
-                                            "format": "org.matrix.custom.html",
-                                            "formatted_body": formatted_body,
-                                        },
-                                    )
-                                    current_content = delta
-                                except Exception as e:
-                                    logger.warning(f"编辑消息失败 (streaming): {e}")
-                            else:
-                                # 发送第一条消息
-                                try:
-                                    # 生成 formatted_body
-                                    try:
-                                        formatted_body = markdown_to_html(delta)
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Failed to render markdown: {e}"
-                                        )
-                                        formatted_body = delta.replace("\n", "<br>")
-
-                                    content = {
-                                        "msgtype": "m.text",
-                                        "body": delta,
-                                        "format": "org.matrix.custom.html",
-                                        "formatted_body": formatted_body,
+                        # 如果有回复，检查是否需要使用嘟文串模式
+                        if reply_to:
+                            try:
+                                resp = await self.client.get_event(room_id, reply_to)
+                                if resp:
+                                    original_message_info = {
+                                        "sender": resp.get("sender", ""),
+                                        "body": resp.get("content", {}).get("body", ""),
                                     }
-
-                                    # 如果有回复引用信息，预处理 body 以包含 fallback
-                                    if original_message_info and reply_to:
-                                        # 简单构建纯文本 fallback
-                                        orig_sender = original_message_info.get(
-                                            "sender", ""
-                                        )
-                                        orig_body = original_message_info.get(
-                                            "body", ""
-                                        )
-                                        if len(orig_body) > 50:
-                                            orig_body = orig_body[:50] + "..."
-                                        fallback_text = (
-                                            f"> <{orig_sender}> {orig_body}\n\n"
-                                        )
-                                        content["body"] = (
-                                            fallback_text + content["body"]
-                                        )
-
-                                        # 为 formatted_body 添加 HTML fallback
-                                        from .utils.utils import MatrixUtils
-
-                                        fallback_html = MatrixUtils.create_reply_fallback(
-                                            original_body=original_message_info.get(
-                                                "body", ""
-                                            ),
-                                            original_sender=original_message_info.get(
-                                                "sender", ""
-                                            ),
-                                            original_event_id=reply_to,
-                                            room_id=room_id,
-                                        )
-                                        content["formatted_body"] = (
-                                            fallback_html + content["formatted_body"]
-                                        )
-
-                                    # 添加嘟文串支持
-                                    if use_thread and thread_root:
-                                        content["m.relates_to"] = {
-                                            "rel_type": "m.thread",
-                                            "event_id": thread_root,
-                                            "m.in_reply_to": {"event_id": reply_to}
-                                            if reply_to
-                                            else None,
-                                        }
-                                    elif reply_to:
-                                        content["m.relates_to"] = {
-                                            "m.in_reply_to": {"event_id": reply_to}
-                                        }
-
-                                    response = await self.client.send_message(
-                                        room_id=room_id,
-                                        msg_type="m.room.message",
-                                        content=content,
-                                    )
-                                    message_event_id = response.get("event_id")
-                                    current_content = delta
-                                except Exception as e:
-                                    logger.error(f"发送消息失败 (streaming): {e}")
-                            delta = ""  # 重置 delta
-
-                        # 单独发送非文本组件
-                        temp_chain = MessageChain()
-                        temp_chain.chain = [component]
-                        await self.send(temp_chain)
-
-                # 处理文本累积和节流编辑
-                if delta:
-                    current_time = asyncio.get_event_loop().time()
-                    time_since_last_edit = current_time - last_edit_time
-
-                    if message_event_id and time_since_last_edit >= throttle_interval:
-                        # 编辑现有消息
-                        try:
-                            # 生成 formatted_body
-                            try:
-                                formatted_body = markdown_to_html(delta)
+                                    if resp and "content" in resp:
+                                        relates_to = resp["content"].get("m.relates_to", {})
+                                        if relates_to.get("rel_type") == "m.thread":
+                                            thread_root = relates_to.get("event_id")
+                                            use_thread = True
+                                        elif self.enable_threading:
+                                            use_thread = True
+                                            thread_root = reply_to
+                                        else:
+                                            use_thread = False
+                                            thread_root = None
                             except Exception as e:
-                                logger.warning(f"Failed to render markdown: {e}")
-                                formatted_body = delta.replace("\n", "<br>")
+                                logger.warning(f"Failed to get event for threading: {e}")
 
-                            await self.client.edit_message(
-                                room_id=room_id,
-                                original_event_id=message_event_id,
-                                new_content={
-                                    "body": delta,
-                                    "format": "org.matrix.custom.html",
-                                    "formatted_body": formatted_body,
-                                },
-                            )
-                            current_content = delta
-                            last_edit_time = asyncio.get_event_loop().time()
-                        except Exception as e:
-                            logger.warning(f"编辑消息失败 (streaming): {e}")
-                    elif not message_event_id:
-                        # 发送第一条消息
-                        try:
-                            # 生成 formatted_body
-                            try:
-                                formatted_body = markdown_to_html(delta)
-                            except Exception as e:
-                                logger.warning(f"Failed to render markdown: {e}")
-                                formatted_body = delta.replace("\n", "<br>")
+                        first_chain_processed = True
 
-                            content: dict[str, Any] = {
-                                "msgtype": "m.text",
-                                "body": delta,
-                                "format": "org.matrix.custom.html",
-                                "formatted_body": formatted_body,
-                            }
+                    # 累积消息链中的所有组件
+                    for component in chain.chain:
+                        if isinstance(component, Plain):
+                            accumulated_text += component.text
+                        elif not isinstance(component, Reply):
+                            # 非文本、非 Reply 组件收集起来
+                            non_text_components.append(component)
 
-                            # 如果有回复引用信息，预处理 body 以包含 fallback
-                            if original_message_info and reply_to:
-                                # 简单构建纯文本 fallback
-                                orig_sender = original_message_info.get("sender", "")
-                                orig_body = original_message_info.get("body", "")
-                                if len(orig_body) > 50:
-                                    orig_body = orig_body[:50] + "..."
-                                fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
-                                content["body"] = fallback_text + content["body"]
+        finally:
+            # 关闭输入指示
+            try:
+                await self.client.set_typing(room_id, typing=False)
+            except Exception as e:
+                logger.debug(f"停止输入指示失败: {e}")
 
-                                # 为 formatted_body 添加 HTML fallback
-                                from .utils.utils import MatrixUtils
-
-                                fallback_html = MatrixUtils.create_reply_fallback(
-                                    original_body=original_message_info.get("body", ""),
-                                    original_sender=original_message_info.get(
-                                        "sender", ""
-                                    ),
-                                    original_event_id=reply_to,
-                                    room_id=room_id,
-                                )
-                                content["formatted_body"] = (
-                                    fallback_html + content["formatted_body"]
-                                )
-
-                            # 添加嘟文串支持
-                            if use_thread and thread_root:
-                                content["m.relates_to"] = {
-                                    "rel_type": "m.thread",
-                                    "event_id": thread_root,
-                                    "m.in_reply_to": {"event_id": reply_to}
-                                    if reply_to
-                                    else None,
-                                }
-                            elif reply_to:
-                                content["m.relates_to"] = {
-                                    "m.in_reply_to": {"event_id": reply_to}
-                                }
-
-                            response = await self.client.send_message(
-                                room_id=room_id,
-                                msg_type="m.room.message",
-                                content=content,
-                            )
-                            message_event_id = response.get("event_id")
-                            current_content = delta
-                            last_edit_time = asyncio.get_event_loop().time()
-                        except Exception as e:
-                            logger.error(f"发送消息失败 (streaming): {e}")
-
-        # 最后确保所有内容都已发送
-        if delta and current_content != delta:
+        # 发送累积的文本内容
+        if accumulated_text:
             try:
                 # 生成 formatted_body
                 try:
-                    formatted_body = markdown_to_html(delta)
+                    formatted_body = markdown_to_html(accumulated_text)
                 except Exception as e:
                     logger.warning(f"Failed to render markdown: {e}")
-                    formatted_body = delta.replace("\n", "<br>")
+                    formatted_body = accumulated_text.replace("\n", "<br>")
 
-                if message_event_id:
-                    await self.client.edit_message(
+                content: dict[str, Any] = {
+                    "msgtype": "m.text",
+                    "body": accumulated_text,
+                    "format": "org.matrix.custom.html",
+                    "formatted_body": formatted_body,
+                }
+
+                # 如果有回复引用信息，添加 fallback
+                if original_message_info and reply_to:
+                    orig_sender = original_message_info.get("sender", "")
+                    orig_body = original_message_info.get("body", "")
+                    if len(orig_body) > 50:
+                        orig_body = orig_body[:50] + "..."
+                    fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
+                    content["body"] = fallback_text + content["body"]
+
+                    from .utils.utils import MatrixUtils
+
+                    fallback_html = MatrixUtils.create_reply_fallback(
+                        original_body=original_message_info.get("body", ""),
+                        original_sender=original_message_info.get("sender", ""),
+                        original_event_id=reply_to,
                         room_id=room_id,
-                        original_event_id=message_event_id,
-                        new_content={
-                            "body": delta,
-                            "format": "org.matrix.custom.html",
-                            "formatted_body": formatted_body,
-                        },
                     )
-                else:
-                    content = {
-                        "msgtype": "m.text",
-                        "body": delta,
-                        "format": "org.matrix.custom.html",
-                        "formatted_body": formatted_body,
+                    content["formatted_body"] = fallback_html + content["formatted_body"]
+
+                # 添加嘟文串支持
+                if use_thread and thread_root:
+                    content["m.relates_to"] = {
+                        "rel_type": "m.thread",
+                        "event_id": thread_root,
+                        "m.in_reply_to": {"event_id": reply_to} if reply_to else None,
                     }
+                elif reply_to:
+                    content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
 
-                    # 如果有回复引用信息，预处理 body 以包含 fallback
-                    if original_message_info and reply_to:
-                        # 简单构建纯文本 fallback
-                        orig_sender = original_message_info.get("sender", "")
-                        orig_body = original_message_info.get("body", "")
-                        if len(orig_body) > 50:
-                            orig_body = orig_body[:50] + "..."
-                        fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
-                        content["body"] = fallback_text + content["body"]
-
-                        # 为 formatted_body 添加 HTML fallback
-                        from .utils.utils import MatrixUtils
-
-                        fallback_html = MatrixUtils.create_reply_fallback(
-                            original_body=original_message_info.get("body", ""),
-                            original_sender=original_message_info.get("sender", ""),
-                            original_event_id=reply_to,
-                            room_id=room_id,
-                        )
-                        content["formatted_body"] = (
-                            fallback_html + content["formatted_body"]
-                        )
-
-                    # 添加嘟文串支持
-                    if use_thread and thread_root:
-                        content["m.relates_to"] = {
-                            "rel_type": "m.thread",
-                            "event_id": thread_root,
-                            "m.in_reply_to": {"event_id": reply_to}
-                            if reply_to
-                            else None,
-                        }
-                    elif reply_to:
-                        content["m.relates_to"] = {
-                            "m.in_reply_to": {"event_id": reply_to}
-                        }
-
-                    await self.client.send_message(
-                        room_id=room_id, msg_type="m.room.message", content=content
-                    )
+                await self.client.send_message(
+                    room_id=room_id,
+                    msg_type="m.room.message",
+                    content=content,
+                )
             except Exception as e:
-                logger.error(f"发送最终消息失败 (streaming): {e}")
+                logger.error(f"发送消息失败 (streaming): {e}")
+
+        # 发送非文本组件（图片、文件等）
+        for component in non_text_components:
+            try:
+                temp_chain = MessageChain()
+                temp_chain.chain = [component]
+                await MatrixPlatformEvent.send_with_client(
+                    self.client,
+                    temp_chain,
+                    room_id,
+                    reply_to=reply_to,
+                    thread_root=thread_root,
+                    use_thread=use_thread,
+                    original_message_info=original_message_info,
+                )
+            except Exception as e:
+                logger.error(f"发送非文本组件失败: {e}")
 
         return await super().send_streaming(generator, use_fallback)
+

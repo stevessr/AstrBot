@@ -336,6 +336,13 @@ class MatrixPlatformAdapter(Platform):
         try:
             await self.auth.login()
 
+            # 设置在线状态
+            try:
+                await self.client.set_presence("online")
+                logger.info("Matrix 在线状态已设置为 online")
+            except Exception as e:
+                logger.debug(f"设置在线状态失败: {e}")
+
             logger.info(
                 f"Matrix平台适配器正在为 {self._matrix_config.user_id} 在 {self._matrix_config.homeserver} 上运行"
             )
@@ -436,6 +443,12 @@ class MatrixPlatformAdapter(Platform):
     async def terminate(self):
         try:
             logger.info("正在关闭Matrix适配器...")
+
+            # 设置离线状态
+            try:
+                await self.client.set_presence("offline")
+            except Exception as e:
+                logger.debug(f"设置离线状态失败: {e}")
 
             # Stop sync manager
             if hasattr(self, "sync_manager"):

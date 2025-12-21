@@ -208,6 +208,47 @@ class MatrixReceiver:
                 http_url = self.mxc_converter(mxc_url)
                 chain.chain.append(Image.fromURL(http_url))
 
+        elif msgtype == "m.sticker":
+            # 贴纸处理：与 m.image 类似
+            mxc_url = event.content.get("url")
+            if mxc_url and self.client:
+                try:
+                    # Create a cache key from the MXC URL
+                    cache_key = hashlib.md5(mxc_url.encode()).hexdigest()
+                    cache_dir = (
+                        Path(astrbot_path.get_astrbot_data_path())
+                        / "temp"
+                        / "matrix_media"
+                    )
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Determine file extension from info or default to .png
+                    info = event.content.get("info", {})
+                    mimetype = info.get("mimetype", "image/png")
+                    ext_map = {
+                        "image/png": ".png",
+                        "image/jpeg": ".jpg",
+                        "image/gif": ".gif",
+                        "image/webp": ".webp",
+                    }
+                    ext = ext_map.get(mimetype, ".png")
+                    cache_path = cache_dir / f"{cache_key}{ext}"
+
+                    if cache_path.exists() and cache_path.stat().st_size > 0:
+                        logger.debug(f"Using cached sticker: {cache_path}")
+                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
+                    else:
+                        logger.info(f"Downloading Matrix sticker: {mxc_url}")
+                        sticker_data = await self.client.download_file(mxc_url)
+                        cache_path.write_bytes(sticker_data)
+                        logger.debug(f"Saved Matrix sticker to cache: {cache_path}")
+                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
+                except Exception as e:
+                    logger.error(f"Failed to download Matrix sticker: {e}")
+                    chain.chain.append(Plain(f"[贴纸: {event.body}]"))
+            else:
+                chain.chain.append(Plain(f"[贴纸: {event.body}]"))
+
         elif msgtype in ["m.file", "m.audio", "m.video"]:
             # 其他文件类型暂作文本提示处理，或实现 File 组件
             chain.chain.append(Plain(f"[{msgtype}: {event.body}]"))

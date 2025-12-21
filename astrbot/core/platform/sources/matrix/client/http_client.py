@@ -718,6 +718,25 @@ class MatrixHTTPClient:
         data = {"typing": typing, "timeout": timeout} if typing else {"typing": False}
         return await self._request("PUT", endpoint, data=data)
 
+    async def set_presence(
+        self, status: str = "online", status_msg: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Set user presence status
+
+        Args:
+            status: Presence status ('online', 'unavailable', 'offline')
+            status_msg: Optional status message
+
+        Returns:
+            Empty dict on success
+        """
+        endpoint = f"/_matrix/client/v3/presence/{self.user_id}/status"
+        data: dict[str, Any] = {"presence": status}
+        if status_msg:
+            data["status_msg"] = status_msg
+        return await self._request("PUT", endpoint, data=data)
+
     async def send_read_receipt(self, room_id: str, event_id: str) -> dict[str, Any]:
         """
         Send read receipt for an event
