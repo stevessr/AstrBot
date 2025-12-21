@@ -107,12 +107,50 @@ class MatrixReceiver:
 
         elif msgtype == "m.image":
             from astrbot.api.message_components import Image
+            import os
+            import hashlib
+            from astrbot.core.utils import astrbot_path
 
-            url = event.content.get("url")
-            if url and self.mxc_converter:
-                http_url = self.mxc_converter(url)
-                # Matrix 图片通常需要通过 access_token 访问，或者如果是公开房间
-                # 这里暂存 http_url，后续可能需要下载
+            mxc_url = event.content.get("url")
+            if mxc_url and self.client:
+                try:
+                    # Create a cache key from the MXC URL
+                    cache_key = hashlib.md5(mxc_url.encode()).hexdigest()
+                    cache_dir = os.path.join(
+                        astrbot_path.get_astrbot_data_path(), "temp", "matrix_media"
+                    )
+                    os.makedirs(cache_dir, exist_ok=True)
+
+                    # Determine file extension from filename or default to .jpg
+                    filename = event.content.get("body", "image.jpg")
+                    _, ext = os.path.splitext(filename)
+                    if not ext:
+                        ext = ".jpg"
+
+                    cache_path = os.path.join(cache_dir, f"{cache_key}{ext}")
+
+                    # Check if cached file exists and is valid
+                    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+                        logger.debug(f"Using cached image: {cache_path}")
+                        chain.chain.append(Image.fromFileSystem(cache_path))
+                    else:
+                        # Download using authenticated client
+                        logger.info(f"Downloading Matrix image: {mxc_url}")
+                        image_data = await self.client.download_file(mxc_url)
+
+                        # Save to cache
+                        with open(cache_path, "wb") as f:
+                            f.write(image_data)
+                        logger.debug(f"Saved Matrix image to cache: {cache_path}")
+
+                        chain.chain.append(Image.fromFileSystem(cache_path))
+                except Exception as e:
+                    logger.error(f"Failed to download Matrix image: {e}")
+                    # Fallback to plain text
+                    chain.chain.append(Plain(f"[图片下载失败: {event.body}]"))
+            elif mxc_url and self.mxc_converter:
+                # Fallback to URL if no client (shouldn't happen)
+                http_url = self.mxc_converter(mxc_url)
                 chain.chain.append(Image.fromURL(http_url))
 
         elif msgtype in ["m.file", "m.audio", "m.video"]:
