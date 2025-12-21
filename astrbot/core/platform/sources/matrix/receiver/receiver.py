@@ -14,6 +14,7 @@ from astrbot.core.utils import astrbot_path
 
 # Update import: Client event types are in ..client.event_types
 from ..client.event_types import MatrixRoom, parse_event
+from ..utils.utils import MatrixUtils
 
 logger = logging.getLogger("astrbot.matrix.receiver")
 
@@ -39,10 +40,12 @@ class MatrixReceiver:
 
         # 基础信息
         message.raw_message = event
-        message.message_str = event.body
+
+        # Strip reply fallback from body
+        message.message_str = MatrixUtils.strip_reply_fallback(event.body)
         message.session_id = room.room_id
-        message.message_id = event.event_id # Set message ID for replies
-        message.self_id = self.user_id # Set bot's self ID
+        message.message_id = event.event_id  # Set message ID for replies
+        message.self_id = self.user_id  # Set bot's self ID
 
         # 默认设为群组消息 (Matrix 房间概念)
         # TODO: 未来可根据房间人数判断是否为私聊
@@ -122,5 +125,7 @@ class MatrixReceiver:
                 Plain(event.body or f"[Unknown message type: {msgtype}]")
             )
 
-        message.message = chain.chain  # AstrBotMessage 需要列表格式的消息链 (list[BaseMessageComponent])
+        message.message = (
+            chain.chain
+        )  # AstrBotMessage 需要列表格式的消息链 (list[BaseMessageComponent])
         return message
