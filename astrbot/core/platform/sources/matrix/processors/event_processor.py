@@ -91,8 +91,8 @@ class MatrixEventProcessor:
 
         event_type = event_data.get("type")
 
-        if event_type == "m.room.message" or event_type == "m.room.encrypted":
-            # Parse plaintext message event or encrypted event
+        if event_type in ("m.room.message", "m.room.encrypted", "m.sticker"):
+            # Parse plaintext message event, encrypted event, or sticker
             event = parse_event(event_data, room.room_id)
             await self._process_message_event(room, event)
 
