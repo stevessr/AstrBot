@@ -18,7 +18,7 @@ class MatrixUtils:
     ) -> str:
         """
         生成 Matrix 回复引用 (fallback)
-        格式参考: https://spec.matrix.org/v1.10/client-server-api/#fallbacks-for-rich-replies
+        格式参考：https://spec.matrix.org/v1.10/client-server-api/#fallbacks-for-rich-replies
         <mx-reply>
           <blockquote>
             <a href="https://matrix.to/#/!somewhere:example.org/$event:example.org">In reply to</a>
@@ -55,7 +55,7 @@ class MatrixUtils:
     def strip_reply_fallback(body: str) -> str:
         """
         去除 Matrix 回复的 fallback 内容 (引用文本)
-        通常格式为:
+        通常格式为：
         > <@user:server> message
 
         或者
@@ -64,14 +64,12 @@ class MatrixUtils:
         """
         if not body:
             return ""
-
-
-        # 1. 匹配标准 fallback 格式: 以 > <@user:id> 开头，可能跨越多行
-        # 匹配模式:
+        # 1. 匹配标准 fallback 格式：以 > <@user:id> 开头，可能跨越多行
+        # 匹配模式：
         # ^> <.*?>.*?\n\n
         # 或者简单的多行 > 开头的块
 
-        # 常见的 fallback 结构是:
+        # 常见的 fallback 结构是：
         # > <@sender:server> original message...
         # > ... continued ...
         #

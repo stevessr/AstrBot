@@ -390,6 +390,9 @@ CONFIG_METADATA_2 = {
                         "matrix_enable_threading": True,
                         "matrix_enable_e2ee": False,
                         "matrix_e2ee_store_path": "./data/matrix_e2ee",
+                        "matrix_e2ee_auto_verify": "auto_accept",
+                        "matrix_e2ee_key_backup": False,
+                        "matrix_e2ee_recovery_key": "",
                     },
                     # "WebChat": {
                     #     "id": "webchat",
@@ -436,10 +439,10 @@ CONFIG_METADATA_2 = {
                     "matrix_homeserver": {
                         "description": "Matrix 服务器地址",
                         "type": "string",
-                        "hint": "例如: https://matrix.org",
+                        "hint": "例如：https://matrix.org",
                     },
                     "matrix_user_id": {
-                        "description": "Matrix 用户ID",
+                        "description": "Matrix 用户 ID",
                         "type": "string",
                         "hint": "格式通常为 @user:domain",
                     },
@@ -452,13 +455,13 @@ CONFIG_METADATA_2 = {
                     "matrix_access_token": {
                         "description": "Matrix 访问令牌 (Access Token)",
                         "type": "string",
-                        "hint": "若使用Token登录需填写，请注意保密",
+                        "hint": "若使用 Token 登录需填写，请注意保密",
                         "condition": {"matrix_auth_method": "token"},
                     },
                     "matrix_refresh_token": {
                         "description": "Matrix 刷新令牌 (Refresh Token)",
                         "type": "string",
-                        "hint": "若填写，则优先使用此token获取access_token",
+                        "hint": "若填写，则优先使用此 token 获取 access_token",
                         "condition": {"matrix_auth_method": "token"},
                     },
                     "matrix_auth_method": {
@@ -475,12 +478,12 @@ CONFIG_METADATA_2 = {
                     "matrix_store_path": {
                         "description": "Matrix 数据存储路径",
                         "type": "string",
-                        "hint": "用于持久化存储加密密钥或Session数据",
+                        "hint": "用于持久化存储加密密钥或 Session 数据",
                     },
                     "matrix_sync_timeout": {
                         "description": "同步超时时间",
                         "type": "int",
-                        "hint": "设置Sync请求的超时时间（毫秒）",
+                        "hint": "设置 Sync 请求的超时时间（毫秒）",
                     },
                     "matrix_bot_name": {
                         "description": "Matrix 机器人名称",
@@ -492,9 +495,9 @@ CONFIG_METADATA_2 = {
                         "type": "bool",
                     },
                     "matrix_device_id": {
-                        "description": "matrix 设备ID",
+                        "description": "matrix 设备 ID",
                         "type": "string",
-                        "hint": "用于matrix设备验证",
+                        "hint": "用于 matrix 设备验证",
                     },
                     "matrix_enable_threading": {
                         "description": "启用线程回复（试验性）",
@@ -511,6 +514,26 @@ CONFIG_METADATA_2 = {
                         "type": "string",
                         "hint": "用于存储端到端加密的密钥和会话数据",
                         "condition": {"matrix_enable_e2ee": True},
+                    },
+                    "matrix_e2ee_auto_verify": {
+                        "description": "设备验证模式",
+                        "type": "string",
+                        "options": ["auto_accept", "auto_reject", "manual"],
+                        "labels": ["自动接受", "自动拒绝", "手动"],
+                        "hint": "控制收到验证请求时的行为。auto_accept: 自动接受所有验证请求；auto_reject: 自动拒绝所有验证请求；manual: 记录日志但不响应。所有模式都会打印详细日志。",
+                        "condition": {"matrix_enable_e2ee": True},
+                    },
+                    "matrix_e2ee_key_backup": {
+                        "description": "启用密钥备份",
+                        "type": "bool",
+                        "hint": "启用后，Megolm 会话密钥将上传到服务器备份，防止密钥丢失。需要设置恢复密钥。",
+                        "condition": {"matrix_enable_e2ee": True},
+                    },
+                    "matrix_e2ee_recovery_key": {
+                        "description": "恢复密钥",
+                        "type": "string",
+                        "hint": "用于加密和恢复密钥备份的密钥（base64 编码）。留空将自动生成新密钥并在日志中输出。请务必妥善保存此密钥！",
+                        "condition": {"matrix_e2ee_key_backup": True},
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",

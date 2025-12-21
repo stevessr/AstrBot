@@ -5,23 +5,26 @@ E2EE Manager - 端到端加密管理器
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Literal
 
 from astrbot.api import logger
 
 from .crypto_store import CryptoStore
-from .olm_machine import OlmMachine, VODOZEMAC_AVAILABLE
+from .olm_machine import VODOZEMAC_AVAILABLE, OlmMachine
 
 
 class E2EEManager:
     """
     端到端加密管理器
 
-    负责:
+    负责：
     - 初始化加密组件
     - 设备密钥上传
     - 消息加密/解密
     - 密钥交换
+    - SAS 设备验证
+    - 密钥备份
+    - 交叉签名
     """
 
     def __init__(
@@ -30,6 +33,11 @@ class E2EEManager:
         user_id: str,
         device_id: str,
         store_path: str | Path,
+        auto_verify_mode: Literal[
+            "auto_accept", "auto_reject", "manual"
+        ] = "auto_accept",
+        enable_key_backup: bool = False,
+        recovery_key: str = "",
     ):
         """
         初始化 E2EE 管理器
@@ -39,14 +47,23 @@ class E2EEManager:
             user_id: 用户 ID
             device_id: 设备 ID
             store_path: 加密存储路径
+            auto_verify_mode: 自动验证模式 (auto_accept/auto_reject/manual)
+            enable_key_backup: 是否启用密钥备份
+            recovery_key: 用户配置的恢复密钥 (base64)
         """
         self.client = client
         self.user_id = user_id
         self.device_id = device_id
         self.store_path = Path(store_path) / user_id.replace(":", "_")
+        self.auto_verify_mode = auto_verify_mode
+        self.enable_key_backup = enable_key_backup
+        self.recovery_key = recovery_key
 
         self._store: CryptoStore | None = None
         self._olm: OlmMachine | None = None
+        self._verification = None  # SASVerification
+        self._key_backup = None  # KeyBackup
+        self._cross_signing = None  # CrossSigning
         self._initialized = False
 
     @property
@@ -68,13 +85,66 @@ class E2EEManager:
             # 上传设备密钥
             await self._upload_device_keys()
 
+            # 初始化 SAS 验证
+            from .verification import SASVerification
+
+            self._verification = SASVerification(
+                client=self.client,
+                user_id=self.user_id,
+                device_id=self.device_id,
+                olm_machine=self._olm,
+                auto_verify_mode=self.auto_verify_mode,
+            )
+            logger.info(f"SAS 验证已初始化 (mode: {self.auto_verify_mode})")
+
+            # 初始化密钥备份和交叉签名
+            from .key_backup import CrossSigning, KeyBackup
+
+            self._key_backup = KeyBackup(
+                self.client,
+                self._store,
+                self._olm,
+                recovery_key=self.recovery_key,
+            )
+            self._cross_signing = CrossSigning(
+                self.client, self.user_id, self.device_id, self._olm
+            )
+
+            await self._key_backup.initialize()
+            await self._cross_signing.initialize()
+
+            # 如果启用密钥备份，创建或使用现有备份
+            if self.enable_key_backup:
+                if not self._key_backup._backup_version:
+                    await self._key_backup.create_backup()
+
             self._initialized = True
             logger.info(f"E2EE 初始化成功 (device_id: {self.device_id})")
             return True
 
         except Exception as e:
-            logger.error(f"E2EE 初始化失败: {e}")
+            logger.error(f"E2EE 初始化失败：{e}")
             return False
+
+    async def handle_verification_event(
+        self, event_type: str, sender: str, content: dict
+    ) -> bool:
+        """
+        处理验证事件 (m.key.verification.*)
+
+        Args:
+            event_type: 事件类型
+            sender: 发送者
+            content: 事件内容
+
+        Returns:
+            是否处理了事件
+        """
+        if self._verification:
+            return await self._verification.handle_verification_event(
+                event_type, sender, content
+            )
+        return False
 
     async def _upload_device_keys(self):
         """上传设备密钥到服务器"""
@@ -98,10 +168,10 @@ class E2EEManager:
             self._olm.mark_keys_as_published()
 
             counts = response.get("one_time_key_counts", {})
-            logger.info(f"设备密钥已上传，一次性密钥数量: {counts}")
+            logger.info(f"设备密钥已上传，一次性密钥数量：{counts}")
 
         except Exception as e:
-            logger.error(f"上传设备密钥失败: {e}")
+            logger.error(f"上传设备密钥失败：{e}")
 
     async def decrypt_event(
         self, event_content: dict, sender: str, room_id: str
@@ -152,16 +222,18 @@ class E2EEManager:
             body = my_ciphertext.get("body")
 
             try:
-                plaintext = self._olm.decrypt_olm_message(sender_key, message_type, body)
+                plaintext = self._olm.decrypt_olm_message(
+                    sender_key, message_type, body
+                )
                 import json
 
                 return json.loads(plaintext)
             except Exception as e:
-                logger.error(f"Olm 解密失败: {e}")
+                logger.error(f"Olm 解密失败：{e}")
                 return None
 
         else:
-            logger.warning(f"不支持的加密算法: {algorithm}")
+            logger.warning(f"不支持的加密算法：{algorithm}")
             return None
 
     async def handle_room_key(self, event: dict, sender_key: str):
@@ -181,7 +253,7 @@ class E2EEManager:
         algorithm = event.get("algorithm")
 
         if algorithm != "m.megolm.v1.aes-sha2":
-            logger.warning(f"不支持的密钥算法: {algorithm}")
+            logger.warning(f"不支持的密钥算法：{algorithm}")
             return
 
         if not all([room_id, session_id, session_key]):
@@ -221,7 +293,7 @@ class E2EEManager:
             return self._olm.encrypt_megolm(room_id, event_type, content)
 
         except Exception as e:
-            logger.error(f"加密消息失败: {e}")
+            logger.error(f"加密消息失败：{e}")
             return None
 
     async def _create_and_share_session(self, room_id: str):
@@ -233,21 +305,147 @@ class E2EEManager:
         session_id, session_key = self._olm.create_megolm_outbound_session(room_id)
         logger.info(f"为房间 {room_id} 创建了 Megolm 会话")
 
-        # TODO: 分发密钥给房间内所有设备
-        # 这需要:
-        # 1. 获取房间成员列表
-        # 2. 查询每个成员的设备密钥
-        # 3. 声明一次性密钥
-        # 4. 创建 Olm 会话
-        # 5. 发送 m.room_key 到每个设备
+        # 获取房间成员
+        try:
+            members = await self._get_room_members(room_id)
+            if members:
+                await self.ensure_room_keys_sent(room_id, members, session_id, session_key)
+        except Exception as e:
+            logger.error(f"分发密钥失败：{e}")
 
-    async def ensure_room_keys_sent(self, room_id: str, members: list[str]):
+    async def _get_room_members(self, room_id: str) -> list[str]:
+        """获取房间成员列表"""
+        try:
+            state = await self.client.get_room_state(room_id)
+            members = []
+            for event in state:
+                if event.get("type") == "m.room.member":
+                    membership = event.get("content", {}).get("membership")
+                    if membership in ["join", "invite"]:
+                        state_key = event.get("state_key")
+                        if state_key and state_key != self.user_id:
+                            members.append(state_key)
+            return members
+        except Exception as e:
+            logger.warning(f"获取房间成员失败：{e}")
+            return []
+
+    async def ensure_room_keys_sent(
+        self,
+        room_id: str,
+        members: list[str],
+        session_id: str | None = None,
+        session_key: str | None = None,
+    ):
         """
-        确保房间密钥已发送给所有成员
+        确保房间密钥已发送给所有成员的设备
 
         Args:
             room_id: 房间 ID
             members: 成员用户 ID 列表
+            session_id: 可选，指定会话 ID
+            session_key: 可选，指定会话密钥
         """
-        # TODO: 实现密钥分发
-        pass
+        if not self._olm or not members:
+            return
+
+        # 如果没有提供会话信息，获取当前出站会话
+        if not session_id or not session_key:
+            outbound = self._store.get_megolm_outbound(room_id) if self._store else None
+            if not outbound:
+                logger.warning(f"房间 {room_id} 没有出站会话")
+                return
+            # 需要从会话中获取信息
+            session_id, session_key = self._olm.create_megolm_outbound_session(room_id)
+
+        try:
+            # 查询所有成员的设备密钥
+            device_keys_query = {user_id: [] for user_id in members}
+            response = await self.client.query_keys(device_keys_query)
+
+            device_keys = response.get("device_keys", {})
+            devices_to_send: list[tuple[str, str, str]] = []  # (user_id, device_id, curve25519_key)
+
+            for user_id, user_devices in device_keys.items():
+                for device_id, device_info in user_devices.items():
+                    keys = device_info.get("keys", {})
+                    curve_key = keys.get(f"curve25519:{device_id}")
+                    if curve_key:
+                        devices_to_send.append((user_id, device_id, curve_key))
+
+            if not devices_to_send:
+                logger.debug("没有设备需要发送密钥")
+                return
+
+            # 声明一次性密钥
+            one_time_claim = {}
+            for user_id, device_id, _ in devices_to_send:
+                if user_id not in one_time_claim:
+                    one_time_claim[user_id] = {}
+                one_time_claim[user_id][device_id] = "signed_curve25519"
+
+            claimed = await self.client.claim_keys(one_time_claim)
+            one_time_keys = claimed.get("one_time_keys", {})
+
+            # 为每个设备发送 m.room_key
+            import secrets
+
+            for user_id, device_id, curve_key in devices_to_send:
+                try:
+                    # 获取声明的一次性密钥
+                    user_otks = one_time_keys.get(user_id, {})
+                    device_otks = user_otks.get(device_id, {})
+
+                    if not device_otks:
+                        logger.debug(f"设备 {user_id}/{device_id} 没有可用的一次性密钥")
+                        continue
+
+                    # 取第一个一次性密钥
+                    otk_id = list(device_otks.keys())[0]
+                    otk_data = device_otks[otk_id]
+                    one_time_key = otk_data.get("key") if isinstance(otk_data, dict) else otk_data
+
+                    # 创建 Olm 会话
+                    session = self._olm.create_outbound_session(curve_key, one_time_key)
+
+                    # 构造 m.room_key 内容
+                    room_key_content = {
+                        "algorithm": "m.megolm.v1.aes-sha2",
+                        "room_id": room_id,
+                        "session_id": session_id,
+                        "session_key": session_key,
+                    }
+
+                    # 使用 Olm 加密
+                    import json
+
+                    ciphertext = session.encrypt(json.dumps(room_key_content))
+
+                    # 发送 to_device 消息
+                    encrypted_content = {
+                        "algorithm": "m.olm.v1.curve25519-aes-sha2-256",
+                        "sender_key": self._olm.curve25519_key,
+                        "ciphertext": {
+                            curve_key: {
+                                "type": ciphertext.message_type,
+                                "body": ciphertext.ciphertext,
+                            }
+                        },
+                    }
+
+                    txn_id = secrets.token_hex(16)
+                    await self.client.send_to_device(
+                        "m.room.encrypted",
+                        {user_id: {device_id: encrypted_content}},
+                        txn_id,
+                    )
+
+                    logger.debug(f"已向 {user_id}/{device_id} 发送房间密钥")
+
+                except Exception as e:
+                    logger.warning(f"向 {user_id}/{device_id} 发送密钥失败：{e}")
+
+            logger.info(f"已向 {len(devices_to_send)} 个设备分发房间 {room_id} 的密钥")
+
+        except Exception as e:
+            logger.error(f"密钥分发失败：{e}")

@@ -112,9 +112,7 @@ class MatrixReceiver:
                                     )
                                     cache_dir.mkdir(parents=True, exist_ok=True)
 
-                                    filename = original_content.get(
-                                        "body", "image.jpg"
-                                    )
+                                    filename = original_content.get("body", "image.jpg")
                                     ext = Path(filename).suffix or ".jpg"
                                     cache_path = cache_dir / f"{cache_key}{ext}"
 
