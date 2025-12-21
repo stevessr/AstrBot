@@ -118,6 +118,24 @@ class E2EEManager:
                 if not self._key_backup._backup_version:
                     await self._key_backup.create_backup()
 
+            # 始终尝试从备份恢复密钥（如果有配置恢复密钥）
+            if self._key_backup._backup_version and self.recovery_key:
+                logger.info("[E2EE] 尝试从服务器备份恢复密钥...")
+                await self._key_backup.restore_room_keys()
+
+            # 自动签名自己的设备（使设备变为"已验证"状态）
+            if self._cross_signing._master_key:
+                await self._cross_signing.sign_device(self.device_id)
+                logger.info(f"已自动签名设备：{self.device_id}")
+            else:
+                # 如果没有交叉签名密钥，尝试上传
+                try:
+                    await self._cross_signing.upload_cross_signing_keys()
+                    await self._cross_signing.sign_device(self.device_id)
+                    logger.info(f"已上传交叉签名密钥并签名设备：{self.device_id}")
+                except Exception as e:
+                    logger.warning(f"上传交叉签名密钥失败（可能需要 UIA）：{e}")
+
             self._initialized = True
             logger.info(f"E2EE 初始化成功 (device_id: {self.device_id})")
             return True
@@ -196,6 +214,7 @@ class E2EEManager:
         if algorithm == "m.megolm.v1.aes-sha2":
             session_id = event_content.get("session_id")
             ciphertext = event_content.get("ciphertext")
+            sender_key = event_content.get("sender_key")
 
             if not session_id or not ciphertext:
                 logger.warning("缺少 session_id 或 ciphertext")
@@ -204,7 +223,24 @@ class E2EEManager:
             decrypted = self._olm.decrypt_megolm(session_id, ciphertext)
             if decrypted:
                 logger.debug(f"成功解密 Megolm 消息 (session: {session_id[:8]}...)")
-            return decrypted
+                return decrypted
+
+            # 解密失败，尝试请求密钥
+            logger.info(f"尝试请求房间密钥：session={session_id[:8]}...")
+
+            # 1. 尝试从服务器备份恢复
+            if self._key_backup and self._key_backup._backup_version:
+                await self._key_backup.restore_room_keys()
+                # 再次尝试解密
+                decrypted = self._olm.decrypt_megolm(session_id, ciphertext)
+                if decrypted:
+                    logger.info(f"从备份恢复后成功解密：{session_id[:8]}...")
+                    return decrypted
+
+            # 2. 发送 m.room_key_request
+            await self._request_room_key(room_id, session_id, sender_key, sender)
+
+            return None
 
         elif algorithm == "m.olm.v1.curve25519-aes-sha2-256":
             # Olm 消息解密
@@ -264,6 +300,64 @@ class E2EEManager:
             room_id, session_id, session_key, sender_key
         )
         logger.info(f"收到房间 {room_id} 的 Megolm 密钥")
+
+    async def _request_room_key(
+        self,
+        room_id: str,
+        session_id: str,
+        sender_key: str | None,
+        sender_user_id: str,
+    ):
+        """
+        发送 m.room_key_request 请求密钥
+
+        Args:
+            room_id: 房间 ID
+            session_id: 会话 ID
+            sender_key: 发送者的 curve25519 密钥
+            sender_user_id: 发送者用户 ID
+        """
+        import secrets
+
+        try:
+            request_id = secrets.token_hex(16)
+
+            # 构造 m.room_key_request 内容
+            content = {
+                "action": "request",
+                "body": {
+                    "algorithm": "m.megolm.v1.aes-sha2",
+                    "room_id": room_id,
+                    "sender_key": sender_key or "",
+                    "session_id": session_id,
+                },
+                "request_id": request_id,
+                "requesting_device_id": self.device_id,
+            }
+
+            # 发送给所有自己的设备
+            txn_id = secrets.token_hex(16)
+            await self.client.send_to_device(
+                "m.room_key_request",
+                {self.user_id: {"*": content}},  # * 表示所有设备
+                txn_id,
+            )
+
+            # 也发送给消息发送者的设备
+            if sender_user_id and sender_user_id != self.user_id:
+                txn_id2 = secrets.token_hex(16)
+                await self.client.send_to_device(
+                    "m.room_key_request",
+                    {sender_user_id: {"*": content}},
+                    txn_id2,
+                )
+
+            logger.info(
+                f"已发送密钥请求：room={room_id[:16]}... session={session_id[:8]}..."
+            )
+
+        except Exception as e:
+            logger.warning(f"发送密钥请求失败：{e}")
 
     async def encrypt_message(
         self, room_id: str, event_type: str, content: dict

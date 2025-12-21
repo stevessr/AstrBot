@@ -253,9 +253,18 @@ class MatrixEventProcessor:
                         logger.error(f"处理加密 to_device 事件失败：{e}")
                 continue
 
-            # 忽略其他 E2EE 相关事件
-            if event_type in ["m.forwarded_room_key"]:
-                logger.debug(f"忽略 {event_type} 事件 (暂未支持)")
+            # 处理 m.forwarded_room_key 事件 (转发的 Megolm 密钥)
+            if event_type == "m.forwarded_room_key":
+                if self.e2ee_manager:
+                    try:
+                        sender_key = content.get("sender_key", "")
+                        # 直接处理转发的密钥（格式与 m.room_key 相同）
+                        await self.e2ee_manager.handle_room_key(content, sender_key)
+                        logger.info(
+                            f"成功处理转发的房间密钥：{content.get('session_id', '')[:8]}..."
+                        )
+                    except Exception as e:
+                        logger.error(f"处理 m.forwarded_room_key 事件失败：{e}")
                 continue
 
             # Log other event types
