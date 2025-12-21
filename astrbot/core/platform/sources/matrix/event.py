@@ -58,7 +58,18 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     reply_to = str(seg.id)
                     break
 
+        # Merge adjacent Plain components
+        merged_chain = []
         for segment in message_chain.chain:
+            if isinstance(segment, Plain) and merged_chain and isinstance(merged_chain[-1], Plain):
+                merged_chain[-1].text += segment.text
+            else:
+                merged_chain.append(segment)
+        
+        # Use a temporary chain for iteration
+        chain_to_send = merged_chain
+
+        for segment in chain_to_send:
             # Reply 段仅用于标注引用关系，实际发送时跳过
             if isinstance(segment, Reply):
                 continue
@@ -129,10 +140,19 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
 
                 try:
+                    # 记录发送消息的日志
+                    if reply_to:
+                        logger.info(f"发送回复消息到房间 {room_id}，回复事件ID: {reply_to}")
+                    else:
+                        logger.info(f"发送消息到房间 {room_id}")
+
                     await client.send_message(
                         room_id=room_id, msg_type="m.room.message", content=content
                     )
                     sent_count += 1
+
+                    # 记录发送成功
+                    logger.debug(f"消息发送成功，房间: {room_id}，内容预览: {segment.text[:50]}...")
                 except Exception as e:
                     logger.error(f"发送文本消息失败：{e}")
 
@@ -163,21 +183,23 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         content["m.relates_to"] = {
                             "rel_type": "m.thread",
                             "event_id": thread_root,
-                            "m.in_reply_to": {"event_id": reply_to}
-                            if reply_to
-                            else None,
+                            "m.in_reply_to": {"event_id": reply_to} if reply_to else None,
                         }
                     elif reply_to:
                         # 普通回复模式
-                        content["m.relates_to"] = {
-                            "m.in_reply_to": {"event_id": reply_to}
-                        }
+                        content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+
+                    # 记录发送消息的日志
+                    logger.info(f"发送图片消息到房间 {room_id}，文件: {filename}")
+                    if reply_to:
+                        logger.info(f"  回复事件ID: {reply_to}")
 
                     # 发送未加密消息
                     await client.send_message(
                         room_id=room_id, msg_type="m.room.message", content=content
                     )
                     sent_count += 1
+                    logger.debug(f"图片消息发送成功，房间: {room_id}")
                 except Exception as e:
                     logger.error(f"发送图片消息失败：{e}")
 
@@ -222,13 +244,20 @@ class MatrixPlatformEvent(AstrMessageEvent):
                             "m.in_reply_to": {"event_id": reply_to}
                         }
 
-                    # 发送未加密消息
-                    await client.send_message(
-                        room_id=room_id, msg_type="m.room.message", content=content
-                    )
-                    sent_count += 1
-                except Exception as e:
-                    logger.error(f"发送文件消息失败：{e}")
+                    # 记录发送消息的日志
+                    logger.info(f"发送文件消息到房间 {room_id}，文件: {filename}")
+                    if reply_to:
+                        logger.info(f"  回复事件ID: {reply_to}")
+
+                    try:
+                        # 发送未加密消息
+                        await client.send_message(
+                            room_id=room_id, msg_type="m.room.message", content=content
+                        )
+                        sent_count += 1
+                        logger.debug(f"文件消息发送成功，房间: {room_id}")
+                    except Exception as e:
+                        logger.error(f"发送文件消息失败：{e}")
 
         return sent_count
 
@@ -274,9 +303,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         thread_root = relates_to.get("event_id")
                         use_thread = True
                     else:
-                        # 如果不是嘟文串，默认使用嘟文串模式（可以通过配置控制）
-                        use_thread = True  # 默认启用嘟文串模式
-                        thread_root = reply_to  # 将当前消息作为嘟文串的根
+                        # 如果不是嘟文串，不要强制开启嘟文串模式，使用标准回复
+                        use_thread = False
+                        thread_root = None
             except Exception as e:
                 logger.warning(f"Failed to get event for threading: {e}")
         else:
@@ -291,6 +320,14 @@ class MatrixPlatformEvent(AstrMessageEvent):
             use_thread=use_thread,
             original_message_info=original_message_info,
         )
+
+        # 记录发送消息的日志
+        logger.info(f"Matrix 适配器发送消息到房间 {room_id}")
+        if reply_to:
+            logger.info(f"  回复事件ID: {reply_to}")
+        if thread_root:
+            logger.info(f"  嘟文串根事件ID: {thread_root}")
+
         return await super().send(message_chain)
 
     async def send_streaming(self, generator, use_fallback: bool = False):
@@ -445,8 +482,13 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                     )
                                     message_event_id = response.get("event_id")
                                     current_content = delta
+
+                                    # 记录流式发送第一条消息
+                                    logger.info(f"流式发送第一条消息到房间 {room_id}，事件ID: {message_event_id}")
+                                    if reply_to:
+                                        logger.info(f"  回复事件ID: {reply_to}")
                                 except Exception as e:
-                                    logger.warning(f"发送消息失败 (streaming): {e}")
+                                    logger.error(f"发送消息失败 (streaming): {e}")
                             delta = ""  # 重置 delta
 
                         # 单独发送非文本组件
@@ -541,8 +583,13 @@ class MatrixPlatformEvent(AstrMessageEvent):
                             message_event_id = response.get("event_id")
                             current_content = delta
                             last_edit_time = asyncio.get_event_loop().time()
+
+                            # 记录流式发送消息
+                            logger.info(f"流式发送消息到房间 {room_id}，事件ID: {message_event_id}")
+                            if reply_to:
+                                logger.info(f"  回复事件ID: {reply_to}")
                         except Exception as e:
-                            logger.warning(f"发送消息失败 (streaming): {e}")
+                            logger.error(f"发送消息失败 (streaming): {e}")
 
         # 最后确保所有内容都已发送
         if delta and current_content != delta:
@@ -609,7 +656,12 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     await self.client.send_message(
                         room_id=room_id, msg_type="m.room.message", content=content
                     )
+
+                    # 记录流式发送最终消息
+                    logger.info(f"流式发送最终消息到房间 {room_id}")
+                    if reply_to:
+                        logger.info(f"  回复事件ID: {reply_to}")
             except Exception as e:
-                logger.warning(f"发送最终消息失败 (streaming): {e}")
+                logger.error(f"发送最终消息失败 (streaming): {e}")
 
         return await super().send_streaming(generator, use_fallback)

@@ -263,6 +263,13 @@ class MatrixPlatformAdapter(Platform):
                     original_message_info=original_message_info,
                 )
 
+                # 记录发送消息的日志
+                logger.info(f"Matrix 适配器发送消息到房间 {room_id}")
+                if reply_to:
+                    logger.info(f"  回复事件ID: {reply_to}")
+                if thread_root:
+                    logger.info(f"  嘟文串根事件ID: {thread_root}")
+
             await super().send_by_session(session, message_chain)
 
             # Stop typing notification
@@ -326,6 +333,13 @@ class MatrixPlatformAdapter(Platform):
             use_thread=use_thread,
             original_message_info=original_message_info,
         )
+
+        # 记录发送消息的日志
+        logger.info(f"Matrix 适配器发送分段消息到房间 {room_id}")
+        if reply_to:
+            logger.info(f"  回复事件ID: {reply_to}")
+        if thread_root:
+            logger.info(f"  嘟文串根事件ID: {thread_root}")
 
     def meta(self) -> PlatformMetadata:
         id_ = getattr(self._matrix_config, "id", None) or "matrix"
