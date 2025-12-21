@@ -1,1 +1,1 @@
-from .auth import MatrixAuth
+from .auth import MatrixAuth as MatrixAuth

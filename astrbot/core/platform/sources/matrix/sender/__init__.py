@@ -1,1 +1,1 @@
-from .sender import MatrixSender
+from .sender import MatrixSender as MatrixSender
