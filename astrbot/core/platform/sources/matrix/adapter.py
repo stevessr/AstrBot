@@ -184,73 +184,38 @@ class MatrixPlatformAdapter(Platform):
                 else:
                     other_comps.append(seg)
 
-            # 检查是否为分段回复（有多个 Plain 组件）
-            is_segmented_reply = len(plain_comps) > 1
+            # 合并所有 Plain 组件为单个文本
+            merged_text = "".join(seg.text for seg in plain_comps)
 
-            # 如果是分段回复，逐段发送
-            if is_segmented_reply:
-                # 发送第一段（包含头部信息）
-                first_seg = plain_comps[0]
-                await self._send_segment(
-                    room_id,
-                    first_seg,
-                    header_comps,
-                    reply_to,
-                    thread_root,
-                    use_thread,
-                    original_message_info,
-                )
-
-                # 发送剩余段落（不包含头部信息，也不使用嘟文串模式，也不使用回复引用）
-                for seg in plain_comps[1:]:
-                    # 对于后续段落，使用普通回复模式，不使用嘟文串
-                    # 也不传递 original_message_info，避免重复引用
-                    await self._send_segment(
-                        room_id, seg, [], reply_to, None, False, None
-                    )
-
-                # 发送其他组件（如图片、文件等）
-                for seg in other_comps:
-                    await MatrixPlatformEvent.send_with_client(
-                        self.client,
-                        MessageChain([seg]),
-                        room_id,
-                        reply_to=reply_to,
-                        thread_root=thread_root,
-                        use_thread=use_thread,
-                        original_message_info=original_message_info,
-                    )
-            else:
-                # 非分段回复，按原有逻辑处理
+            # 构建新的消息链
+            if merged_text or other_comps:
                 new_chain = []
-                for seg in message_chain.chain:
-                    if isinstance(seg, Plain):
-                        # Simple check for Markdown
-                        text = seg.text
-                        if (
-                            any(
-                                x in text
-                                for x in ["**", "*", "`", "#", "- ", "> ", "[", "]("]
-                            )
-                            or reply_to
-                        ):
-                            html = markdown_to_html(text)
-                            full_text = text
-                            full_html = html
 
-                            # 创建包含 format 和 formatted_body 的 Plain 对象
-                            new_chain.append(
-                                Plain(
-                                    text=full_text,
-                                    format="org.matrix.custom.html",
-                                    formatted_body=full_html,
-                                    convert=True,
-                                )
+                # 添加合并后的文本
+                if merged_text:
+                    # 检查是否需要 Markdown 渲染
+                    if (
+                        any(
+                            x in merged_text
+                            for x in ["**", "*", "`", "#", "- ", "> ", "[", "]("]
+                        )
+                        or reply_to
+                    ):
+                        html = markdown_to_html(merged_text)
+                        new_chain.append(
+                            Plain(
+                                text=merged_text,
+                                format="org.matrix.custom.html",
+                                formatted_body=html,
+                                convert=True,
                             )
-                        else:
-                            new_chain.append(seg)
+                        )
                     else:
-                        new_chain.append(seg)
+                        new_chain.append(Plain(merged_text))
+
+                # 添加非文本组件
+                new_chain.extend(other_comps)
+
                 new_message_chain = MessageChain(new_chain)
 
                 # 发送消息
