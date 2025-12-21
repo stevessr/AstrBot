@@ -495,9 +495,9 @@ CONFIG_METADATA_2 = {
                         "hint": "用于matrix设备验证",
                     },
                     "matrix_enable_threading": {
-                        "description": "启用线程回复",
+                        "description": "启用线程回复（试验性）",
                         "type": "bool",
-                        "hint": "启用后，AstrBot 将会使用 Matrix 的线程功能回复消息。",
+                        "hint": "（试验性功能）启用后，AstrBot 将使用 Matrix 的线程（Thread）功能回复消息，而非普通的时间线回复。",
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",
