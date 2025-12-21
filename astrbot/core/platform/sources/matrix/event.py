@@ -258,6 +258,8 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         logger.debug(f"文件消息发送成功，房间: {room_id}")
                     except Exception as e:
                         logger.error(f"发送文件消息失败：{e}")
+                except Exception as e:
+                    logger.error(f"处理文件消息过程出错：{e}")
 
         return sent_count
 
@@ -364,6 +366,11 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     except Exception:
                         pass
 
+                    # 如果 message chain 中没有 Reply，则使用原始消息 ID 作为回复目标
+                    # 这是因为流式输出跳过了 ResultDecorateStage，不会自动添加 Reply 组件
+                    if not reply_to and self.message_obj and self.message_obj.message_id:
+                        reply_to = str(self.message_obj.message_id)
+
                     # 如果有回复，检查是否需要使用嘟文串模式
                     if reply_to:
                         try:
@@ -384,9 +391,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                         thread_root = relates_to.get("event_id")
                                         use_thread = True
                                     else:
-                                        # 如果不是嘟文串，默认使用嘟文串模式
-                                        use_thread = True
-                                        thread_root = reply_to  # 将当前消息作为嘟文串的根
+                                        # 如果不是嘟文串，默认使用普通回复模式
+                                        use_thread = False
+                                        thread_root = None
                         except Exception as e:
                             logger.warning(f"Failed to get event for threading: {e}")
 
