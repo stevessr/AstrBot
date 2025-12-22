@@ -10,14 +10,15 @@ import hashlib
 import hmac
 import json
 import secrets
-from typing import Any
+from pathlib import Path
 
 from astrbot.api import logger
 
 # 尝试导入加密库
 try:
     from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes, hmac as crypto_hmac
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives import hmac as crypto_hmac
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -271,14 +272,35 @@ def _manual_decrypt_v1(
     except Exception as e:
         logger.error(f"[E2EE-Backup] Manual decryption failed: {e}")
         return None
-    except Exception as e:
-        logger.warning(f"[E2EE-Backup] 解密失败：{e}")
-        return None
 
 
 def _encode_recovery_key(key_bytes: bytes) -> str:
-    """将恢复密钥编码为用户友好格式"""
-    return base64.b64encode(key_bytes).decode()
+    """按照 Matrix 规范将 32 字节私钥编码为 Base58 恢复密钥字符串"""
+
+    # 只使用前 32 字节，多余部分截断，不足补零
+    key_bytes = (key_bytes or b"").ljust(32, b"\x00")[:32]
+
+    # 前缀头 0x8B 0x01 + 私钥 + 校验（前面所有字节的 XOR）
+    payload = b"\x8b\x01" + key_bytes
+    checksum = 0
+    for b in payload:
+        checksum ^= b
+    payload += bytes([checksum])
+
+    # Base58 编码（比特币字符集）
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    n = int.from_bytes(payload, "big")
+    encoded = ""
+    while n > 0:
+        n, rem = divmod(n, 58)
+        encoded = alphabet[rem] + encoded
+
+    # 保留前导零
+    leading_zeros = len(payload) - len(payload.lstrip(b"\x00"))
+    encoded = ("1" * leading_zeros) + encoded
+
+    # 为易读性每 4 字符分组（解码时会去掉空格）
+    return " ".join(encoded[i : i + 4] for i in range(0, len(encoded), 4))
 
 
 def _decode_recovery_key(key_str: str) -> bytes:
@@ -289,59 +311,64 @@ def _decode_recovery_key(key_str: str) -> bytes:
     - Matrix 标准 base58 恢复密钥 (以 Es 开头，格式：0x8B 0x01 + 32 字节密钥 + 1 字节校验)
     - Base64 编码的 32 字节密钥
     """
-    # 移除空格和破折号
-    key_str = key_str.replace(" ", "").replace("-", "")
+    # 移除空格和破折号，兼容分组显示
+    key_str = (key_str or "").replace(" ", "").replace("-", "")
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-    # 如果以 E 开头，优先尝试 base58 解码 (Matrix 标准格式)
-    if key_str.startswith("E"):
+    # 优先尝试 Matrix 规范的 Base58 (58 字符，Bitcoin alphabet)
+    if key_str and all(c in alphabet for c in key_str):
         try:
-            # Matrix base58 解码
-            ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+            # Base58 解码，保留前导零
             n = 0
             for char in key_str:
-                if char not in ALPHABET:
-                    raise ValueError(f"Invalid base58 character: {char}")
-                n = n * 58 + ALPHABET.index(char)
+                n = n * 58 + alphabet.index(char)
 
-            # 计算需要的字节数 (至少 35 字节)
-            byte_length = max(35, (n.bit_length() + 7) // 8)
-            result = n.to_bytes(byte_length, "big")
+            decoded = n.to_bytes(35, "big")
+            leading_ones = len(key_str) - len(key_str.lstrip("1"))
+            if leading_ones:
+                decoded = (b"\x00" * leading_ones) + decoded
 
-            logger.info(
-                f"[E2EE-Backup] Base58 解码：输入长度={len(key_str)}, "
-                f"解码后={len(result)}B, 头=0x{result[0]:02x}{result[1]:02x}"
-            )
+            # 规范长度应为 35 字节：0x8B 0x01 + 32B 密钥 + 1B 校验
+            if len(decoded) < 35:
+                decoded = decoded.rjust(35, b"\x00")
+            elif len(decoded) > 35:
+                decoded = decoded[-35:]
 
-            # 验证 Matrix 头部 (0x8B 0x01)
-            if len(result) >= 35 and result[0] == 0x8B and result[1] == 0x01:
-                # 提取 32 字节密钥 (跳过 2 字节头，忽略最后 1 字节校验)
-                private_key = result[2:34]
-                logger.info(f"[E2EE-Backup] 成功提取 32 字节私钥")
-                return private_key
-            else:
-                logger.warning(
-                    f"[E2EE-Backup] 恢复密钥头部不匹配：预期 0x8B01, 实际 0x{result[0]:02x}{result[1]:02x}"
-                )
+            # 验证头与校验
+            if decoded[0] != 0x8B or decoded[1] != 0x01:
+                raise ValueError("恢复密钥头部不匹配，应为 0x8B01")
+
+            checksum = 0
+            for b in decoded[:-1]:
+                checksum ^= b
+            if checksum != decoded[-1]:
+                raise ValueError("恢复密钥校验失败 (XOR mismatch)")
+
+            private_key = decoded[2:34]
+            logger.info("[E2EE-Backup] 成功解析 Base58 恢复密钥")
+            return private_key
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] Base58 解码失败：{e}")
+            logger.warning(f"[E2EE-Backup] Base58 恢复密钥解析失败：{e}")
 
-    # 尝试 base64 解码
+    # 尝试 Base64（兼容旧格式或直接私钥字符串）
     try:
-        decoded = base64.b64decode(key_str)
+        decoded = base64.b64decode(key_str + "===")
         logger.info(f"[E2EE-Backup] Base64 解码：{len(decoded)}B")
-        # 如果是 35 或 36 字节，提取中间的 32 字节密钥
-        if len(decoded) >= 35:
-            return decoded[2:34]
-        elif len(decoded) == 32:
-            return decoded
-        else:
-            return decoded[:32] if len(decoded) > 32 else decoded.ljust(32, b"\x00")
-    except Exception:
-        pass
 
-    # 如果都失败，返回原始密钥的 hash 作为后备 (不推荐)
-    logger.warning("[E2EE-Backup] 无法解码恢复密钥，使用 SHA256 hash")
-    return hashlib.sha256(key_str.encode()).digest()
+        if len(decoded) >= 35 and decoded[0] == 0x8B and decoded[1] == 0x01:
+            checksum = 0
+            for b in decoded[:-1]:
+                checksum ^= b
+            if checksum != decoded[-1]:
+                raise ValueError("Base64 恢复密钥校验失败 (XOR mismatch)")
+            return decoded[2:34]
+
+        if len(decoded) >= 32:
+            return decoded[:32]
+    except Exception:
+        logger.debug("[E2EE-Backup] Base64 解码失败，尝试其他格式")
+
+    raise ValueError("无法解码恢复密钥，请检查输入格式（应为 Matrix Base58 或 Base64）")
 
 
 class KeyBackup:
@@ -398,6 +425,7 @@ class KeyBackup:
         支持直接解密和通过 Recovery Key 解密 SSSS Key 的链式解密
         """
         logger.info("[E2EE-Backup] 尝试从 Secret Storage 恢复密钥...")
+        dehydrated_device = None
         try:
             # 1. Get default key ID
             default_key_data = await self.client.get_global_account_data(
@@ -428,8 +456,60 @@ class KeyBackup:
                     )
                 else:
                     logger.warning(
-                        f"[E2EE-Backup] Could not fetch data for key {key_id}"
+                        f"[E2EE-Backup] Key data for {key_id} does not contain 'encrypted' section"
                     )
+            else:
+                logger.warning(f"[E2EE-Backup] Could not fetch data for key {key_id}")
+                # Check for Dehydrated Device
+                dehydrated_device = await self.client.get_global_account_data(
+                    "m.dehydrated_device"
+                )
+                if not dehydrated_device:
+                    dehydrated_device = await self.client.get_global_account_data(
+                        "org.matrix.msc2697.dehydrated_device"
+                    )
+                    if dehydrated_device:
+                        logger.info(
+                            "[E2EE-Backup] Found MSC2697 dehydrated device event"
+                        )
+            if dehydrated_device:
+                logger.info(
+                    f"[E2EE-Backup] Found dehydrated device event: {dehydrated_device.keys()}"
+                )
+                device_data = dehydrated_device.get("device_data", {})
+                if device_data:
+                    logger.info(
+                        f"[E2EE-Backup] Dehydrated device data keys: {device_data.keys()}"
+                    )
+                    # Try to decrypt using provided key
+                    decrypted_device = self._decrypt_ssss_data(
+                        provided_key_bytes, device_data
+                    )
+                    if decrypted_device:
+                        logger.info(
+                            "[E2EE-Backup] Successfully decrypted Dehydrated Device data!"
+                        )
+                        # Log structure of decrypted data (be careful not to log full private keys)
+                        try:
+                            import json
+
+                            # It might be a pickled Olm account or a JSON string
+                            # If it's a JSON string:
+                            device_info = json.loads(decrypted_device)
+                            logger.info(
+                                f"[E2EE-Backup] Decrypted Dehydrated Device Info keys: {device_info.keys()}"
+                            )
+                        except:
+                            logger.info(
+                                f"[E2EE-Backup] Decrypted Dehydrated Device data (raw len): {len(decrypted_device)}"
+                            )
+                    else:
+                        logger.warning(
+                            "[E2EE-Backup] Failed to decrypt Dehydrated Device with provided key"
+                        )
+            else:
+                logger.info("[E2EE-Backup] No dehydrated device event found")
+
             ssss_key = provided_key_bytes
             # If the key definition contains 'encrypted', it means the actual SSSS key is encrypted            # (usually by the Recovery Key or Passphrase)
             if key_data and "encrypted" in key_data:
@@ -939,102 +1019,233 @@ class CrossSigning:
         self._self_signing_key: str | None = None
         self._user_signing_key: str | None = None
 
+        # 私钥（Raw 32B），仅本地持久化
+        self._master_priv = None
+        self._self_signing_priv = None
+        self._user_signing_priv = None
+
+        # 本地存储位置（与 E2EE store 同目录）
+        try:
+            self._storage_path = Path(self.olm.store.store_path) / "cross_signing.json"
+        except Exception:
+            self._storage_path = None
+
     async def initialize(self):
         """初始化交叉签名"""
+        if not CRYPTO_AVAILABLE:
+            logger.warning(
+                "[E2EE-CrossSign] cryptography 不可用，无法生成/签名交叉签名密钥"
+            )
+            return
+
         try:
+            self._load_local_keys()
+
             response = await self.client.query_keys({self.user_id: []})
-            # 获取 master_key
-            master_keys = response.get("master_keys", {})
-            if self.user_id in master_keys:
-                keys = master_keys[self.user_id].get("keys", {})
-                if keys:
-                    self._master_key = list(keys.values())[0]
-                    logger.info("[E2EE-CrossSign] 发现现有主密钥")
+            master_keys = response.get("master_keys", {}).get(self.user_id)
+            self_keys = response.get("self_signing_keys", {}).get(self.user_id)
+            user_keys = response.get("user_signing_keys", {}).get(self.user_id)
 
-            # 获取 self_signing_key
-            self_signing_keys = response.get("self_signing_keys", {})
-            if self.user_id in self_signing_keys:
-                keys = self_signing_keys[self.user_id].get("keys", {})
-                if keys:
-                    self._self_signing_key = list(keys.values())[0]
-                    logger.info("[E2EE-CrossSign] 发现现有自签名密钥")
+            server_master = None
+            server_self_signing = None
+            server_user_signing = None
 
-            # 获取 user_signing_key
-            user_signing_keys = response.get("user_signing_keys", {})
-            if self.user_id in user_signing_keys:
-                keys = user_signing_keys[self.user_id].get("keys", {})
+            if master_keys:
+                keys = master_keys.get("keys", {})
                 if keys:
-                    self._user_signing_key = list(keys.values())[0]
-                    logger.info("[E2EE-CrossSign] 发现现有用户签名密钥")
+                    server_master = list(keys.values())[0]
+                    self._master_key = server_master
+                    logger.info("[E2EE-CrossSign] 发现服务器主密钥")
 
-            if self._master_key and self._self_signing_key:
+            if self_keys:
+                keys = self_keys.get("keys", {})
+                if keys:
+                    server_self_signing = list(keys.values())[0]
+                    self._self_signing_key = server_self_signing
+                    logger.info("[E2EE-CrossSign] 发现服务器自签名密钥")
+
+            if user_keys:
+                keys = user_keys.get("keys", {})
+                if keys:
+                    server_user_signing = list(keys.values())[0]
+                    self._user_signing_key = server_user_signing
+                    logger.info("[E2EE-CrossSign] 发现服务器用户签名密钥")
+
+            # 如果服务器已有密钥但本地缺少私钥，避免覆写
+            if server_master and not self._master_priv:
+                logger.warning(
+                    "[E2EE-CrossSign] 服务器已有交叉签名密钥，本地缺少私钥，跳过生成/上传"
+                )
+                return
+
+            # 如缺少密钥则生成并上传
+            if not server_master:
+                await self._generate_and_upload_keys()
+            elif server_master and server_self_signing and server_user_signing:
                 logger.info("[E2EE-CrossSign] 交叉签名密钥已就绪")
-            elif self._master_key:
-                logger.info("[E2EE-CrossSign] 主密钥已加载，但缺少自签名密钥")
-            else:
-                logger.info("[E2EE-CrossSign] 未发现交叉签名密钥")
+                return
+            elif server_master and self._master_priv:
+                # 补全缺失的 self/user keys
+                await self._generate_and_upload_keys(
+                    force_regen=False, reuse_master=True
+                )
 
         except Exception as e:
             logger.warning(f"[E2EE-CrossSign] 初始化失败：{e}")
 
-    async def upload_cross_signing_keys(self):
-        """上传交叉签名密钥"""
-        if not self.olm:
-            logger.error("[E2EE-CrossSign] OlmMachine 未初始化")
+    def _b64(self, data: bytes) -> str:
+        return base64.b64encode(data).decode().rstrip("=")
+
+    def _canonical(self, obj: dict) -> str:
+        return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+    def _load_local_keys(self):
+        if not self._storage_path or not self._storage_path.exists():
+            return
+        try:
+            data = json.loads(self._storage_path.read_text())
+            for k, attr in [
+                ("master", "_master_priv"),
+                ("self_signing", "_self_signing_priv"),
+                ("user_signing", "_user_signing_priv"),
+            ]:
+                if k in data and data[k].get("priv"):
+                    setattr(self, attr, base64.b64decode(data[k]["priv"]))
+                if k in data and data[k].get("pub"):
+                    pub_val = data[k]["pub"]
+                    if k == "master":
+                        self._master_key = pub_val
+                    elif k == "self_signing":
+                        self._self_signing_key = pub_val
+                    elif k == "user_signing":
+                        self._user_signing_key = pub_val
+            logger.info("[E2EE-CrossSign] 已加载本地交叉签名密钥")
+        except Exception:
+            logger.warning("[E2EE-CrossSign] 读取本地交叉签名密钥失败，忽略并重新生成")
+
+    def _save_local_keys(self):
+        if not self._storage_path:
+            return
+        try:
+            self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "master": {
+                    "priv": self._b64(self._master_priv),
+                    "pub": self._master_key,
+                },
+                "self_signing": {
+                    "priv": self._b64(self._self_signing_priv),
+                    "pub": self._self_signing_key,
+                },
+                "user_signing": {
+                    "priv": self._b64(self._user_signing_priv),
+                    "pub": self._user_signing_key,
+                },
+            }
+            self._storage_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2)
+            )
+        except Exception as e:
+            logger.warning(f"[E2EE-CrossSign] 保存本地交叉签名密钥失败：{e}")
+
+    def _gen_keypair(self) -> tuple[bytes, str]:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+
+        priv = Ed25519PrivateKey.generate()
+        priv_raw = priv.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        pub_raw = priv.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        return priv_raw, self._b64(pub_raw)
+
+    def _sign(self, priv_raw: bytes, payload: dict) -> str:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+
+        priv = Ed25519PrivateKey.from_private_bytes(priv_raw)
+        msg = self._canonical(payload).encode()
+        sig = priv.sign(msg)
+        return self._b64(sig)
+
+    async def _generate_and_upload_keys(
+        self, force_regen: bool = False, reuse_master: bool = False
+    ):
+        """生成并上传交叉签名密钥，必要时复用本地主密钥"""
+
+        if reuse_master and not self._master_priv:
+            logger.warning("[E2EE-CrossSign] 无主密钥私钥，无法复用")
             return
 
-        try:
-            # 使用 Olm 账户生成签名
-            # 注意：真正的实现需要单独的 ed25519 密钥对
-            master_public = self.olm.ed25519_key
-            self_signing_public = hashlib.sha256(
-                f"self_signing:{master_public}".encode()
-            ).hexdigest()[:43]
-            user_signing_public = hashlib.sha256(
-                f"user_signing:{master_public}".encode()
-            ).hexdigest()[:43]
+        if force_regen or not self._master_priv:
+            self._master_priv, self._master_key = self._gen_keypair()
+        if force_regen or not self._self_signing_priv:
+            self._self_signing_priv, self._self_signing_key = self._gen_keypair()
+        if force_regen or not self._user_signing_priv:
+            self._user_signing_priv, self._user_signing_key = self._gen_keypair()
 
-            master_key = {
-                "user_id": self.user_id,
-                "usage": ["master"],
-                "keys": {f"ed25519:{master_public[:8]}": master_public},
-            }
+        master_id = f"ed25519:{self._master_key[:8]}"
+        self_id = f"ed25519:{self._self_signing_key[:8]}"
+        user_id = f"ed25519:{self._user_signing_key[:8]}"
 
-            self_signing_key = {
-                "user_id": self.user_id,
-                "usage": ["self_signing"],
-                "keys": {f"ed25519:{self_signing_public[:8]}": self_signing_public},
-            }
+        master_key = {
+            "user_id": self.user_id,
+            "usage": ["master"],
+            "keys": {master_id: self._master_key},
+        }
 
-            user_signing_key = {
-                "user_id": self.user_id,
-                "usage": ["user_signing"],
-                "keys": {f"ed25519:{user_signing_public[:8]}": user_signing_public},
-            }
+        self_signing_key = {
+            "user_id": self.user_id,
+            "usage": ["self_signing"],
+            "keys": {self_id: self._self_signing_key},
+        }
 
-            await self.client._request(
-                "POST",
-                "/_matrix/client/v3/keys/device_signing/upload",
-                data={
-                    "master_key": master_key,
-                    "self_signing_key": self_signing_key,
-                    "user_signing_key": user_signing_key,
-                },
-            )
+        user_signing_key = {
+            "user_id": self.user_id,
+            "usage": ["user_signing"],
+            "keys": {user_id: self._user_signing_key},
+        }
 
-            self._master_key = master_public
-            self._self_signing_key = self_signing_public
-            self._user_signing_key = user_signing_public
+        # master 签名 self/user key
+        self_signing_key["signatures"] = {
+            self.user_id: {master_id: self._sign(self._master_priv, self_signing_key)}
+        }
+        user_signing_key["signatures"] = {
+            self.user_id: {master_id: self._sign(self._master_priv, user_signing_key)}
+        }
 
-            logger.info("[E2EE-CrossSign] 交叉签名密钥已上传")
+        await self.client._request(
+            "POST",
+            "/_matrix/client/v3/keys/device_signing/upload",
+            data={
+                "master_key": master_key,
+                "self_signing_key": self_signing_key,
+                "user_signing_key": user_signing_key,
+            },
+        )
 
-        except Exception as e:
-            logger.error(f"[E2EE-CrossSign] 上传交叉签名密钥失败：{e}")
+        self._save_local_keys()
+        logger.info("[E2EE-CrossSign] 已生成并上传交叉签名密钥")
+
+    async def upload_cross_signing_keys(self):
+        """上传交叉签名密钥"""
+        if not CRYPTO_AVAILABLE:
+            logger.error("[E2EE-CrossSign] 缺少 cryptography，无法上传交叉签名密钥")
+            return
+        await self._generate_and_upload_keys(force_regen=False)
 
     async def sign_device(self, device_id: str):
         """签名自己的设备"""
-        if not self._self_signing_key or not self.olm:
-            logger.warning("[E2EE-CrossSign] 未设置自签名密钥或 OlmMachine")
+        if not self._self_signing_key or not self._self_signing_priv:
+            logger.warning("[E2EE-CrossSign] 未设置自签名密钥或私钥")
             return
 
         try:
@@ -1048,11 +1259,8 @@ class CrossSigning:
             device_key = device_keys[device_id]
 
             # 使用 Olm 账户签名
-            canonical = json.dumps(device_key, sort_keys=True, separators=(",", ":"))
-            # 注意：这里应该使用 self_signing 密钥签名，但我们用 Olm 账户代替
-            signature = hashlib.sha256(
-                f"{canonical}{self._self_signing_key}".encode()
-            ).hexdigest()[:86]
+            canonical = self._canonical(device_key)
+            signature = self._sign(self._self_signing_priv, device_key)
 
             await self.client._request(
                 "POST",
@@ -1073,8 +1281,8 @@ class CrossSigning:
 
     async def verify_user(self, user_id: str):
         """验证其他用户"""
-        if not self._user_signing_key:
-            logger.warning("[E2EE-CrossSign] 未设置用户签名密钥")
+        if not self._user_signing_key or not self._user_signing_priv:
+            logger.warning("[E2EE-CrossSign] 未设置用户签名密钥或私钥")
             return
 
         try:
@@ -1088,21 +1296,13 @@ class CrossSigning:
             master_key = master_keys[user_id]
             key_id = list(master_key.get("keys", {}).keys())[0]
 
-            canonical = json.dumps(master_key, sort_keys=True, separators=(",", ":"))
-            signature = hashlib.sha256(
-                f"{canonical}{self._user_signing_key}".encode()
-            ).hexdigest()[:86]
+            _canonical = self._canonical(master_key)
+            signature = self._sign(self._user_signing_priv, master_key)
 
             await self.client._request(
                 "POST",
                 "/_matrix/client/v3/keys/signatures/upload",
-                data={
-                    user_id: {
-                        key_id: {
-                            f"ed25519:{self._user_signing_key[:8]}": signature,
-                        }
-                    }
-                },
+                data={key_id: {f"ed25519:{self._user_signing_key[:8]}": signature}},
             )
 
             logger.info(f"[E2EE-CrossSign] 已验证用户：{user_id}")
