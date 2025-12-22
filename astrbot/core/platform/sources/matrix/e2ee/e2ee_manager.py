@@ -120,6 +120,7 @@ class E2EEManager:
                 self._store,
                 self._olm,
                 recovery_key=self.recovery_key,
+                store_path=str(self.store_path),
             )
             self._cross_signing = CrossSigning(
                 self.client, self.user_id, self.device_id, self._olm

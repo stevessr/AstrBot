@@ -419,6 +419,7 @@ class KeyBackup:
         crypto_store,
         olm_machine,
         recovery_key: str = "",
+        store_path: str = "",
     ):
         """
         初始化密钥备份
@@ -427,16 +428,19 @@ class KeyBackup:
             client: MatrixHTTPClient
             crypto_store: CryptoStore
             olm_machine: OlmMachine
-            recovery_key: 用户配置的恢复密钥 (base64)
+            recovery_key: 用户配置的恢复密钥 (base58)
+            store_path: 存储路径（用于持久化提取的备份密钥）
         """
         self.client = client
         self.store = crypto_store
         self.olm = olm_machine
+        self.store_path = store_path
 
         self._backup_version: str | None = None
         self._backup_auth_data: dict = {}
         self._recovery_key_bytes: bytes | None = None
         self._encryption_key: bytes | None = None
+        self._original_recovery_key_str: str = recovery_key  # 保存原始输入
 
         # 处理用户提供的恢复密钥
         if recovery_key:
@@ -448,6 +452,54 @@ class KeyBackup:
                 logger.info("[E2EE-Backup] 使用用户配置的恢复密钥")
             except Exception as e:
                 logger.error(f"[E2EE-Backup] 解析恢复密钥失败：{e}")
+
+    def _get_extracted_key_path(self) -> str:
+        """获取提取的备份密钥存储路径"""
+        if self.store_path:
+            from pathlib import Path
+            return str(Path(self.store_path) / "extracted_backup_key.bin")
+        return ""
+
+    def _save_extracted_key(self, key_bytes: bytes):
+        """保存从 SSSS 提取的备份密钥到本地"""
+        try:
+            path = self._get_extracted_key_path()
+            if not path:
+                return
+            
+            from pathlib import Path
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(path, 'wb') as f:
+                f.write(key_bytes)
+            
+            logger.info(f"[E2EE-Backup] 已保存提取的备份密钥到 {path}")
+        except Exception as e:
+            logger.warning(f"[E2EE-Backup] 保存提取的备份密钥失败：{e}")
+
+    def _load_extracted_key(self) -> bytes | None:
+        """从本地加载之前提取的备份密钥"""
+        try:
+            path = self._get_extracted_key_path()
+            if not path:
+                return None
+            
+            from pathlib import Path
+            if not Path(path).exists():
+                return None
+            
+            with open(path, 'rb') as f:
+                key_bytes = f.read()
+            
+            if len(key_bytes) == CRYPTO_KEY_SIZE_32:
+                logger.info(f"[E2EE-Backup] 从本地加载了提取的备份密钥")
+                return key_bytes
+            else:
+                logger.warning(f"[E2EE-Backup] 本地备份密钥长度不正确：{len(key_bytes)} bytes")
+                return None
+        except Exception as e:
+            logger.debug(f"[E2EE-Backup] 加载提取的备份密钥失败：{e}")
+            return None
 
     async def _try_restore_from_secret_storage(
         self, provided_key_bytes: bytes
@@ -744,32 +796,49 @@ class KeyBackup:
 
                 # 验证现有密钥
                 if self._recovery_key_bytes:
+                    # 先尝试直接验证
                     if not self._verify_recovery_key(self._recovery_key_bytes):
                         logger.warning(
                             "[E2EE-Backup] 恢复密钥与备份公钥不匹配，尝试按 Secret Storage Key 处理..."
                         )
 
-                        real_key = await self._try_restore_from_secret_storage(
-                            self._recovery_key_bytes
-                        )
-                        if real_key:
+                        # 尝试加载之前保存的提取密钥
+                        extracted_key = self._load_extracted_key()
+                        if extracted_key and self._verify_recovery_key(extracted_key):
                             logger.info(
-                                "[E2EE-Backup] 从 SSSS 成功提取密钥，再次验证..."
+                                "[E2EE-Backup] ✅ 使用本地保存的提取密钥成功验证！"
                             )
-                            if self._verify_recovery_key(real_key):
-                                logger.info(
-                                    "[E2EE-Backup] ✅ 成功获取并验证了真正的备份密钥！"
-                                )
-                                self._recovery_key_bytes = real_key
-                                self._encryption_key = _compute_hkdf(
-                                    self._recovery_key_bytes,
-                                    b"",
-                                    HKDF_MEGOLM_BACKUP_INFO,
-                                )
-                            else:
-                                logger.error("[E2EE-Backup] SSSS 提取的密钥验证失败")
+                            self._recovery_key_bytes = extracted_key
+                            self._encryption_key = _compute_hkdf(
+                                self._recovery_key_bytes,
+                                b"",
+                                HKDF_MEGOLM_BACKUP_INFO,
+                            )
                         else:
-                            logger.error("[E2EE-Backup] 无法通过 SSSS 恢复密钥")
+                            # 本地没有或验证失败，从 SSSS 提取
+                            real_key = await self._try_restore_from_secret_storage(
+                                self._recovery_key_bytes
+                            )
+                            if real_key:
+                                logger.info(
+                                    "[E2EE-Backup] 从 SSSS 成功提取密钥，再次验证..."
+                                )
+                                if self._verify_recovery_key(real_key):
+                                    logger.info(
+                                        "[E2EE-Backup] ✅ 成功获取并验证了真正的备份密钥！"
+                                    )
+                                    self._recovery_key_bytes = real_key
+                                    self._encryption_key = _compute_hkdf(
+                                        self._recovery_key_bytes,
+                                        b"",
+                                        HKDF_MEGOLM_BACKUP_INFO,
+                                    )
+                                    # 保存提取的密钥到本地
+                                    self._save_extracted_key(real_key)
+                                else:
+                                    logger.error("[E2EE-Backup] SSSS 提取的密钥验证失败")
+                            else:
+                                logger.error("[E2EE-Backup] 无法通过 SSSS 恢复密钥")
                     else:
                         logger.info("[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配")
             else:
