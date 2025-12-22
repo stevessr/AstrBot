@@ -14,6 +14,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from ..client.http_client import MatrixAPIError
 from ..constants import (
     AES_BLOCK_SIZE_16,
     AES_GCM_NONCE_LEN,
@@ -199,9 +200,7 @@ def _decrypt_backup_data(
         except BaseException as e1:
             # 捕获所有异常类型（包括 vodozemac 的特殊异常）
             error_msg = str(e1)
-            logger.warning(
-                f"vodozemac 解密失败 ({error_msg})，尝试手动解密..."
-            )
+            logger.warning(f"vodozemac 解密失败 ({error_msg})，尝试手动解密...")
 
             # Fallback to manual decryption
             return _manual_decrypt_v1(
@@ -457,6 +456,7 @@ class KeyBackup:
         """获取提取的备份密钥存储路径"""
         if self.store_path:
             from pathlib import Path
+
             return str(Path(self.store_path) / "extracted_backup_key.bin")
         return ""
 
@@ -466,13 +466,14 @@ class KeyBackup:
             path = self._get_extracted_key_path()
             if not path:
                 return
-            
+
             from pathlib import Path
+
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(path, 'wb') as f:
+
+            with open(path, "wb") as f:
                 f.write(key_bytes)
-            
+
             logger.info(f"已保存提取的备份密钥到 {path}")
         except Exception as e:
             logger.warning(f"保存提取的备份密钥失败：{e}")
@@ -483,16 +484,17 @@ class KeyBackup:
             path = self._get_extracted_key_path()
             if not path:
                 return None
-            
+
             from pathlib import Path
+
             if not Path(path).exists():
                 return None
-            
-            with open(path, 'rb') as f:
+
+            with open(path, "rb") as f:
                 key_bytes = f.read()
-            
+
             if len(key_bytes) == CRYPTO_KEY_SIZE_32:
-                logger.info(f"从本地加载了提取的备份密钥")
+                logger.info("从本地加载了提取的备份密钥")
                 return key_bytes
             else:
                 logger.warning(f"本地备份密钥长度不正确：{len(key_bytes)} bytes")
@@ -531,9 +533,7 @@ class KeyBackup:
             )
             # DEBUG LOGGING
             if key_data:
-                logger.info(
-                    f"Key Data for {key_id}: keys={list(key_data.keys())}"
-                )
+                logger.info(f"Key Data for {key_id}: keys={list(key_data.keys())}")
                 if "encrypted" in key_data:
                     logger.info(
                         f"Key {key_id} has encrypted data: {list(key_data['encrypted'].keys())}"
@@ -553,18 +553,14 @@ class KeyBackup:
                         MSC2697_DEHYDRATED_DEVICE_EVENT
                     )
                     if dehydrated_device:
-                        logger.info(
-                            "Found MSC2697 dehydrated device event"
-                        )
+                        logger.info("Found MSC2697 dehydrated device event")
             if dehydrated_device:
                 logger.info(
                     f"Found dehydrated device event: {dehydrated_device.keys()}"
                 )
                 device_data = dehydrated_device.get("device_data", {})
                 if device_data:
-                    logger.info(
-                        f"Dehydrated device data keys: {device_data.keys()}"
-                    )
+                    logger.info(f"Dehydrated device data keys: {device_data.keys()}")
                     # Try to decrypt using provided key (dehydrated device key from FluffyChat)
                     # Dehydrated device uses "org.matrix.msc2697.dehydrated_device" or "m.dehydrated_device" as secret name
                     decrypted_device = self._decrypt_ssss_data(
@@ -573,9 +569,7 @@ class KeyBackup:
                         secret_name="m.dehydrated_device",
                     )
                     if decrypted_device:
-                        logger.info(
-                            "✅ Successfully decrypted Dehydrated Device data!"
-                        )
+                        logger.info("✅ Successfully decrypted Dehydrated Device data!")
                         # The decrypted data might contain the actual backup recovery key
                         # Try to extract it and use it as the SSSS key
                         try:
@@ -647,9 +641,7 @@ class KeyBackup:
             ssss_key = provided_key_bytes
             # If the key definition contains 'encrypted', it means the actual SSSS key is encrypted            # (usually by the Recovery Key or Passphrase)
             if key_data and "encrypted" in key_data:
-                logger.info(
-                    f"检测到 SSSS Key {key_id} 是加密存储的，尝试解密..."
-                )
+                logger.info(f"检测到 SSSS Key {key_id} 是加密存储的，尝试解密...")
                 encrypted_map = key_data["encrypted"]
                 decrypted_ssss_key = None
 
@@ -660,9 +652,7 @@ class KeyBackup:
                         provided_key_bytes, enc_data, secret_name=""
                     )
                     if decrypted:
-                        logger.info(
-                            f"成功使用提供的密钥解密了 SSSS Key (ID: {kid})"
-                        )
+                        logger.info(f"成功使用提供的密钥解密了 SSSS Key (ID: {kid})")
                         decrypted_ssss_key = decrypted
                         break
 
@@ -805,9 +795,7 @@ class KeyBackup:
                         # 尝试加载之前保存的提取密钥
                         extracted_key = self._load_extracted_key()
                         if extracted_key and self._verify_recovery_key(extracted_key):
-                            logger.info(
-                                "✅ 使用本地保存的提取密钥成功验证！"
-                            )
+                            logger.info("✅ 使用本地保存的提取密钥成功验证！")
                             self._recovery_key_bytes = extracted_key
                             self._encryption_key = _compute_hkdf(
                                 self._recovery_key_bytes,
@@ -820,13 +808,9 @@ class KeyBackup:
                                 self._recovery_key_bytes
                             )
                             if real_key:
-                                logger.info(
-                                    "从 SSSS 成功提取密钥，再次验证..."
-                                )
+                                logger.info("从 SSSS 成功提取密钥，再次验证...")
                                 if self._verify_recovery_key(real_key):
-                                    logger.info(
-                                        "✅ 成功获取并验证了真正的备份密钥！"
-                                    )
+                                    logger.info("✅ 成功获取并验证了真正的备份密钥！")
                                     self._recovery_key_bytes = real_key
                                     self._encryption_key = _compute_hkdf(
                                         self._recovery_key_bytes,
@@ -900,16 +884,12 @@ class KeyBackup:
             ):
                 logger.error("❌ 恢复密钥不匹配！")
                 logger.error(f"备份版本要求公钥：{expected_public_key}")
-                logger.error(
-                    f"您的密钥生成公钥：{public_key_std} (或者 {public_key})"
-                )
+                logger.error(f"您的密钥生成公钥：{public_key_std} (或者 {public_key})")
 
                 # Check if it matches after padding?
                 return False
 
-            logger.info(
-                f"✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})"
-            )
+            logger.info(f"✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})")
             return True
 
         except Exception as e:
@@ -938,9 +918,7 @@ class KeyBackup:
                 logger.warning("" + "=" * 50)
                 logger.warning("⚠️  新生成的恢复密钥（请务必保存）:")
                 logger.warning(f"{recovery_key_str}")
-                logger.warning(
-                    "可将此密钥配置到 matrix_e2ee_recovery_key"
-                )
+                logger.warning("可将此密钥配置到 matrix_e2ee_recovery_key")
                 logger.warning("" + "=" * 50)
             else:
                 recovery_key_str = _encode_recovery_key(self._recovery_key_bytes)
@@ -1069,9 +1047,7 @@ class KeyBackup:
                 logger.warning(f"创建 PkDecryption 失败：{e}")
 
         try:
-            logger.info(
-                f"开始从备份恢复密钥 (version={self._backup_version})"
-            )
+            logger.info(f"开始从备份恢复密钥 (version={self._backup_version})")
             response = await self.client._request(
                 "GET",
                 f"/_matrix/client/v3/room_keys/keys?version={self._backup_version}",
@@ -1079,9 +1055,7 @@ class KeyBackup:
 
             rooms = response.get("rooms", {})
             total_sessions = sum(len(s) for s in rooms.values())
-            logger.info(
-                f"获取到 {len(rooms)} 个房间，共 {total_sessions} 个会话"
-            )
+            logger.info(f"获取到 {len(rooms)} 个房间，共 {total_sessions} 个会话")
 
             restored = 0
             skipped = 0
@@ -1108,9 +1082,7 @@ class KeyBackup:
                         )
 
                         if not ciphertext_b64:
-                            logger.warning(
-                                f"会话 {session_id[:8]}... 无 ciphertext"
-                            )
+                            logger.warning(f"会话 {session_id[:8]}... 无 ciphertext")
                             skipped += 1
                             continue
 
@@ -1140,9 +1112,7 @@ class KeyBackup:
                                     key_bytes, ephemeral_key, ciphertext, mac
                                 )
                                 if plaintext:
-                                    logger.info(
-                                        f"成功解密会话：{session_id[:8]}..."
-                                    )
+                                    logger.info(f"成功解密会话：{session_id[:8]}...")
                             except Exception as e:
                                 logger.warning(f"备份解密失败：{e}")
 
@@ -1174,9 +1144,7 @@ class KeyBackup:
                             restored += 1
 
                     except Exception as e:
-                        logger.debug(
-                            f"恢复会话 {session_id[:8]}... 失败：{e}"
-                        )
+                        logger.debug(f"恢复会话 {session_id[:8]}... 失败：{e}")
                         skipped += 1
 
             if restored > 0:
@@ -1195,11 +1163,19 @@ class CrossSigning:
     使用 vodozemac/ed25519 进行真正的签名操作
     """
 
-    def __init__(self, client, user_id: str, device_id: str, olm_machine):
+    def __init__(
+        self,
+        client,
+        user_id: str,
+        device_id: str,
+        olm_machine,
+        password: str | None = None,
+    ):
         self.client = client
         self.user_id = user_id
         self.device_id = device_id
         self.olm = olm_machine
+        self.password = password
 
         self._master_key: str | None = None
         self._self_signing_key: str | None = None
@@ -1297,7 +1273,13 @@ class CrossSigning:
                 ("user_signing", "_user_signing_priv"),
             ]:
                 if k in data and data[k].get("priv"):
-                    setattr(self, attr, base64.b64decode(data[k]["priv"]))
+                    # Add padding if missing
+                    priv_str = data[k]["priv"]
+                    padding = 4 - len(priv_str) % 4
+                    if padding != 4:
+                        priv_str += "=" * padding
+                    setattr(self, attr, base64.b64decode(priv_str))
+
                 if k in data and data[k].get("pub"):
                     pub_val = data[k]["pub"]
                     if k == "master":
@@ -1364,7 +1346,7 @@ class CrossSigning:
         return self._b64(sig)
 
     async def _generate_and_upload_keys(
-        self, force_regen: bool = False, reuse_master: bool = False
+        self, force_regen: bool = False, reuse_master: bool = False, auth: dict = None
     ):
         """生成并上传交叉签名密钥，必要时复用本地主密钥"""
 
@@ -1409,18 +1391,72 @@ class CrossSigning:
             self.user_id: {master_id: self._sign(self._master_priv, user_signing_key)}
         }
 
-        await self.client._request(
-            "POST",
-            "/_matrix/client/v3/keys/device_signing/upload",
-            data={
-                "master_key": master_key,
-                "self_signing_key": self_signing_key,
-                "user_signing_key": user_signing_key,
-            },
-        )
+        data = {
+            "master_key": master_key,
+            "self_signing_key": self_signing_key,
+            "user_signing_key": user_signing_key,
+        }
+        if auth:
+            data["auth"] = auth
 
-        self._save_local_keys()
-        logger.info("[E2EE-CrossSign] 已生成并上传交叉签名密钥")
+        try:
+            await self.client._request(
+                "POST",
+                "/_matrix/client/v3/keys/device_signing/upload",
+                data=data,
+            )
+            self._save_local_keys()
+            logger.info("[E2EE-CrossSign] 已生成并上传交叉签名密钥")
+        except MatrixAPIError as e:
+            # Check for UIA (User Interactive Authentication) or 401
+            if e.status == 401 and isinstance(e.data, dict):
+                flows = e.data.get("flows", [])
+                session = e.data.get("session")
+
+                # Check for password flow
+                password_flow = next((f for f in flows if "m.login.password" in f.get("stages", [])), None)
+
+                if password_flow and self.password and session and not auth:
+                    logger.info("[E2EE-CrossSign] Received UIA challenge, attempting password auth...")
+
+                    auth_data = {
+                        "type": "m.login.password",
+                        "identifier": {
+                            "type": "m.id.user",
+                            "user": self.user_id
+                        },
+                        "password": self.password,
+                        "session": session
+                    }
+
+                    try:
+                        await self._generate_and_upload_keys(
+                            force_regen=force_regen,
+                            reuse_master=reuse_master,
+                            auth=auth_data
+                        )
+                        return
+                    except Exception as inner_e:
+                        logger.error(f"[E2EE-CrossSign] UIA authentication failed: {inner_e}")
+                        raise
+
+            msg = str(e)
+            if "status: 401" in msg or "401" in msg:
+                logger.warning(
+                    "[E2EE-CrossSign] 上传交叉签名密钥失败：服务器要求认证 (401)"
+                )
+                logger.warning(f"错误详情：{msg}")
+                logger.warning("这通常意味着需要用户交互式认证 (UIA) 来重置密钥。")
+                logger.warning("由于当前无法进行交互式认证（或密码不可用），将跳过密钥上传。")
+                logger.warning("⚠️ 注意：本地交叉签名私钥未保存，且与服务器不匹配。")
+                # Do NOT save local keys to avoid persisting invalid state
+                return
+            else:
+                logger.error(f"[E2EE-CrossSign] 上传交叉签名密钥失败：{e}")
+                raise e
+        except Exception as e:
+            logger.error(f"[E2EE-CrossSign] 上传交叉签名密钥失败：{e}")
+            raise e
 
     async def upload_cross_signing_keys(self):
         """上传交叉签名密钥"""

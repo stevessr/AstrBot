@@ -20,6 +20,15 @@ from ..constants import (
 )
 
 
+class MatrixAPIError(Exception):
+    """Matrix API Error"""
+    def __init__(self, status: int, data: dict | str, message: str):
+        self.status = status
+        self.data = data
+        self.message = message
+        super().__init__(message)
+
+
 class MatrixHTTPClient:
     """
     Low-level HTTP client for Matrix C-S API
@@ -108,16 +117,23 @@ class MatrixHTTPClient:
                         error_code = response_data.get("errcode", "UNKNOWN")
                         error_msg = response_data.get("error", "Unknown error")
                         error_detail = f"Matrix API error: {error_code} - {error_msg} (status: {response.status})"
+                        # Raise structured error
+                        raise MatrixAPIError(response.status, response_data, error_detail)
+                    except MatrixAPIError:
+                        raise
                     except Exception:
                         # 如果不是 JSON 响应，获取文本内容
                         content_type = response.headers.get("content-type", "").lower()
                         if "text/html" in content_type:
                             error_detail = f"Matrix API error: HTML error page returned (status: {response.status})"
+                            raise MatrixAPIError(response.status, "HTML error page", error_detail)
                         else:
                             text = await response.text()
                             error_detail = f"Matrix API error: Non-JSON response (status: {response.status}): {text[:ERROR_TRUNCATE_LENGTH_200]}"
+                            raise MatrixAPIError(response.status, text, error_detail)
 
-                    raise Exception(error_detail)
+                    # This part is now unreachable due to raise above, but keeping structure clean
+                    # raise Exception(error_detail)
 
                 # 对于成功响应，尝试解析 JSON
                 try:

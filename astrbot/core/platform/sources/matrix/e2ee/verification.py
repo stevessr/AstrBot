@@ -29,6 +29,7 @@ from ..constants import (
     M_KEY_VERIFICATION_READY,
     M_KEY_VERIFICATION_REQUEST,
     M_KEY_VERIFICATION_START,
+    M_ROOM_ENCRYPTED,
     M_SAS_V1_METHOD,
     PREFIX_ED25519,
     SAS_BYTES_LENGTH_6,
@@ -846,8 +847,38 @@ class SASVerification:
                 "event_id": transaction_id,
             }
 
-            await self.client.send_room_event(room_id, event_type, content)
-            logger.info(f"[E2EE-Verify] 已发送房间内事件：{event_type}")
+            # Try to encrypt if E2EE manager is available
+            encrypted_content = None
+            if hasattr(self, "e2ee_manager") and self.e2ee_manager:
+                try:
+                    # Only encrypt if we have the capability (implies we are in an encrypted room context usually)
+                    # But encrypt_message will handle checking if session creation is needed.
+                    # Note: We rely on the caller/context to know if encryption is DESIRED.
+                    # For in-room verification, if we received an encrypted request, we SHOULD respond encrypted.
+                    # However, here we don't strictly know if the request was encrypted.
+                    # But encrypting verification events is generally good practice if E2EE is enabled.
+                    # Check if the room is actually encrypted?
+                    # E2EEManager.encrypt_message will create a session if one doesn't exist.
+                    # This might be aggressive for non-encrypted rooms.
+
+                    # Safer approach: Check if we have an existing outbound session OR if the room is encrypted in state.
+                    # But getting room state is async and slow.
+                    # Let's assume if E2EE is enabled and we are doing verification, we prefer encryption.
+                    # If the room is NOT encrypted, the clients might not be able to decrypt it?
+                    # Actually, if we send m.room.encrypted in a non-encrypted room, clients that support E2EE will still try to decrypt it.
+
+                    # Let's try to encrypt.
+                    encrypted_content = await self.e2ee_manager.encrypt_message(room_id, event_type, content)
+                except Exception as e:
+                    logger.warning(f"[E2EE-Verify] Failed to encrypt event: {e}")
+
+            if encrypted_content:
+                await self.client.send_room_event(room_id, M_ROOM_ENCRYPTED, encrypted_content)
+                logger.info(f"[E2EE-Verify] 已发送加密的房间内事件：{event_type}")
+            else:
+                await self.client.send_room_event(room_id, event_type, content)
+                logger.info(f"[E2EE-Verify] 已发送房间内事件：{event_type}")
+
         except Exception as e:
             logger.error(f"[E2EE-Verify] 发送房间内事件 {event_type} 失败：{e}")
 
