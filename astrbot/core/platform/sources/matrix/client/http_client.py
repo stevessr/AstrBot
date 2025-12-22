@@ -52,7 +52,10 @@ class MatrixHTTPClient:
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers for authenticated requests"""
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "AstrBot Matrix Client/1.0",
+        }
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
         return headers
@@ -87,7 +90,10 @@ class MatrixHTTPClient:
         headers = (
             self._get_headers()
             if authenticated
-            else {"Content-Type": "application/json"}
+            else {
+                "Content-Type": "application/json",
+                "User-Agent": "AstrBot Matrix Client/1.0",
+            }
         )
 
         try:
@@ -356,6 +362,7 @@ class MatrixHTTPClient:
         headers = {
             "Content-Type": content_type,
             "Authorization": f"Bearer {self.access_token}",
+            "User-Agent": "AstrBot Matrix Client/1.0",
         }
         params = {"filename": filename}
 
@@ -425,7 +432,7 @@ class MatrixHTTPClient:
 
             # 根据 Matrix spec，媒体下载需要认证
             # 使用 Authorization header 进行认证
-            headers = {}
+            headers = {"User-Agent": "AstrBot Matrix Client/1.0"}
             if self.access_token:
                 headers["Authorization"] = f"Bearer {self.access_token}"
 
@@ -476,7 +483,7 @@ class MatrixHTTPClient:
 
             for endpoint in thumbnail_endpoints:
                 url = f"{self.homeserver}{endpoint}"
-                headers = {}
+                headers = {"User-Agent": "AstrBot Matrix Client/1.0"}
                 if self.access_token:
                     headers["Authorization"] = f"Bearer {self.access_token}"
 
