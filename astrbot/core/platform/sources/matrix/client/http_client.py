@@ -425,11 +425,13 @@ class MatrixHTTPClient:
         # 不管媒体来自哪个服务器，都使用认证请求
         # 参考：https://spec.matrix.org/latest/client-server-api/#id429
 
-        # Try multiple download endpoints
-        # 1. 新的认证媒体 API (Matrix v1.11+) - 需要认证
-        # 2. 传统媒体 API (v3/r0) - 可能需要认证
-        # 3. 带 allow_redirect 参数的版本
-        endpoints = [
+        # Try multiple download strategies
+        # 1. 通过用户 homeserver 代理下载（需要认证）
+        # 2. 直接从源服务器下载（可能不需要认证）
+        # 3. 缩略图作为最后手段
+
+        # Strategy 1: 通过用户 homeserver 代理下载
+        proxy_endpoints = [
             # 新的认证媒体 API (推荐)
             f"/_matrix/client/v1/media/download/{server_name}/{media_id}",
             # 传统 API
@@ -440,20 +442,37 @@ class MatrixHTTPClient:
             f"/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
         ]
 
+        # Strategy 2: 直接从源服务器下载
+        direct_endpoints = [
+            f"https://{server_name}/_matrix/media/v3/download/{server_name}/{media_id}",
+            f"https://{server_name}/_matrix/media/r0/download/{server_name}/{media_id}",
+            f"https://{server_name}/_matrix/media/v3/download/{server_name}/{media_id}?allow_redirect=true",
+            f"https://{server_name}/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
+        ]
+
+        all_endpoints = [(url, True) for url in proxy_endpoints] + [(url, False) for url in direct_endpoints]
+
         last_error = None
         last_status = None
 
-        for endpoint in endpoints:
-            url = f"{self.homeserver}{endpoint}"
+        for endpoint_info in all_endpoints:
+            if isinstance(endpoint_info, tuple):
+                endpoint, use_auth = endpoint_info
+                url = f"{self.homeserver}{endpoint}" if use_auth else endpoint
+            else:
+                # 兼容旧格式
+                endpoint = endpoint_info
+                url = f"{self.homeserver}{endpoint}"
+                use_auth = True
 
-            # 根据 Matrix spec，媒体下载需要认证
-            # 使用 Authorization header 进行认证
+            # 根据策略决定是否使用认证
             headers = {"User-Agent": "AstrBot Matrix Client/1.0"}
-            if self.access_token:
+            if use_auth and self.access_token:
                 headers["Authorization"] = f"Bearer {self.access_token}"
 
             # 添加调试日志
-            logger.debug(f"Downloading from {url} with auth: {'yes' if self.access_token else 'no'}")
+            auth_status = "with auth" if use_auth and self.access_token else "without auth"
+            logger.debug(f"Downloading from {url} {auth_status}")
 
             try:
                 logger.debug(f"Downloading media from: {url}")
