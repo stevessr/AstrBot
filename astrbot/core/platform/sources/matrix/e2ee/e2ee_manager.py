@@ -54,6 +54,7 @@ class E2EEManager:
         enable_key_backup: bool = False,
         recovery_key: str = "",
         trust_on_first_use: bool = False,
+        password: str | None = None,
     ):
         """
         初始化 E2EE 管理器
@@ -67,11 +68,13 @@ class E2EEManager:
             enable_key_backup: 是否启用密钥备份
             recovery_key: 用户配置的恢复密钥 (base64)
             trust_on_first_use: 是否自动信任首次使用的设备
+            password: 用户密码 (可选，用于 UIA)
         """
         self.client = client
         self.user_id = user_id
         self.device_id = device_id
         self.store_path = Path(store_path) / user_id.replace(":", "_")
+        self.password = password
 
         # Ensure the directory exists
         if not self.store_path.exists():
@@ -120,6 +123,9 @@ class E2EEManager:
                 auto_verify_mode=self.auto_verify_mode,
                 trust_on_first_use=self.trust_on_first_use,
             )
+            # Inject self into verification module to allow sending encrypted events
+            self._verification.e2ee_manager = self
+
             logger.info(f"SAS 验证已初始化 (mode: {self.auto_verify_mode})")
 
             # 初始化密钥备份和交叉签名
@@ -133,7 +139,7 @@ class E2EEManager:
                 store_path=str(self.store_path),
             )
             self._cross_signing = CrossSigning(
-                self.client, self.user_id, self.device_id, self._olm
+                self.client, self.user_id, self.device_id, self._olm, self.password
             )
 
             await self._key_backup.initialize()

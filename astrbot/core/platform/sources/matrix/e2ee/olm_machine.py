@@ -17,11 +17,12 @@ from .crypto_store import CryptoStore
 try:
     from vodozemac import (
         Account,
+        Curve25519PublicKey,
+        ExportedSessionKey,  # 构造函数接受 base64 字符串
         GroupSession,  # 出站会话 (vodozemac 中称为 GroupSession)
         InboundGroupSession,
-        Session,
-        ExportedSessionKey,  # 构造函数接受 base64 字符串
         MegolmMessage,  # 解密时需要将密文转换为此类型
+        Session,
     )
 
     VODOZEMAC_AVAILABLE = True
@@ -214,8 +215,12 @@ class OlmMachine:
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
 
+        # Convert keys from base64 string to Curve25519PublicKey
+        identity_key = Curve25519PublicKey(their_identity_key)
+        one_time_key = Curve25519PublicKey(their_one_time_key)
+
         session = self._account.create_outbound_session(
-            their_identity_key, their_one_time_key
+            identity_key, one_time_key
         )
 
         # 缓存会话
@@ -411,6 +416,16 @@ class OlmMachine:
         """
         session = self._megolm_outbound.get(room_id)
         if not session:
+            # Try to load from store
+            pickle = self.store.get_megolm_outbound(room_id)
+            if pickle:
+                try:
+                    session = GroupSession.from_pickle(pickle, self._pickle_key)
+                    self._megolm_outbound[room_id] = session
+                except Exception as e:
+                    logger.error(f"加载 Megolm 出站会话失败：{e}")
+
+        if not session:
             raise RuntimeError(f"房间 {room_id} 没有 Megolm 出站会话")
 
         # 构造要加密的有效载荷
@@ -422,7 +437,7 @@ class OlmMachine:
         payload_json = json.dumps(payload, ensure_ascii=False)
 
         # 加密
-        ciphertext = session.encrypt(payload_json)
+        ciphertext = session.encrypt(payload_json.encode())
 
         # 更新存储
         self.store.save_megolm_outbound(room_id, session.pickle(self._pickle_key))

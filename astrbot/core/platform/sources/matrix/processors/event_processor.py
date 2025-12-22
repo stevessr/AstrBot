@@ -97,9 +97,11 @@ class MatrixEventProcessor:
         event_type = event_data.get("type")
         content = event_data.get("content", {})
         msgtype = content.get("msgtype", "")
-        
+
         # Debug: Log all event types for troubleshooting
-        logger.debug(f"[EventProcessor] 收到房间事件：type={event_type} msgtype={msgtype} room={room.room_id[:16]}...")
+        logger.debug(
+            f"[EventProcessor] 收到房间事件：type={event_type} msgtype={msgtype} room={room.room_id[:16]}..."
+        )
 
         # Handle in-room verification events
         # Matrix spec: standalone verification events have type m.key.verification.*
@@ -129,17 +131,12 @@ class MatrixEventProcessor:
             event: Parsed event object
         """
         try:
-            # Ignore messages from self
-            if event.sender == self.user_id:
-                logger.debug(f"忽略来自自身的消息：{event.event_id}")
-                return
-
             # Check if message is encrypted
             event_type = event.event_type
             event_content = event.content
 
+            # Handle encrypted messages first
             if event_type == "m.room.encrypted" or event_content.get("algorithm"):
-                # This is an encrypted message
                 if self.e2ee_manager:
                     # 尝试解密
                     decrypted = await self.e2ee_manager.decrypt_event(
@@ -154,10 +151,28 @@ class MatrixEventProcessor:
                         logger.debug(
                             f"成功解密消息 (room_id={room.room_id}, event_id={event.event_id})"
                         )
-                        
-                        # Check if decrypted message is a verification request
-                        if event.msgtype == "m.key.verification.request":
-                            logger.info(f"[EventProcessor] 检测到加密的验证请求 (msgtype={event.msgtype})")
+
+                        # Check if decrypted message is a verification event (request or other steps)
+                        is_verification = (
+                            event.event_type.startswith("m.key.verification.")
+                            or event.msgtype == "m.key.verification.request"
+                        )
+
+                        if is_verification:
+                            # Check if it's from self (same user)
+                            if event.sender == self.user_id:
+                                # Only process if from a different device
+                                from_device = event.content.get("from_device")
+                                if (
+                                    from_device
+                                    and self.e2ee_manager
+                                    and from_device == self.e2ee_manager.device_id
+                                ):
+                                    return  # Ignore own echo
+
+                            logger.info(
+                                f"[EventProcessor] 检测到加密的验证事件 (type={event.event_type})"
+                            )
                             # Reconstruct event_data for verification handler
                             verification_event = {
                                 "type": event.event_type,
@@ -165,7 +180,9 @@ class MatrixEventProcessor:
                                 "event_id": event.event_id,
                                 "content": event.content,
                             }
-                            await self._handle_in_room_verification(room, verification_event)
+                            await self._handle_in_room_verification(
+                                room, verification_event
+                            )
                             return
                     else:
                         logger.warning(
@@ -175,6 +192,12 @@ class MatrixEventProcessor:
                 else:
                     logger.error(f"收到加密消息但 E2EE 未启用 (room_id={room.room_id})")
                     return
+
+            # Ignore messages from self (unless it was a verification request handled above)
+            if event.sender == self.user_id:
+                # Double check to ensure we don't process own messages
+                logger.debug(f"忽略来自自身的消息：{event.event_id}")
+                return
 
             # Filter historical messages: ignore events before startup
             evt_ts = getattr(event, "origin_server_ts", None)
@@ -234,9 +257,15 @@ class MatrixEventProcessor:
         content = event_data.get("content", {})
         event_id = event_data.get("event_id")
 
-        # Ignore events from self
+        # Ignore events from self, UNLESS it's from a different device (verification request)
         if sender == self.user_id:
-            return
+            from_device = content.get("from_device")
+            # If from_device is missing, or matches our device_id, ignore it (it's an echo)
+            if not from_device or (
+                self.e2ee_manager and from_device == self.e2ee_manager.device_id
+            ):
+                return
+            # If from_device is different, proceed (it's from another session of the same user)
 
         logger.info(f"收到房间内验证事件：{event_type} from {sender}")
 
@@ -349,9 +378,7 @@ class MatrixEventProcessor:
                                 self.e2ee_manager
                                 and requesting_device_id == self.e2ee_manager.device_id
                             ):
-                                logger.debug(
-                                    "忽略来自自己设备的密钥请求"
-                                )
+                                logger.debug("忽略来自自己设备的密钥请求")
                                 continue
 
                             room_id = body.get("room_id", "")
