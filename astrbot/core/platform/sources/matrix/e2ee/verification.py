@@ -284,7 +284,7 @@ class SASVerification:
         if VODOZEMAC_SAS_AVAILABLE:
             try:
                 sas = Sas()
-                pub = str(sas.public_key)
+                pub = sas.public_key.to_base64()
                 logger.debug(f"[E2EE-Verify] 创建 SAS 实例，公钥：{pub[:16]}...")
             except Exception as e:
                 logger.warning(f"[E2EE-Verify] 创建 SAS 实例失败：{e}")
@@ -338,7 +338,7 @@ class SASVerification:
         if VODOZEMAC_SAS_AVAILABLE:
             try:
                 sas = Sas()
-                pub = str(sas.public_key)
+                pub = sas.public_key.to_base64()
                 logger.debug(
                     f"[E2EE-Verify] 创建 SAS 实例，公钥：{pub[:16]}..."
                 )
