@@ -136,6 +136,10 @@ class OlmMachine:
                 "m.megolm.v1.aes-sha2",
             ],
             "keys": keys,
+            # 设备显示名称，帮助用户识别设备
+            "unsigned": {
+                "device_display_name": "AstrBot",
+            },
         }
 
         # 生成签名 (vodozemac sign 需要 bytes 输入，返回 Ed25519Signature 对象)
