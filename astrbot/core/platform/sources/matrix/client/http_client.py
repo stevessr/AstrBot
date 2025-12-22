@@ -11,6 +11,14 @@ import aiohttp
 
 from astrbot.api import logger
 
+from ..constants import (
+    DEFAULT_TIMEOUT_MS_30000,
+    ERROR_TRUNCATE_LENGTH_200,
+    HTTP_ERROR_STATUS_400,
+    KEY_QUERY_TIMEOUT_MS_10000,
+    RESPONSE_TRUNCATE_LENGTH_400,
+)
+
 
 class MatrixHTTPClient:
     """
@@ -87,7 +95,7 @@ class MatrixHTTPClient:
                 method, url, json=data, params=params, headers=headers
             ) as response:
                 # 检查响应状态
-                if response.status >= 400:
+                if response.status >= HTTP_ERROR_STATUS_400:
                     # 尝试获取错误信息，但处理非 JSON 响应
                     try:
                         response_data = await response.json()
@@ -101,7 +109,7 @@ class MatrixHTTPClient:
                             error_detail = f"Matrix API error: HTML error page returned (status: {response.status})"
                         else:
                             text = await response.text()
-                            error_detail = f"Matrix API error: Non-JSON response (status: {response.status}): {text[:200]}"
+                            error_detail = f"Matrix API error: Non-JSON response (status: {response.status}): {text[:ERROR_TRUNCATE_LENGTH_200]}"
 
                     raise Exception(error_detail)
 
@@ -118,7 +126,7 @@ class MatrixHTTPClient:
                     else:
                         text = await response.text()
                         raise Exception(
-                            f"Matrix API error: Non-JSON response (status: {response.status}): {text[:200]}"
+                            f"Matrix API error: Non-JSON response (status: {response.status}): {text[:ERROR_TRUNCATE_LENGTH_200]}"
                         )
 
                 return response_data
@@ -126,6 +134,17 @@ class MatrixHTTPClient:
         except aiohttp.ClientError as e:
             logger.error(f"Matrix HTTP request failed: {e}")
             raise
+
+    async def get_login_flows(self) -> dict[str, Any]:
+        """
+        Get supported login flows from the server
+
+        Returns:
+            Response with supported login flows
+        """
+        return await self._request(
+            "GET", "/_matrix/client/v3/login", authenticated=False
+        )
 
     async def login_password(
         self,
@@ -155,15 +174,37 @@ class MatrixHTTPClient:
         if device_id:
             data["device_id"] = device_id
 
-        response = await self._request(
-            "POST", "/_matrix/client/v3/login", data=data, authenticated=False
-        )
+        try:
+            response = await self._request(
+                "POST", "/_matrix/client/v3/login", data=data, authenticated=False
+            )
 
-        self.access_token = response.get("access_token")
-        self.user_id = response.get("user_id")
-        self.device_id = response.get("device_id")
+            self.access_token = response.get("access_token")
+            self.user_id = response.get("user_id")
+            self.device_id = response.get("device_id")
 
-        return response
+            return response
+        except Exception as e:
+            error_msg = str(e)
+            # Provide better diagnostics for HTML error pages
+            if "HTML error page" in error_msg or "status: 403" in error_msg:
+                logger.error(
+                    f"Login failed with HTML error page. This usually means:\n"
+                    f"  1. The homeserver URL is incorrect (currently: {self.homeserver})\n"
+                    f"  2. The server URL points to a web interface, not the API\n"
+                    f"  3. The /login endpoint is disabled or requires additional authentication\n"
+                    f"  4. There's a reverse proxy/firewall blocking API access\n"
+                    f"\n"
+                    f"Attempted URL: {self.homeserver}/_matrix/client/v3/login\n"
+                    f"User ID: {user_id}\n"
+                    f"\n"
+                    f"Troubleshooting:\n"
+                    f"  - Verify your homeserver URL is correct (should end in the domain, e.g., https://matrix.example.com)\n"
+                    f"  - Try accessing {self.homeserver}/_matrix/client/versions in a browser\n"
+                    f"  - Check if your server requires a different login method (SSO, OAuth2, etc.)\n"
+                    f"  - Consult your server administrator about password login availability"
+                )
+            raise
 
     def restore_login(
         self, user_id: str, access_token: str, device_id: str | None = None
@@ -213,7 +254,7 @@ class MatrixHTTPClient:
     async def sync(
         self,
         since: str | None = None,
-        timeout: int = 30000,
+        timeout: int = DEFAULT_TIMEOUT_MS_30000,
         full_state: bool = False,
         filter_id: str | None = None,
     ) -> dict[str, Any]:
@@ -323,7 +364,7 @@ class MatrixHTTPClient:
         ) as response:
             response_data = await response.json()
 
-            if response.status >= 400:
+            if response.status >= HTTP_ERROR_STATUS_400:
                 error_code = response_data.get("errcode", "UNKNOWN")
                 error_msg = response_data.get("error", "Unknown error")
                 raise Exception(
@@ -722,7 +763,7 @@ class MatrixHTTPClient:
         return await self._request("DELETE", endpoint, data=data)
 
     async def set_typing(
-        self, room_id: str, typing: bool = True, timeout: int = 30000
+        self, room_id: str, typing: bool = True, timeout: int = DEFAULT_TIMEOUT_MS_30000
     ) -> dict[str, Any]:
         """
         Set typing status in a room
@@ -831,7 +872,7 @@ class MatrixHTTPClient:
         verbose = verbose_env in ("1", "true", "yes")
 
         # Helper to produce a short, safe representation of potentially large dicts
-        def _short(obj: Any, maxlen: int = 400) -> str:
+        def _short(obj: Any, maxlen: int = RESPONSE_TRUNCATE_LENGTH_400) -> str:
             try:
                 s = json.dumps(obj, ensure_ascii=False)
             except Exception:
@@ -873,7 +914,7 @@ class MatrixHTTPClient:
                 except Exception:
                     pass
 
-                if status >= 400:
+                if status >= HTTP_ERROR_STATUS_400:
                     # Try to extract errcode/message if JSON
                     if isinstance(resp_body, dict):
                         error_code = resp_body.get("errcode", "UNKNOWN")
@@ -963,7 +1004,7 @@ class MatrixHTTPClient:
     async def query_keys(
         self,
         device_keys: dict[str, list[str]],
-        timeout: int = 10000,
+        timeout: int = KEY_QUERY_TIMEOUT_MS_10000,
     ) -> dict[str, Any]:
         """
         Query device keys for users

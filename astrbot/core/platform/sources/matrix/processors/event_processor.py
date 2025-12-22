@@ -7,6 +7,8 @@ from collections.abc import Callable
 
 from astrbot.api import logger
 
+from ..constants import MAX_PROCESSED_MESSAGES_1000, TIMESTAMP_BUFFER_MS_1000
+
 
 class MatrixEventProcessor:
     """
@@ -33,7 +35,7 @@ class MatrixEventProcessor:
 
         # Message deduplication
         self._processed_messages: set[str] = set()
-        self._max_processed_messages = 1000
+        self._max_processed_messages = MAX_PROCESSED_MESSAGES_1000
 
         # Event callbacks
         self.on_message: Callable | None = None
@@ -147,7 +149,7 @@ class MatrixEventProcessor:
             if evt_ts is None:
                 evt_ts = getattr(event, "server_timestamp", None)
             if evt_ts is not None and evt_ts < (
-                self.startup_ts - 1000
+                self.startup_ts - TIMESTAMP_BUFFER_MS_1000
             ):  # Allow 1s drift
                 logger.debug(
                     f"忽略启动前的历史消息："
@@ -292,7 +294,7 @@ class MatrixEventProcessor:
 
                             logger.info(
                                 f"[E2EE] 收到密钥请求：来自设备 {requesting_device_id}，"
-                                f"room={room_id[:16]}...，session={session_id[:8]}..."
+                                f"room={room_id[:16]}..., session={session_id[:8]}..."
                             )
 
                             # 调用 E2EE 管理器响应密钥请求

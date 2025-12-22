@@ -10,15 +10,15 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT, MEGOLM_ALGO, OLM_ALGO
 from .crypto_store import CryptoStore
 
 # 尝试导入 vodozemac
 try:
-    import vodozemac
     from vodozemac import (
         Account,
-        InboundGroupSession,
         GroupSession,  # 出站会话 (vodozemac 中称为 GroupSession)
+        InboundGroupSession,
         Session,
     )
 
@@ -131,10 +131,7 @@ class OlmMachine:
         device_keys = {
             "user_id": self.user_id,
             "device_id": self.device_id,
-            "algorithms": [
-                "m.olm.v1.curve25519-aes-sha2-256",
-                "m.megolm.v1.aes-sha2",
-            ],
+            "algorithms": [OLM_ALGO, MEGOLM_ALGO],
             "keys": keys,
             # 设备显示名称，帮助用户识别设备
             "unsigned": {
@@ -152,7 +149,7 @@ class OlmMachine:
 
         return device_keys
 
-    def generate_one_time_keys(self, count: int = 50) -> dict[str, dict]:
+    def generate_one_time_keys(self, count: int = DEFAULT_ONE_TIME_KEYS_COUNT) -> dict[str, dict]:
         """
         生成一次性密钥
 
@@ -338,6 +335,34 @@ class OlmMachine:
             logger.error(f"Megolm 解密失败：{e}")
             return None
 
+    def get_megolm_inbound_session(self, session_id: str):
+        """
+        获取 Megolm 入站会话对象（用于导出会话密钥等操作）
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            InboundGroupSession 或 None
+        """
+        # 先从缓存获取
+        session = self._megolm_inbound.get(session_id)
+        if session:
+            return session
+
+        # 尝试从存储加载
+        pickle = self.store.get_megolm_inbound(session_id)
+        if pickle:
+            try:
+                session = InboundGroupSession.from_pickle(pickle, self._pickle_key)
+                self._megolm_inbound[session_id] = session
+                return session
+            except Exception as e:
+                logger.error(f"加载 Megolm 会话失败：{e}")
+                return None
+
+        return None
+
     def create_megolm_outbound_session(self, room_id: str) -> tuple[str, str]:
         """
         创建 Megolm 出站会话
@@ -385,7 +410,7 @@ class OlmMachine:
         self.store.save_megolm_outbound(room_id, session.pickle(self._pickle_key))
 
         return {
-            "algorithm": "m.megolm.v1.aes-sha2",
+            "algorithm": MEGOLM_ALGO,
             "sender_key": str(self._account.curve25519_key) if self._account else "",
             "session_id": session.session_id,
             "ciphertext": ciphertext,

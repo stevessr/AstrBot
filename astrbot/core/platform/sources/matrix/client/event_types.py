@@ -5,6 +5,8 @@ Matrix Event Types - Replacement for matrix-nio event types
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..constants import GROUP_CHAT_MIN_MEMBERS_2
+
 
 @dataclass
 class MatrixEvent:
@@ -128,7 +130,7 @@ class MatrixRoom:
     @property
     def is_group(self) -> bool:
         """Check if room is a group (more than 2 members)"""
-        return self.member_count > 2
+        return self.member_count > GROUP_CHAT_MIN_MEMBERS_2
 
 
 def parse_event(event_data: dict[str, Any], room_id: str) -> MatrixEvent:

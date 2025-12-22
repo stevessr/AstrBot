@@ -16,6 +16,7 @@ from astrbot.core.utils import astrbot_path
 
 # Update import: Client event types are in ..client.event_types
 from ..client.event_types import MatrixRoom
+from ..constants import REL_TYPE_THREAD
 from ..utils.utils import MatrixUtils
 
 
@@ -72,7 +73,7 @@ class MatrixReceiver:
             reply_event_id = relates_to["m.in_reply_to"].get("event_id")
 
         # 2. 检查嘟文串 (Threading) 回复
-        if not reply_event_id and relates_to.get("rel_type") == "m.thread":
+        if not reply_event_id and relates_to.get("rel_type") == REL_TYPE_THREAD:
             # 在嘟文串中，如果没有显式的 m.in_reply_to，则视为回复根消息或上一条消息
             # 这里简化处理，如果 rel_type 是 m.thread，我们将其视为回复
             reply_event_id = relates_to.get("event_id")
@@ -200,7 +201,7 @@ class MatrixReceiver:
                 except Exception as e:
                     logger.error(f"Failed to download Matrix image: {e}")
                     # Fallback to plain text
-                    chain.chain.append(Plain(f"[图片下载失败: {event.body}]"))
+                    chain.chain.append(Plain(f"[图片下载失败：{event.body}]"))
             elif mxc_url and self.mxc_converter:
                 # Fallback to URL if no client (shouldn't happen)
                 http_url = self.mxc_converter(mxc_url)
@@ -243,9 +244,9 @@ class MatrixReceiver:
                         chain.chain.append(Image.fromFileSystem(str(cache_path)))
                 except Exception as e:
                     logger.error(f"Failed to download Matrix sticker: {e}")
-                    chain.chain.append(Plain(f"[贴纸: {event.body}]"))
+                    chain.chain.append(Plain(f"[贴纸：{event.body}]"))
             else:
-                chain.chain.append(Plain(f"[贴纸: {event.body}]"))
+                chain.chain.append(Plain(f"[贴纸：{event.body}]"))
 
         elif msgtype in ["m.file", "m.audio", "m.video"]:
             # 其他文件类型暂作文本提示处理，或实现 File 组件
