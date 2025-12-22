@@ -484,8 +484,7 @@ class MatrixHTTPClient:
             logger.debug(f"Downloading from {url} {auth_status}")
 
             # 记录详细的下载策略
-            if not use_auth:
-                logger.info(f"Trying direct server download: {url}")
+            logger.info(f"🎯 Attempting download from {url} {auth_status} (strategy: {'proxy' if use_auth else 'direct'})")
 
             try:
                 logger.debug(f"Downloading media from: {url}")
