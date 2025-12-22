@@ -238,7 +238,7 @@ class MatrixEventProcessor:
         if sender == self.user_id:
             return
 
-        logger.info(f"[E2EE] 收到房间内验证事件：{event_type} from {sender}")
+        logger.info(f"收到房间内验证事件：{event_type} from {sender}")
 
         if self.e2ee_manager:
             try:
@@ -350,7 +350,7 @@ class MatrixEventProcessor:
                                 and requesting_device_id == self.e2ee_manager.device_id
                             ):
                                 logger.debug(
-                                    "[E2EE] 忽略来自自己设备的密钥请求"
+                                    "忽略来自自己设备的密钥请求"
                                 )
                                 continue
 
@@ -359,7 +359,7 @@ class MatrixEventProcessor:
                             sender_key = body.get("sender_key", "")
 
                             logger.info(
-                                f"[E2EE] 收到密钥请求：来自设备 {requesting_device_id}，"
+                                f"收到密钥请求：来自设备 {requesting_device_id}，"
                                 f"room={room_id[:16]}..., session={session_id[:8]}..."
                             )
 
@@ -373,7 +373,7 @@ class MatrixEventProcessor:
                             )
                         elif action == "request_cancellation":
                             logger.debug(
-                                f"[E2EE] 密钥请求已取消：device={requesting_device_id}"
+                                f"密钥请求已取消：device={requesting_device_id}"
                             )
                     except Exception as e:
                         logger.error(f"处理 m.room_key_request 事件失败：{e}")

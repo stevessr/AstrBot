@@ -312,12 +312,12 @@ class SASVerification:
         if self.device_store.is_trusted(sender, from_device, fingerprint):
             logger.info(f"[E-Verify] Trusted device {sender}|{from_device}")
         else:
-            logger.info(f"[E2EE-Verify] Untrusted device {sender}|{from_device}")
+            logger.info(f"[E2EE-Verify] 不信任设备 {sender}|{from_device}")
             await self._notify_user_for_approval(
                 sender, from_device, session.get("room_id")
             )
             if self.auto_verify_mode == "auto_accept":
-                logger.info("[E2EE-Verify] Auto-accept disabled for untrusted device")
+                logger.info("[E2EE-Verify] 自动接受已禁用")
                 return
 
         if self.auto_verify_mode == "auto_reject":
