@@ -17,7 +17,8 @@ from astrbot.api import logger
 # 尝试导入加密库
 try:
     from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives import hashes, hmac as crypto_hmac
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -175,17 +176,25 @@ def _decrypt_backup_data(
         except BaseException as e1:
             # 捕获所有异常类型（包括 vodozemac 的特殊异常）
             error_msg = str(e1)
-            logger.warning(f"[E2EE-Backup] vodozemac 解密失败 ({error_msg})，尝试手动解密...")
+            logger.warning(
+                f"[E2EE-Backup] vodozemac 解密失败 ({error_msg})，尝试手动解密..."
+            )
 
             # Fallback to manual decryption
-            return _manual_decrypt_v1(private_key_bytes, ephemeral_public_key, ciphertext, mac)
+            return _manual_decrypt_v1(
+                private_key_bytes, ephemeral_public_key, ciphertext, mac
+            )
 
     except ImportError:
         logger.warning("[E2EE-Backup] vodozemac 未安装，使用 Python 原生实现")
-        return _manual_decrypt_v1(private_key_bytes, ephemeral_public_key, ciphertext, mac)
+        return _manual_decrypt_v1(
+            private_key_bytes, ephemeral_public_key, ciphertext, mac
+        )
     except Exception as e:
         logger.error(f"[E2EE-Backup] 初始化 vodozemac 失败：{e}")
-        return _manual_decrypt_v1(private_key_bytes, ephemeral_public_key, ciphertext, mac)
+        return _manual_decrypt_v1(
+            private_key_bytes, ephemeral_public_key, ciphertext, mac
+        )
 
 
 def _manual_decrypt_v1(
@@ -230,7 +239,7 @@ def _manual_decrypt_v1(
         # 3. MAC Verification
         h = hmac.new(mac_key, ciphertext, hashlib.sha256)
         full_mac = h.digest()
-        
+
         # Spec: "The MAC is the first 8 bytes of the HMAC-SHA-256 of the ciphertext."
         # Check if provided mac matches the first 8 bytes OR full bytes
         if len(mac) == 8:
@@ -246,7 +255,9 @@ def _manual_decrypt_v1(
                 return None
 
         # 4. AES-CBC Decryption
-        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(aes_iv), backend=default_backend())
+        cipher = Cipher(
+            algorithms.AES(aes_key), modes.CBC(aes_iv), backend=default_backend()
+        )
         decryptor = cipher.decryptor()
         plaintext_padded = decryptor.update(ciphertext) + decryptor.finalize()
 
@@ -379,6 +390,156 @@ class KeyBackup:
             except Exception as e:
                 logger.error(f"[E2EE-Backup] 解析恢复密钥失败：{e}")
 
+    async def _try_restore_from_secret_storage(
+        self, provided_key_bytes: bytes
+    ) -> bytes | None:
+        """
+        尝试从 Secret Storage 解密真正的备份密钥
+        支持直接解密和通过 Recovery Key 解密 SSSS Key 的链式解密
+        """
+        logger.info("[E2EE-Backup] 尝试从 Secret Storage 恢复密钥...")
+        try:
+            # 1. Get default key ID
+            default_key_data = await self.client.get_global_account_data(
+                "m.secret_storage.default_key"
+            )
+            key_id = default_key_data.get("key")
+            if not key_id:
+                logger.warning(
+                    "[E2EE-Backup] SSSS Account Data 'm.secret_storage.default_key' 未找到或无 'key'"
+                )
+                return None
+
+            logger.info(f"[E2EE-Backup] SSSS Default Key ID: {key_id}")
+
+            # 2. Try to decrypt the SSSS Key itself (if it's encrypted by the provided key)
+            # Fetch key definition
+            key_data = await self.client.get_global_account_data(
+                f"m.secret_storage.key.{key_id}"
+            )
+            # DEBUG LOGGING
+            if key_data:
+                logger.info(
+                    f"[E2EE-Backup] Key Data for {key_id}: keys={list(key_data.keys())}"
+                )
+                if "encrypted" in key_data:
+                    logger.info(
+                        f"[E2EE-Backup] Key {key_id} has encrypted data: {list(key_data['encrypted'].keys())}"
+                    )
+                else:
+                    logger.warning(
+                        f"[E2EE-Backup] Could not fetch data for key {key_id}"
+                    )
+            ssss_key = provided_key_bytes
+            # If the key definition contains 'encrypted', it means the actual SSSS key is encrypted            # (usually by the Recovery Key or Passphrase)
+            if key_data and "encrypted" in key_data:
+                logger.info(
+                    f"[E2EE-Backup] 检测到 SSSS Key {key_id} 是加密存储的，尝试解密..."
+                )
+                encrypted_map = key_data["encrypted"]
+                decrypted_ssss_key = None
+
+                # Try all entries in the encrypted map
+                for kid, enc_data in encrypted_map.items():
+                    decrypted = self._decrypt_ssss_data(provided_key_bytes, enc_data)
+                    if decrypted:
+                        logger.info(
+                            f"[E2EE-Backup] 成功使用提供的密钥解密了 SSSS Key (ID: {kid})"
+                        )
+                        decrypted_ssss_key = decrypted
+                        break
+
+                if decrypted_ssss_key:
+                    # Check if the decrypted key is base64 encoded (it usually is in SSSS)
+                    try:
+                        # SSSS keys are often stored as base64 string in the payload
+                        secret_str = decrypted_ssss_key.decode("utf-8")
+                        if len(secret_str.strip()) >= 43:
+                            ssss_key = base64.b64decode(secret_str)
+                        else:
+                            ssss_key = decrypted_ssss_key
+                    except:
+                        ssss_key = decrypted_ssss_key
+                else:
+                    logger.warning(
+                        "[E2EE-Backup] 无法解密 SSSS Key，尝试直接使用提供的密钥作为 SSSS Key..."
+                    )
+
+            # 3. Get Backup Secret (m.megolm_backup.v1)
+            backup_secret_data = await self.client.get_global_account_data(
+                "m.megolm_backup.v1"
+            )
+            encrypted_data = backup_secret_data.get("encrypted", {}).get(key_id)
+
+            if not encrypted_data:
+                logger.warning(
+                    f"[E2EE-Backup] Account Data 'm.megolm_backup.v1' 中未找到 Key ID {key_id} 的加密数据"
+                )
+                return None
+
+            # 4. Decrypt Backup Key using SSSS Key
+            decrypted_secret = self._decrypt_ssss_data(ssss_key, encrypted_data)
+
+            if decrypted_secret:
+                logger.info("[E2EE-Backup] SSSS MAC 验证成功，解密备份密钥成功")
+                # Check format (usually base64 string in Matrix)
+                try:
+                    secret_str = decrypted_secret.decode("utf-8")
+                    if len(secret_str.strip()) >= 43:
+                        return base64.b64decode(secret_str)
+                    return decrypted_secret
+                except:
+                    return decrypted_secret
+            else:
+                logger.error(
+                    "[E2EE-Backup] SSSS MAC 验证失败！提供的密钥（或解密出的 SSSS Key）不正确"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(f"[E2EE-Backup] SSSS 恢复失败：{e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return None
+
+    def _decrypt_ssss_data(self, key: bytes, encrypted_data: dict) -> bytes | None:
+        """
+        解密 SSSS 加密的数据 (AES-CTR-256 + HMAC-SHA-256)
+        """
+        ciphertext_b64 = encrypted_data.get("ciphertext")
+        iv_b64 = encrypted_data.get("iv")
+        mac_b64 = encrypted_data.get("mac")
+
+        if not ciphertext_b64 or not iv_b64 or not mac_b64:
+            return None
+
+        try:
+            ciphertext = base64.b64decode(ciphertext_b64)
+            iv = base64.b64decode(iv_b64)
+            mac = base64.b64decode(mac_b64)
+        except Exception:
+            return None
+
+        if not CRYPTO_AVAILABLE:
+            logger.error("[E2EE-Backup] 缺少 cryptography 库，无法进行 SSSS 解密")
+            return None
+
+        # Verify MAC
+        try:
+            h = crypto_hmac.HMAC(key, hashes.SHA256(), backend=default_backend())
+            h.update(ciphertext)
+            try:
+                h.verify(mac)
+            except Exception:
+                return None
+
+            # Decrypt
+            return _aes_ctr_decrypt(key, iv, ciphertext)
+        except Exception as e:
+            logger.warning(f"[E2EE-Backup] 解密异常：{e}")
+            return None
+
     async def initialize(self):
         """初始化密钥备份"""
         try:
@@ -386,6 +547,35 @@ class KeyBackup:
             if version:
                 self._backup_version = version
                 logger.info(f"[E2EE-Backup] 发现现有密钥备份：version={version}")
+
+                # 验证现有密钥
+                if self._recovery_key_bytes:
+                    if not self._verify_recovery_key(self._recovery_key_bytes):
+                        logger.warning(
+                            "[E2EE-Backup] 恢复密钥与备份公钥不匹配，尝试按 Secret Storage Key 处理..."
+                        )
+
+                        real_key = await self._try_restore_from_secret_storage(
+                            self._recovery_key_bytes
+                        )
+                        if real_key:
+                            logger.info(
+                                "[E2EE-Backup] 从 SSSS 成功提取密钥，再次验证..."
+                            )
+                            if self._verify_recovery_key(real_key):
+                                logger.info(
+                                    "[E2EE-Backup] ✅ 成功获取并验证了真正的备份密钥！"
+                                )
+                                self._recovery_key_bytes = real_key
+                                self._encryption_key = _compute_hkdf(
+                                    self._recovery_key_bytes, b"", b"m.megolm_backup.v1"
+                                )
+                            else:
+                                logger.error("[E2EE-Backup] SSSS 提取的密钥验证失败")
+                        else:
+                            logger.error("[E2EE-Backup] 无法通过 SSSS 恢复密钥")
+                    else:
+                        logger.info("[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配")
             else:
                 logger.info("[E2EE-Backup] 未发现密钥备份")
         except Exception as e:
@@ -422,36 +612,44 @@ class KeyBackup:
             # Derive Public Key from Private Key
             priv = x25519.X25519PrivateKey.from_private_bytes(key_bytes)
             pub = priv.public_key()
-            
+
             # Matrix uses unpadded base64 representation of the raw bytes
             pub_bytes = pub.public_bytes(
                 encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
+                format=serialization.PublicFormat.Raw,
             )
             public_key = base64.urlsafe_b64encode(pub_bytes).decode().rstrip("=")
-            
+
             # Matrix backup public key is usually standard base64? Let's check spec.
             # Spec says "The public key, encoded as unpadded base64." which usually means base64.b64encode (standard) or urlsafe?
             # Curve25519 public keys are 32 bytes.
             # Usually Matrix uses unpadded Base64 (RFC 4648 without pad).
             # Let's try standard b64encode first as it's more common for keys in Matrix except for identifiers.
-            
+
             public_key_std = base64.b64encode(pub_bytes).decode().rstrip("=")
 
-            if public_key_std != expected_public_key and public_key != expected_public_key:
+            if (
+                public_key_std != expected_public_key
+                and public_key != expected_public_key
+            ):
                 logger.error("[E2EE-Backup] ❌ 恢复密钥不匹配！")
-                logger.error(f"[E2EE-Backup] 备份版本要求公钥: {expected_public_key}")
-                logger.error(f"[E2EE-Backup] 您的密钥生成公钥: {public_key_std} (或者 {public_key})")
-                
+                logger.error(f"[E2EE-Backup] 备份版本要求公钥：{expected_public_key}")
+                logger.error(
+                    f"[E2EE-Backup] 您的密钥生成公钥：{public_key_std} (或者 {public_key})"
+                )
+
                 # Check if it matches after padding?
                 return False
-            
-            logger.info(f"[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})")
+
+            logger.info(
+                f"[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})"
+            )
             return True
-            
+
         except Exception as e:
             logger.warning(f"[E2EE-Backup] 验证密钥失败：{e}")
             import traceback
+
             logger.warning(traceback.format_exc())
             return True
 

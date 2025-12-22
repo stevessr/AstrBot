@@ -493,6 +493,27 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/state"
         return await self._request("GET", endpoint)
 
+    async def get_global_account_data(self, type: str) -> dict[str, Any]:
+        """
+        Get user global account data
+
+        Args:
+            type: Account data type (e.g., m.direct)
+
+        Returns:
+            Account data content
+        """
+        # Ensure user_id is set (it should be after login)
+        if not hasattr(self, "user_id") or not self.user_id:
+            raise Exception("Client not logged in or user_id not set")
+
+        endpoint = f"/_matrix/client/v3/user/{self.user_id}/account_data/{type}"
+        try:
+            return await self._request("GET", endpoint)
+        except Exception:
+            # Return empty dict if not found (404)
+            return {}
+
     async def get_room_members(self, room_id: str) -> dict[str, Any]:
         """
         Get room members
@@ -872,6 +893,41 @@ class MatrixHTTPClient:
                 f"send_to_device network error for {event_type} txn {txn_id}: {e}"
             )
             raise
+
+    async def search(
+        self,
+        search_term: str,
+        keys: list[str] | None = None,
+        filter: dict[str, Any] | None = None,
+        order_by: str = "recent",
+        event_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Search for events matching a search term
+
+        Args:
+            search_term: The term to search for
+            keys: List of keys to search (default: ["content.body"])
+            filter: Filter to apply to the search
+            order_by: Order by "recent" or "rank" (default: "recent")
+            event_context: Event context to include with results
+
+        Returns:
+            Search results
+        """
+        endpoint = "/_matrix/client/v3/search"
+        data = {
+            "search_categories": {
+                "room_events": {
+                    "search_term": search_term,
+                    "keys": keys or ["content.body"],
+                    "filter": filter or {},
+                    "order_by": order_by,
+                    "event_context": event_context or {},
+                }
+            }
+        }
+        return await self._request("POST", endpoint, data=data)
 
     # ========== E2EE API ==========
 
