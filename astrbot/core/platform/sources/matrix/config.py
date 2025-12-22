@@ -57,6 +57,11 @@ class MatrixConfig:
         self.e2ee_auto_verify = self.config.get(
             "matrix_e2ee_auto_verify", "auto_accept"
         )
+        # 是否自动信任首次使用的设备 (Trust On First Use)
+        # 如果启用，当收到未知设备的验证请求且模式为 auto_accept 时，将自动接受验证
+        self.e2ee_trust_on_first_use = self.config.get(
+            "matrix_e2ee_trust_on_first_use", False
+        )
         # 是否启用密钥备份
         self.e2ee_key_backup = self.config.get("matrix_e2ee_key_backup", False)
         # 用户手动配置的恢复密钥（推荐 Matrix Base58 恢复密钥，兼容 Base64 32 字节密钥）

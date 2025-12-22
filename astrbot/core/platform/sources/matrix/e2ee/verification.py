@@ -30,6 +30,7 @@ from ..constants import (
     M_KEY_VERIFICATION_REQUEST,
     M_KEY_VERIFICATION_START,
     M_SAS_V1_METHOD,
+    PREFIX_ED25519,
     SAS_BYTES_LENGTH_6,
     SAS_EMOJI_COUNT_7,
 )
@@ -164,12 +165,14 @@ class SASVerification:
         auto_verify_mode: Literal[
             "auto_accept", "auto_reject", "manual"
         ] = "auto_accept",
+        trust_on_first_use: bool = False,
     ):
         self.client = client
         self.user_id = user_id
         self.device_id = device_id
         self.olm = olm_machine
         self.auto_verify_mode = auto_verify_mode
+        self.trust_on_first_use = trust_on_first_use
 
         # 活跃的验证会话：transaction_id -> session_data
         self._sessions: dict[str, dict[str, Any]] = {}
@@ -308,16 +311,46 @@ class SASVerification:
         self._sessions[transaction_id] = session
 
         # TOFU: Check if device is trusted
-        fingerprint = self.olm.ed25519_key if self.olm else "unavaliable"
-        if self.device_store.is_trusted(sender, from_device, fingerprint):
-            logger.info(f"[E-Verify] Trusted device {sender}|{from_device}")
+        fingerprint = None
+        try:
+            # Query device keys to get the real fingerprint (Ed25519 key)
+            logger.debug(f"[E2EE-Verify] Querying keys for {sender}|{from_device}")
+            resp = await self.client.query_keys({sender: []})
+            devices = resp.get("device_keys", {}).get(sender, {})
+            device_info = devices.get(from_device, {})
+            keys = device_info.get("keys", {})
+            # Key format: "ed25519:<device_id>"
+            fingerprint = keys.get(f"{PREFIX_ED25519}{from_device}")
+        except Exception as e:
+            logger.warning(f"[E2EE-Verify] Failed to query keys for {sender}|{from_device}: {e}")
+
+        if fingerprint:
+            session["fingerprint"] = fingerprint
+            if self.device_store.is_trusted(sender, from_device, fingerprint):
+                logger.info(f"[E2EE-Verify] Trusted device {sender}|{from_device}")
+            else:
+                logger.info(f"[E2EE-Verify] Untrusted device {sender}|{from_device} (fingerprint: {fingerprint[:8]}...)")
+
+                # Notify user
+                await self._notify_user_for_approval(
+                    sender, from_device, session.get("room_id")
+                )
+
+                if self.auto_verify_mode == "auto_accept":
+                    if self.trust_on_first_use:
+                        logger.info("[E2EE-Verify] TOFU enabled: proceeding with auto-accept")
+                    else:
+                        logger.info("[E2EE-Verify] TOFU disabled: auto-accept disabled for untrusted device")
+                        return
         else:
-            logger.info(f"[E2EE-Verify] 不信任设备 {sender}|{from_device}")
-            await self._notify_user_for_approval(
-                sender, from_device, session.get("room_id")
-            )
-            if self.auto_verify_mode == "auto_accept":
-                logger.info("[E2EE-Verify] 自动接受已禁用")
+            logger.warning(f"[E2EE-Verify] Could not find Ed25519 key for {sender}|{from_device}")
+            # If we can't find the key, we can't verify it properly.
+            # But if TOFU is enabled, maybe we should proceed?
+            # No, without a key we can't verify signatures anyway.
+            # But the verification process itself exchanges keys.
+            # Let's proceed but warn.
+            if self.auto_verify_mode == "auto_accept" and not self.trust_on_first_use:
+                logger.info("[E2EE-Verify] Key not found and TOFU disabled: aborting auto-accept")
                 return
 
         if self.auto_verify_mode == "auto_reject":
@@ -582,7 +615,24 @@ class SASVerification:
         session = self._sessions.get(transaction_id, {})
         session["state"] = "done"
 
-        # TODO: 将设备标记为已验证
+        # 将设备标记为已验证
+        from_device = session.get("from_device") or session.get("their_device")
+        fingerprint = session.get("fingerprint")
+
+        # If we didn't get fingerprint earlier, try to get it from the key exchange if possible,
+        # or try query again?
+        # The 'key' exchanged in SAS is the ephemeral key, not the device identity key.
+        # But we should have fetched it in handle_request.
+
+        if from_device and fingerprint:
+            try:
+                self.device_store.add_device(sender, from_device, fingerprint)
+                logger.info(f"[E2EE-Verify] Device verified and saved: {sender}|{from_device}")
+            except Exception as e:
+                logger.error(f"[E2EE-Verify] Failed to save verified device: {e}")
+        else:
+             logger.warning(f"[E2EE-Verify] Cannot save device: missing info (device={from_device}, fingerprint={fingerprint})")
+
 
     async def _handle_cancel(self, sender: str, content: dict, transaction_id: str):
         """处理验证取消"""

@@ -53,6 +53,7 @@ class E2EEManager:
         ] = "auto_accept",
         enable_key_backup: bool = False,
         recovery_key: str = "",
+        trust_on_first_use: bool = False,
     ):
         """
         初始化 E2EE 管理器
@@ -65,6 +66,7 @@ class E2EEManager:
             auto_verify_mode: 自动验证模式 (auto_accept/auto_reject/manual)
             enable_key_backup: 是否启用密钥备份
             recovery_key: 用户配置的恢复密钥 (base64)
+            trust_on_first_use: 是否自动信任首次使用的设备
         """
         self.client = client
         self.user_id = user_id
@@ -78,6 +80,7 @@ class E2EEManager:
         self.auto_verify_mode = auto_verify_mode
         self.enable_key_backup = enable_key_backup
         self.recovery_key = recovery_key
+        self.trust_on_first_use = trust_on_first_use
 
         self._store: CryptoStore | None = None
         self._olm: OlmMachine | None = None
@@ -115,6 +118,7 @@ class E2EEManager:
                 olm_machine=self._olm,
                 store_path=self.store_path,
                 auto_verify_mode=self.auto_verify_mode,
+                trust_on_first_use=self.trust_on_first_use,
             )
             logger.info(f"SAS 验证已初始化 (mode: {self.auto_verify_mode})")
 
