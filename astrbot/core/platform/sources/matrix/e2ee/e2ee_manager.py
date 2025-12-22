@@ -406,10 +406,13 @@ class E2EEManager:
 
             return None
 
-        elif algorithm == OLM_ALGO_SHA256:
+        elif algorithm in (OLM_ALGO, OLM_ALGO_SHA256):
             # Olm 消息解密
             sender_key = event_content.get("sender_key")
             ciphertext_data = event_content.get("ciphertext", {})
+
+            # Debug log
+            logger.debug(f"尝试解密 Olm 消息：algorithm={algorithm} sender_key={sender_key[:8]}...")
 
             # 找到发给本设备的密文
             my_key = self._olm.curve25519_key
@@ -586,6 +589,7 @@ class E2EEManager:
 
             # 构造 m.forwarded_room_key 内容
             forwarded_room_key = {
+                "type": M_FORWARDED_ROOM_KEY,
                 "algorithm": MEGOLM_ALGO,
                 "room_id": room_id,
                 "sender_key": sender_key,
@@ -595,17 +599,34 @@ class E2EEManager:
                 "forwarding_curve25519_key_chain": [],
             }
 
-            import secrets
-            txn_id = secrets.token_hex(16)
-            await self.client.send_to_device(
-                M_FORWARDED_ROOM_KEY,
-                {sender: {requesting_device_id: forwarded_room_key}},
-                txn_id,
-            )
+            # 获取请求者的 Curve25519 密钥
+            try:
+                resp = await self.client.query_keys({sender: []})
+                devices = resp.get("device_keys", {}).get(sender, {})
+                device_info = devices.get(requesting_device_id, {})
+                curve_key = device_info.get("keys", {}).get(f"{PREFIX_CURVE25519}{requesting_device_id}")
 
-            logger.info(
-                f"已转发密钥：session={session_id[:8]}... -> device={requesting_device_id}"
-            )
+                if not curve_key:
+                    logger.warning(f"无法获取设备 {sender}/{requesting_device_id} 的 Curve25519 密钥")
+                    return
+
+                # 使用 Olm 加密并包装
+                encrypted_content = self._olm.encrypt_olm(curve_key, forwarded_room_key, recipient_user_id=sender)
+
+                import secrets
+                txn_id = secrets.token_hex(16)
+                await self.client.send_to_device(
+                    M_ROOM_ENCRYPTED,
+                    {sender: {requesting_device_id: encrypted_content}},
+                    txn_id,
+                )
+
+                logger.info(
+                    f"已加密转发密钥：session={session_id[:8]}... -> device={requesting_device_id}"
+                )
+            except Exception as e:
+                logger.warning(f"加密转发密钥失败：{e}")
+                return
 
         except Exception as e:
             logger.warning(f"响应密钥请求失败：{e}")
@@ -755,28 +776,15 @@ class E2EEManager:
 
                     # 构造 m.room_key 内容
                     room_key_content = {
+                        "type": M_ROOM_KEY,
                         "algorithm": MEGOLM_ALGO,
                         "room_id": room_id,
                         "session_id": session_id,
                         "session_key": session_key,
                     }
 
-                    # 使用 Olm 加密
-                    import json
-
-                    ciphertext = session.encrypt(json.dumps(room_key_content).encode())
-
-                    # 发送 to_device 消息
-                    encrypted_content = {
-                        "algorithm": OLM_ALGO_SHA256,
-                        "sender_key": self._olm.curve25519_key,
-                        "ciphertext": {
-                            curve_key: {
-                                "type": ciphertext.message_type,
-                                "body": ciphertext.ciphertext,
-                            }
-                        },
-                    }
+                    # 使用 Olm 加密并包装
+                    encrypted_content = self._olm.encrypt_olm(curve_key, room_key_content, session=session, recipient_user_id=user_id)
 
                     txn_id = secrets.token_hex(16)
                     await self.client.send_to_device(
