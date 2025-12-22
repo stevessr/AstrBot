@@ -605,6 +605,7 @@ class E2EEManager:
                 devices = resp.get("device_keys", {}).get(sender, {})
                 device_info = devices.get(requesting_device_id, {})
                 curve_key = device_info.get("keys", {}).get(f"{PREFIX_CURVE25519}{requesting_device_id}")
+                ed25519_key = device_info.get("keys", {}).get(f"{PREFIX_ED25519}{requesting_device_id}")
 
                 if not curve_key:
                     logger.warning(f"无法获取设备 {sender}/{requesting_device_id} 的 Curve25519 密钥")
