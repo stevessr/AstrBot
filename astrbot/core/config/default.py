@@ -393,6 +393,7 @@ CONFIG_METADATA_2 = {
                         "matrix_e2ee_auto_verify": "auto_accept",
                         "matrix_e2ee_key_backup": False,
                         "matrix_e2ee_recovery_key": "",
+                        "matrix_e2ee_trust_on_first_use": False,
                     },
                     # "WebChat": {
                     #     "id": "webchat",
@@ -534,6 +535,12 @@ CONFIG_METADATA_2 = {
                         "type": "string",
                         "hint": "用于加密和恢复密钥备份的密钥（base64 编码）。留空将自动生成新密钥并在日志中输出。请务必妥善保存此密钥！",
                         "condition": {"matrix_e2ee_key_backup": True},
+                    },
+                    "matrix_e2ee_trust_on_first_use": {
+                        "description": "信任首次使用设备",
+                        "type": "bool",
+                        "hint": "启用后，当收到未知设备的验证请求且模式为 auto_accept 时，将自动接受验证。",
+                        "condition": {"matrix_enable_e2ee": True},
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",

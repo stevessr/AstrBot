@@ -113,6 +113,7 @@ class MatrixPlatformAdapter(Platform):
                     auto_verify_mode=self._matrix_config.e2ee_auto_verify,
                     enable_key_backup=self._matrix_config.e2ee_key_backup,
                     recovery_key=recovery_key,
+                    trust_on_first_use=self._matrix_config.e2ee_trust_on_first_use,
                 )
                 # 传递给 event_processor 用于解密
                 self.event_processor.e2ee_manager = self.e2ee_manager
