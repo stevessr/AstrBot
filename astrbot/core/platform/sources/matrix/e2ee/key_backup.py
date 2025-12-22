@@ -1257,11 +1257,12 @@ class CrossSigning:
                     self._user_signing_key = server_user_signing
                     logger.info("[E2EE-CrossSign] 发现服务器用户签名密钥")
 
-            # 如果服务器已有密钥但本地缺少私钥，避免覆写
+            # 如果服务器已有密钥但本地缺少私钥，重新生成并覆盖
             if server_master and not self._master_priv:
                 logger.warning(
-                    "[E2EE-CrossSign] 服务器已有交叉签名密钥，本地缺少私钥，跳过生成/上传"
+                    "[E2EE-CrossSign] 服务器已有交叉签名密钥，但本地缺少私钥，正在重新生成并覆盖..."
                 )
+                await self._generate_and_upload_keys(force_regen=True)
                 return
 
             # 如缺少密钥则生成并上传
