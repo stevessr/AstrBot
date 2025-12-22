@@ -450,7 +450,13 @@ class MatrixHTTPClient:
             f"https://{server_name}/_matrix/media/r0/download/{server_name}/{media_id}?allow_redirect=true",
         ]
 
-        all_endpoints = [(url, True) for url in proxy_endpoints] + [(url, False) for url in direct_endpoints]
+        # Strategy 3: 尝试公开访问端点（不需要认证）
+        public_endpoints = [
+            f"https://{server_name}/_matrix/media/v1/download/{server_name}/{media_id}",
+            f"https://{server_name}/_matrix/media/v1/download/{server_name}/{media_id}?allow_redirect=true",
+        ]
+
+        all_endpoints = [(url, True) for url in proxy_endpoints] + [(url, False) for url in direct_endpoints] + [(url, False) for url in public_endpoints]
 
         last_error = None
         last_status = None
@@ -458,7 +464,10 @@ class MatrixHTTPClient:
         for endpoint_info in all_endpoints:
             if isinstance(endpoint_info, tuple):
                 endpoint, use_auth = endpoint_info
-                url = f"{self.homeserver}{endpoint}" if use_auth else endpoint
+                if use_auth:
+                    url = f"{self.homeserver}{endpoint}"
+                else:
+                    url = endpoint  # 直接使用完整的URL
             else:
                 # 兼容旧格式
                 endpoint = endpoint_info
@@ -473,6 +482,10 @@ class MatrixHTTPClient:
             # 添加调试日志
             auth_status = "with auth" if use_auth and self.access_token else "without auth"
             logger.debug(f"Downloading from {url} {auth_status}")
+
+            # 记录详细的下载策略
+            if not use_auth:
+                logger.info(f"Trying direct server download: {url}")
 
             try:
                 logger.debug(f"Downloading media from: {url}")
