@@ -161,6 +161,9 @@ def parse_event(event_data: dict[str, Any], room_id: str) -> MatrixEvent:
         # 贴纸事件使用 RoomMessageEvent 结构，设置 msgtype 为 m.sticker
         event = RoomMessageEvent.from_dict(event_data, room_id)
         event.msgtype = "m.sticker"
+        # 确保content中的msgtype也被设置（用于接收器处理）
+        if "msgtype" not in event.content:
+            event.content["msgtype"] = "m.sticker"
         return event
     elif event_type == "m.room.member" and content.get("membership") == "invite":
         return InviteEvent.from_dict(event_data, room_id)
