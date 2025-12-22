@@ -70,6 +70,11 @@ class E2EEManager:
         self.user_id = user_id
         self.device_id = device_id
         self.store_path = Path(store_path) / user_id.replace(":", "_")
+
+        # Ensure the directory exists
+        if not self.store_path.exists():
+            self.store_path.mkdir(parents=True, exist_ok=True)
+
         self.auto_verify_mode = auto_verify_mode
         self.enable_key_backup = enable_key_backup
         self.recovery_key = recovery_key
