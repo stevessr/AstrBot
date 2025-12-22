@@ -301,7 +301,9 @@ def _encode_recovery_key(key_bytes: bytes) -> str:
     """按照 Matrix 规范将 32 字节私钥编码为 Base58 恢复密钥字符串"""
 
     # 只使用前 32 字节，多余部分截断，不足补零
-    key_bytes = (key_bytes or b"").ljust(CRYPTO_KEY_SIZE_32, b"\x00")[:CRYPTO_KEY_SIZE_32]
+    key_bytes = (key_bytes or b"").ljust(CRYPTO_KEY_SIZE_32, b"\x00")[
+        :CRYPTO_KEY_SIZE_32
+    ]
 
     # 前缀头 0x8B 0x01 + 私钥 + 校验（前面所有字节的 XOR）
     payload = bytes([RECOVERY_KEY_HDR_BYTE1, RECOVERY_KEY_HDR_BYTE2]) + key_bytes
@@ -358,7 +360,10 @@ def _decode_recovery_key(key_str: str) -> bytes:
                 decoded = decoded[-RECOVERY_KEY_TOTAL_LEN:]
 
             # 验证头与校验
-            if decoded[0] != RECOVERY_KEY_HDR_BYTE1 or decoded[1] != RECOVERY_KEY_HDR_BYTE2:
+            if (
+                decoded[0] != RECOVERY_KEY_HDR_BYTE1
+                or decoded[1] != RECOVERY_KEY_HDR_BYTE2
+            ):
                 raise ValueError("恢复密钥头部不匹配，应为 0x8B01")
 
             checksum = 0
@@ -378,7 +383,11 @@ def _decode_recovery_key(key_str: str) -> bytes:
         decoded = base64.b64decode(key_str + "===")
         logger.info(f"[E2EE-Backup] Base64 解码：{len(decoded)}B")
 
-        if len(decoded) >= RECOVERY_KEY_TOTAL_LEN and decoded[0] == RECOVERY_KEY_HDR_BYTE1 and decoded[1] == RECOVERY_KEY_HDR_BYTE2:
+        if (
+            len(decoded) >= RECOVERY_KEY_TOTAL_LEN
+            and decoded[0] == RECOVERY_KEY_HDR_BYTE1
+            and decoded[1] == RECOVERY_KEY_HDR_BYTE2
+        ):
             checksum = 0
             for b in decoded[:-1]:
                 checksum ^= b
@@ -451,7 +460,9 @@ class KeyBackup:
         dehydrated_device = None
         try:
             # 1. Get default key ID
-            default_key_data = await self.client.get_global_account_data(SSSS_DEFAULT_KEY)
+            default_key_data = await self.client.get_global_account_data(
+                SSSS_DEFAULT_KEY
+            )
             key_id = default_key_data.get("key")
             if not key_id:
                 logger.warning(
@@ -463,7 +474,9 @@ class KeyBackup:
 
             # 2. Try to decrypt the SSSS Key itself (if it's encrypted by the provided key)
             # Fetch key definition
-            key_data = await self.client.get_global_account_data(f"{SSSS_KEY_PREFIX}{key_id}")
+            key_data = await self.client.get_global_account_data(
+                f"{SSSS_KEY_PREFIX}{key_id}"
+            )
             # DEBUG LOGGING
             if key_data:
                 logger.info(
@@ -480,9 +493,13 @@ class KeyBackup:
             else:
                 logger.warning(f"[E2EE-Backup] Could not fetch data for key {key_id}")
                 # Check for Dehydrated Device
-                dehydrated_device = await self.client.get_global_account_data(DEHYDRATED_DEVICE_EVENT)
+                dehydrated_device = await self.client.get_global_account_data(
+                    DEHYDRATED_DEVICE_EVENT
+                )
                 if not dehydrated_device:
-                    dehydrated_device = await self.client.get_global_account_data(MSC2697_DEHYDRATED_DEVICE_EVENT)
+                    dehydrated_device = await self.client.get_global_account_data(
+                        MSC2697_DEHYDRATED_DEVICE_EVENT
+                    )
                     if dehydrated_device:
                         logger.info(
                             "[E2EE-Backup] Found MSC2697 dehydrated device event"
@@ -496,27 +513,77 @@ class KeyBackup:
                     logger.info(
                         f"[E2EE-Backup] Dehydrated device data keys: {device_data.keys()}"
                     )
-                    # Try to decrypt using provided key
+                    # Try to decrypt using provided key (dehydrated device key from FluffyChat)
+                    # Dehydrated device uses "org.matrix.msc2697.dehydrated_device" or "m.dehydrated_device" as secret name
                     decrypted_device = self._decrypt_ssss_data(
-                        provided_key_bytes, device_data
+                        provided_key_bytes,
+                        device_data,
+                        secret_name="m.dehydrated_device",
                     )
                     if decrypted_device:
                         logger.info(
-                            "[E2EE-Backup] Successfully decrypted Dehydrated Device data!"
+                            "[E2EE-Backup] ✅ Successfully decrypted Dehydrated Device data!"
                         )
-                        # Log structure of decrypted data (be careful not to log full private keys)
+                        # The decrypted data might contain the actual backup recovery key
+                        # Try to extract it and use it as the SSSS key
                         try:
                             import json
 
-                            # It might be a pickled Olm account or a JSON string
-                            # If it's a JSON string:
-                            device_info = json.loads(decrypted_device)
-                            logger.info(
-                                f"[E2EE-Backup] Decrypted Dehydrated Device Info keys: {device_info.keys()}"
-                            )
-                        except:
-                            logger.info(
-                                f"[E2EE-Backup] Decrypted Dehydrated Device data (raw len): {len(decrypted_device)}"
+                            # Try to parse as JSON first
+                            try:
+                                device_info = json.loads(decrypted_device)
+                                logger.info(
+                                    f"[E2EE-Backup] Decrypted Dehydrated Device Info keys: {device_info.keys()}"
+                                )
+
+                                # Look for backup key in common locations
+                                # FluffyChat might store it as 'm.megolm_backup.v1' or similar
+                                backup_key = None
+                                if "m.megolm_backup.v1" in device_info:
+                                    backup_key = device_info["m.megolm_backup.v1"]
+                                    logger.info(
+                                        "[E2EE-Backup] Found backup key in dehydrated device: m.megolm_backup.v1"
+                                    )
+                                elif "backup_key" in device_info:
+                                    backup_key = device_info["backup_key"]
+                                    logger.info(
+                                        "[E2EE-Backup] Found backup key in dehydrated device: backup_key"
+                                    )
+
+                                if backup_key:
+                                    # The backup key might be base64 encoded
+                                    if isinstance(backup_key, str):
+                                        try:
+                                            extracted_key = base64.b64decode(backup_key)
+                                            logger.info(
+                                                f"[E2EE-Backup] ✅ Extracted backup key from dehydrated device ({len(extracted_key)} bytes)"
+                                            )
+                                            # Use this as the actual recovery key!
+                                            return extracted_key
+                                        except:
+                                            logger.warning(
+                                                "[E2EE-Backup] Failed to base64 decode backup key from device"
+                                            )
+                                    elif isinstance(backup_key, bytes):
+                                        logger.info(
+                                            f"[E2EE-Backup] ✅ Extracted backup key from dehydrated device ({len(backup_key)} bytes)"
+                                        )
+                                        return backup_key
+
+                            except (json.JSONDecodeError, ValueError):
+                                # Not JSON, might be pickled Olm account or raw key material
+                                logger.info(
+                                    f"[E2EE-Backup] Decrypted Dehydrated Device data is not JSON (len: {len(decrypted_device)})"
+                                )
+                                # If it's exactly 32 bytes, it might be the raw backup key
+                                if len(decrypted_device) == CRYPTO_KEY_SIZE_32:
+                                    logger.info(
+                                        "[E2EE-Backup] ✅ Dehydrated device data is exactly 32 bytes, using as backup key"
+                                    )
+                                    return decrypted_device
+                        except Exception as e:
+                            logger.warning(
+                                f"[E2EE-Backup] Failed to extract backup key from dehydrated device: {e}"
                             )
                     else:
                         logger.warning(
@@ -536,7 +603,10 @@ class KeyBackup:
 
                 # Try all entries in the encrypted map
                 for kid, enc_data in encrypted_map.items():
-                    decrypted = self._decrypt_ssss_data(provided_key_bytes, enc_data)
+                    # The SSSS key itself uses empty string as secret name
+                    decrypted = self._decrypt_ssss_data(
+                        provided_key_bytes, enc_data, secret_name=""
+                    )
                     if decrypted:
                         logger.info(
                             f"[E2EE-Backup] 成功使用提供的密钥解密了 SSSS Key (ID: {kid})"
@@ -561,7 +631,9 @@ class KeyBackup:
                     )
 
             # 3. Get Backup Secret (m.megolm_backup.v1)
-            backup_secret_data = await self.client.get_global_account_data(SSSS_BACKUP_SECRET)
+            backup_secret_data = await self.client.get_global_account_data(
+                SSSS_BACKUP_SECRET
+            )
             encrypted_data = backup_secret_data.get("encrypted", {}).get(key_id)
 
             if not encrypted_data:
@@ -571,7 +643,10 @@ class KeyBackup:
                 return None
 
             # 4. Decrypt Backup Key using SSSS Key
-            decrypted_secret = self._decrypt_ssss_data(ssss_key, encrypted_data)
+            # Use the backup secret name (m.megolm_backup.v1) as info for HKDF
+            decrypted_secret = self._decrypt_ssss_data(
+                ssss_key, encrypted_data, secret_name=SSSS_BACKUP_SECRET
+            )
 
             if decrypted_secret:
                 logger.info("[E2EE-Backup] SSSS MAC 验证成功，解密备份密钥成功")
@@ -596,9 +671,17 @@ class KeyBackup:
             logger.error(traceback.format_exc())
             return None
 
-    def _decrypt_ssss_data(self, key: bytes, encrypted_data: dict) -> bytes | None:
+    def _decrypt_ssss_data(
+        self, key: bytes, encrypted_data: dict, secret_name: str = ""
+    ) -> bytes | None:
         """
         解密 SSSS 加密的数据 (AES-CTR-256 + HMAC-SHA-256)
+
+        Per Matrix spec (m.secret_storage.v1.aes-hmac-sha2):
+        - Use HKDF to derive 64 bytes from the key
+        - First 32 bytes: AES-CTR key
+        - Next 32 bytes: HMAC-SHA-256 key
+        - HKDF uses SHA-256, 32-byte zero salt, and secret name as info
         """
         ciphertext_b64 = encrypted_data.get("ciphertext")
         iv_b64 = encrypted_data.get("iv")
@@ -618,9 +701,27 @@ class KeyBackup:
             logger.error("[E2EE-Backup] 缺少 cryptography 库，无法进行 SSSS 解密")
             return None
 
+        # Derive AES and MAC keys using HKDF per Matrix spec
+        # HKDF(SHA-256, key, 32-byte zero salt, secret_name as info) -> 64 bytes
+        try:
+            # Use secret name as info for HKDF derivation
+            info = secret_name.encode() if secret_name else b""
+            salt = b"\x00" * CRYPTO_KEY_SIZE_32  # Zero salt per spec
+
+            derived = _compute_hkdf(key, salt, info, length=64)
+            aes_key = derived[:CRYPTO_KEY_SIZE_32]
+            hmac_key = derived[CRYPTO_KEY_SIZE_32:64]
+
+            logger.debug(f"[E2EE-Backup] SSSS 密钥派生：info={repr(info)}, 派生 64 字节")
+        except Exception as e:
+            logger.warning(f"[E2EE-Backup] HKDF 密钥派生失败：{e}, 使用原始密钥")
+            # Fallback: use key directly (backward compatibility)
+            aes_key = key
+            hmac_key = key
+
         # Verify MAC
         try:
-            h = crypto_hmac.HMAC(key, hashes.SHA256(), backend=default_backend())
+            h = crypto_hmac.HMAC(hmac_key, hashes.SHA256(), backend=default_backend())
             h.update(ciphertext)
             try:
                 h.verify(mac)
@@ -628,7 +729,7 @@ class KeyBackup:
                 return None
 
             # Decrypt
-            return _aes_ctr_decrypt(key, iv, ciphertext)
+            return _aes_ctr_decrypt(aes_key, iv, ciphertext)
         except Exception as e:
             logger.warning(f"[E2EE-Backup] 解密异常：{e}")
             return None
@@ -661,7 +762,9 @@ class KeyBackup:
                                 )
                                 self._recovery_key_bytes = real_key
                                 self._encryption_key = _compute_hkdf(
-                                    self._recovery_key_bytes, b"", HKDF_MEGOLM_BACKUP_INFO
+                                    self._recovery_key_bytes,
+                                    b"",
+                                    HKDF_MEGOLM_BACKUP_INFO,
                                 )
                             else:
                                 logger.error("[E2EE-Backup] SSSS 提取的密钥验证失败")
