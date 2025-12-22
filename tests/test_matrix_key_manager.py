@@ -1,5 +1,5 @@
 import unittest
-from astrbot.core.platform.sources.matrix.matrix_crypto.key_manager import DeviceKeys, DeviceVerificationStatus
+from astrbot.core.platform.sources.matrix.e2ee.device_store import DeviceKeys, DeviceVerificationStatus
 
 class TestDeviceKeys(unittest.TestCase):
     def test_serialization(self):

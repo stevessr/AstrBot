@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, AsyncMock
 
-from astrbot.core.platform.sources.matrix.components.event_processor import MatrixEventProcessor
+from astrbot.core.platform.sources.matrix.processors.event_processor import MatrixEventProcessor
 from astrbot.core.platform.sources.matrix.client.event_types import MatrixRoom, RoomMessageText
 
 class TestMatrixEventProcessor(unittest.IsolatedAsyncioTestCase):

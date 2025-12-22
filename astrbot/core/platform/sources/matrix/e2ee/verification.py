@@ -462,9 +462,16 @@ class SASVerification:
         session["their_commitment"] = their_commitment
         session["start_content"] = content
 
+        # Check if this is an in-room verification
+        is_in_room = session.get("is_in_room", False)
+        room_id = session.get("room_id")
+
         if self.auto_verify_mode == "auto_accept":
             if from_device:
-                await self._send_accept(sender, from_device, transaction_id, content)
+                if is_in_room and room_id:
+                    await self._send_in_room_accept(room_id, transaction_id, content)
+                else:
+                    await self._send_accept(sender, from_device, transaction_id, content)
 
     async def _handle_accept(self, sender: str, content: dict, transaction_id: str):
         """处理验证接受"""
@@ -488,11 +495,18 @@ class SASVerification:
         session["sas_methods"] = sas_methods
 
         if self.auto_verify_mode == "auto_accept":
-            await self._send_key(
-                sender,
-                content.get("from_device", session.get("from_device", "")),
-                transaction_id,
-            )
+            # Check if this is an in-room verification
+            is_in_room = session.get("is_in_room", False)
+            room_id = session.get("room_id")
+
+            if is_in_room and room_id:
+                await self._send_in_room_key(room_id, transaction_id)
+            else:
+                await self._send_key(
+                    sender,
+                    content.get("from_device", session.get("from_device", "")),
+                    transaction_id,
+                )
 
     async def _handle_key(self, sender: str, content: dict, transaction_id: str):
         """处理密钥交换 - 使用真正的 X25519"""
@@ -555,12 +569,19 @@ class SASVerification:
             self._compute_sas_fallback(session, their_key)
 
         if self.auto_verify_mode == "auto_accept":
-            await self._send_mac(
-                sender,
-                session.get("their_device", session.get("from_device", "")),
-                transaction_id,
-                session,
-            )
+            # Check if this is an in-room verification
+            is_in_room = session.get("is_in_room", False)
+            room_id = session.get("room_id")
+
+            if is_in_room and room_id:
+                await self._send_in_room_mac(room_id, transaction_id, session)
+            else:
+                await self._send_mac(
+                    sender,
+                    session.get("their_device", session.get("from_device", "")),
+                    transaction_id,
+                    session,
+                )
 
     def _compute_sas_fallback(self, session: dict, their_key: str):
         """回退的 SAS 计算（当 vodozemac SAS 不可用时）"""
@@ -603,11 +624,18 @@ class SASVerification:
                 logger.error(f"[E2EE-Verify] MAC 验证失败：{e}")
 
         if self.auto_verify_mode == "auto_accept":
-            await self._send_done(
-                sender,
-                session.get("their_device", session.get("from_device", "")),
-                transaction_id,
-            )
+            # Check if this is an in-room verification
+            is_in_room = session.get("is_in_room", False)
+            room_id = session.get("room_id")
+
+            if is_in_room and room_id:
+                await self._send_in_room_done(room_id, transaction_id)
+            else:
+                await self._send_done(
+                    sender,
+                    session.get("their_device", session.get("from_device", "")),
+                    transaction_id,
+                )
 
     async def _handle_done(self, sender: str, content: dict, transaction_id: str):
         """处理验证完成"""
@@ -842,35 +870,32 @@ class SASVerification:
         """发送房间内验证事件"""
         try:
             # Add m.relates_to to link to the original request
+            # Matrix spec: in-room verification events should use m.reference relationship
             content["m.relates_to"] = {
                 "rel_type": "m.reference",
                 "event_id": transaction_id,
             }
 
-            # Try to encrypt if E2EE manager is available
+            # Determine if we should encrypt based on session context
+            # Check if we have an existing outbound session for this room
+            should_encrypt = False
             encrypted_content = None
+
             if hasattr(self, "e2ee_manager") and self.e2ee_manager:
                 try:
-                    # Only encrypt if we have the capability (implies we are in an encrypted room context usually)
-                    # But encrypt_message will handle checking if session creation is needed.
-                    # Note: We rely on the caller/context to know if encryption is DESIRED.
-                    # For in-room verification, if we received an encrypted request, we SHOULD respond encrypted.
-                    # However, here we don't strictly know if the request was encrypted.
-                    # But encrypting verification events is generally good practice if E2EE is enabled.
-                    # Check if the room is actually encrypted?
-                    # E2EEManager.encrypt_message will create a session if one doesn't exist.
-                    # This might be aggressive for non-encrypted rooms.
+                    # Check if room has encryption enabled by looking for existing outbound session
+                    if (self.e2ee_manager._store and
+                        self.e2ee_manager._store.get_megolm_outbound(room_id)):
+                        should_encrypt = True
 
-                    # Safer approach: Check if we have an existing outbound session OR if the room is encrypted in state.
-                    # But getting room state is async and slow.
-                    # Let's assume if E2EE is enabled and we are doing verification, we prefer encryption.
-                    # If the room is NOT encrypted, the clients might not be able to decrypt it?
-                    # Actually, if we send m.room.encrypted in a non-encrypted room, clients that support E2EE will still try to decrypt it.
+                    if should_encrypt:
+                        encrypted_content = await self.e2ee_manager.encrypt_message(
+                            room_id, event_type, content
+                        )
 
-                    # Let's try to encrypt.
-                    encrypted_content = await self.e2ee_manager.encrypt_message(room_id, event_type, content)
                 except Exception as e:
                     logger.warning(f"[E2EE-Verify] Failed to encrypt event: {e}")
+                    # Fall back to unencrypted if encryption fails
 
             if encrypted_content:
                 await self.client.send_room_event(room_id, M_ROOM_ENCRYPTED, encrypted_content)
@@ -895,6 +920,150 @@ class SASVerification:
             room_id, M_KEY_VERIFICATION_READY, content, transaction_id
         )
         logger.info("[E2EE-Verify] 已发送房间内 ready")
+
+    async def _send_in_room_accept(
+        self, room_id: str, transaction_id: str, start_content: dict
+    ):
+        """发送房间内 accept"""
+        their_key_agreement = start_content.get("key_agreement_protocols", [])
+        their_hashes = start_content.get("hashes", [])
+        their_macs = start_content.get("message_authentication_codes", [])
+        their_sas = start_content.get("short_authentication_string", [])
+
+        key_agreement = next(
+            (k for k in KEY_AGREEMENT_PROTOCOLS if k in their_key_agreement),
+            KEY_AGREEMENT_PROTOCOLS[0],
+        )
+        hash_algo = next((h for h in HASHES if h in their_hashes), HASHES[0])
+        mac = next(
+            (m for m in MESSAGE_AUTHENTICATION_CODES if m in their_macs),
+            MESSAGE_AUTHENTICATION_CODES[0],
+        )
+        sas_methods = [s for s in SHORT_AUTHENTICATION_STRING if s in their_sas]
+
+        session = self._sessions.get(transaction_id, {})
+
+        sas = session.get("sas")
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            our_public_key = sas.public_key
+        else:
+            our_public_key = base64.b64encode(secrets.token_bytes(32)).decode()
+
+        session["our_public_key"] = our_public_key
+        session["key_agreement"] = key_agreement
+        session["hash"] = hash_algo
+        session["mac"] = mac
+        session["sas_methods"] = sas_methods
+
+        commitment_data = our_public_key + _canonical_json(start_content)
+        commitment = base64.b64encode(
+            hashlib.sha256(commitment_data.encode()).digest()
+        ).decode()
+
+        content = {
+            "method": "m.sas.v1",
+            "key_agreement_protocol": key_agreement,
+            "hash": hash_algo,
+            "message_authentication_code": mac,
+            "short_authentication_string": sas_methods,
+            "commitment": commitment,
+        }
+
+        await self._send_in_room_event(
+            room_id, M_KEY_VERIFICATION_ACCEPT, content, transaction_id
+        )
+        logger.info(f"[E2EE-Verify] 已发送房间内 accept (commitment: {commitment[:16]}...)")
+
+    async def _send_in_room_key(self, room_id: str, transaction_id: str):
+        """发送房间内公钥"""
+        session = self._sessions.get(transaction_id, {})
+
+        sas = session.get("sas")
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            our_public_key = sas.public_key
+        else:
+            our_public_key = session.get(
+                "our_public_key", base64.b64encode(secrets.token_bytes(32)).decode()
+            )
+
+        session["our_public_key"] = our_public_key
+
+        content = {
+            "key": our_public_key,
+        }
+
+        await self._send_in_room_event(
+            room_id, M_KEY_VERIFICATION_KEY, content, transaction_id
+        )
+        logger.info(f"[E2EE-Verify] 已发送房间内 key: {our_public_key[:20]}...")
+
+    async def _send_in_room_mac(self, room_id: str, transaction_id: str, session: dict):
+        """发送房间内 MAC"""
+        sas = session.get("sas")
+        sas_bytes = session.get("sas_bytes", b"\x00" * 32)
+        our_device_key_id = f"ed25519:{self.device_id}"
+
+        # Get their user and device info from session
+        to_user = session.get("sender")
+        to_device = session.get("from_device", session.get("their_device", ""))
+
+        if sas and VODOZEMAC_SAS_AVAILABLE:
+            try:
+                info_mac = f"{INFO_PREFIX_MAC}{self.user_id}{self.device_id}{to_user}{to_device}{transaction_id}"
+                if self.olm:
+                    device_key = self.olm.ed25519_key
+                    key_mac = sas.calculate_mac(
+                        device_key, (info_mac + our_device_key_id).encode()
+                    )
+                    keys_mac = sas.calculate_mac(
+                        our_device_key_id, (info_mac + "KEY_IDS").encode()
+                    )
+                else:
+                    key_mac = base64.b64encode(
+                        hashlib.sha256(our_device_key_id.encode()).digest()
+                    ).decode()
+                    keys_mac = base64.b64encode(
+                        hashlib.sha256(our_device_key_id.encode()).digest()
+                    ).decode()
+
+                mac_content = {our_device_key_id: key_mac}
+            except Exception as e:
+                logger.warning(f"[E2EE-Verify] vodozemac MAC 计算失败，使用回退：{e}")
+                mac_content = {
+                    our_device_key_id: base64.b64encode(
+                        _compute_hkdf(sas_bytes, b"", our_device_key_id.encode())
+                    ).decode()
+                }
+                keys_mac = base64.b64encode(
+                    hashlib.sha256(our_device_key_id.encode()).digest()
+                ).decode()
+        else:
+            mac_content = {
+                our_device_key_id: base64.b64encode(
+                    _compute_hkdf(sas_bytes, b"", our_device_key_id.encode())
+                ).decode()
+            }
+            keys_mac = base64.b64encode(
+                hashlib.sha256(our_device_key_id.encode()).digest()
+            ).decode()
+
+        content = {
+            "mac": mac_content,
+            "keys": keys_mac,
+        }
+
+        await self._send_in_room_event(
+            room_id, M_KEY_VERIFICATION_MAC, content, transaction_id
+        )
+        logger.info("[E2EE-Verify] 已发送房间内 mac")
+
+    async def _send_in_room_done(self, room_id: str, transaction_id: str):
+        """发送房间内 done"""
+        content = {}
+        await self._send_in_room_event(
+            room_id, M_KEY_VERIFICATION_DONE, content, transaction_id
+        )
+        logger.info("[E2EE-Verify] 已发送房间内 done")
 
     async def _send_in_room_cancel(
         self, room_id: str, transaction_id: str, code: str, reason: str

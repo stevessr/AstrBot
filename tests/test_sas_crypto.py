@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import MagicMock
-from astrbot.core.platform.sources.matrix.matrix_crypto.verification import (
+from astrbot.core.platform.sources.matrix.e2ee.verification import (
     SasVerification,
     KeyManager,
 )
-from astrbot.core.platform.sources.matrix.matrix_crypto.key_manager import DeviceKeys
+from astrbot.core.platform.sources.matrix.e2ee.device_store import DeviceKeys
 
 
 class TestSasCrypto(unittest.TestCase):
