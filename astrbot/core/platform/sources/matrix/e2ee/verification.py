@@ -16,6 +16,23 @@ from typing import Any, Literal
 
 from astrbot.api import logger
 
+from ..constants import (
+    INFO_PREFIX_MAC,
+    INFO_PREFIX_SAS,
+    KEY_AGREEMENT_PROTOCOLS,
+    M_KEY_VERIFICATION_ACCEPT,
+    M_KEY_VERIFICATION_CANCEL,
+    M_KEY_VERIFICATION_DONE,
+    M_KEY_VERIFICATION_KEY,
+    M_KEY_VERIFICATION_MAC,
+    M_KEY_VERIFICATION_READY,
+    M_KEY_VERIFICATION_REQUEST,
+    M_KEY_VERIFICATION_START,
+    M_SAS_V1_METHOD,
+    SAS_BYTES_LENGTH_6,
+    SAS_EMOJI_COUNT_7,
+)
+
 # 尝试导入 vodozemac
 try:
     from vodozemac import EstablishedSas, Sas  # noqa: F401
@@ -26,8 +43,7 @@ except ImportError:
     logger.debug("vodozemac SAS 模块不可用，将使用简化实现")
 
 # SAS 验证相关常量
-SAS_METHODS = ["m.sas.v1"]
-KEY_AGREEMENT_PROTOCOLS = ["curve25519-hkdf-sha256"]
+SAS_METHODS = [M_SAS_V1_METHOD]
 HASHES = ["sha256"]
 MESSAGE_AUTHENTICATION_CODES = ["hkdf-hmac-sha256.v2", "hkdf-hmac-sha256"]
 SHORT_AUTHENTICATION_STRING = ["decimal", "emoji"]
@@ -161,6 +177,10 @@ class SASVerification:
         """处理验证事件"""
         transaction_id = content.get("transaction_id")
 
+        if not transaction_id:
+            logger.warning("[E2EE-Verify] 缺少 transaction_id，忽略事件")
+            return False
+
         logger.info(
             f"[E2EE-Verify] 收到验证事件：{event_type} "
             f"from={sender} txn={transaction_id}"
@@ -170,14 +190,14 @@ class SASVerification:
         )
 
         handlers = {
-            "m.key.verification.request": self._handle_request,
-            "m.key.verification.ready": self._handle_ready,
-            "m.key.verification.start": self._handle_start,
-            "m.key.verification.accept": self._handle_accept,
-            "m.key.verification.key": self._handle_key,
-            "m.key.verification.mac": self._handle_mac,
-            "m.key.verification.done": self._handle_done,
-            "m.key.verification.cancel": self._handle_cancel,
+            M_KEY_VERIFICATION_REQUEST: self._handle_request,
+            M_KEY_VERIFICATION_READY: self._handle_ready,
+            M_KEY_VERIFICATION_START: self._handle_start,
+            M_KEY_VERIFICATION_ACCEPT: self._handle_accept,
+            M_KEY_VERIFICATION_KEY: self._handle_key,
+            M_KEY_VERIFICATION_MAC: self._handle_mac,
+            M_KEY_VERIFICATION_DONE: self._handle_done,
+            M_KEY_VERIFICATION_CANCEL: self._handle_cancel,
         }
 
         handler = handlers.get(event_type)
@@ -190,6 +210,9 @@ class SASVerification:
         """处理验证请求"""
         from_device = content.get("from_device")
         methods = content.get("methods", [])
+        if not from_device:
+            logger.warning("[E2EE-Verify] 验证请求缺少 from_device，忽略")
+            return
 
         logger.info(
             f"[E2EE-Verify] 收到验证请求："
@@ -201,8 +224,9 @@ class SASVerification:
         if VODOZEMAC_SAS_AVAILABLE:
             try:
                 sas = Sas()
+                pub = str(sas.public_key)
                 logger.debug(
-                    f"[E2EE-Verify] 创建 SAS 实例，公钥：{sas.public_key[:16]}..."
+                    f"[E2EE-Verify] 创建 SAS 实例，公钥：{pub[:16]}..."
                 )
             except Exception as e:
                 logger.warning(f"[E2EE-Verify] 创建 SAS 实例失败：{e}")
@@ -269,7 +293,8 @@ class SASVerification:
         session["start_content"] = content
 
         if self.auto_verify_mode == "auto_accept":
-            await self._send_accept(sender, from_device, transaction_id, content)
+            if from_device:
+                await self._send_accept(sender, from_device, transaction_id, content)
 
     async def _handle_accept(self, sender: str, content: dict, transaction_id: str):
         """处理验证接受"""
@@ -303,6 +328,9 @@ class SASVerification:
         """处理密钥交换 - 使用真正的 X25519"""
         their_key = content.get("key")
 
+        if not isinstance(their_key, str) or not their_key:
+            logger.warning("[E2EE-Verify] 对方公钥缺失或格式不正确")
+            return
         logger.info(f"[E2EE-Verify] 收到对方公钥：{their_key[:20]}...")
 
         session = self._sessions.get(transaction_id, {})
@@ -322,7 +350,7 @@ class SASVerification:
                 )
 
                 info = (
-                    f"MATRIX_KEY_VERIFICATION_SAS|"
+                    f"{INFO_PREFIX_SAS}"
                     f"{self.user_id}|{self.device_id}|{our_key}|"
                     f"{their_user}|{their_device}|{their_key}|"
                     f"{transaction_id}"
@@ -330,7 +358,7 @@ class SASVerification:
 
                 # 设置对方的公钥并生成 SAS 字节
                 sas.set_their_public_key(their_key)
-                sas_bytes = sas.generate_bytes(info.encode(), 6)
+                sas_bytes = sas.generate_bytes(info.encode(), SAS_BYTES_LENGTH_6)
 
                 # 将 SAS 字节转换为 emoji 和 decimal
                 emojis = self._bytes_to_emoji(sas_bytes)
@@ -368,7 +396,7 @@ class SASVerification:
         """回退的 SAS 计算（当 vodozemac SAS 不可用时）"""
         our_key = session.get("our_public_key", "")
         combined = f"{our_key}{their_key}".encode()
-        sas_bytes = hashlib.sha256(combined).digest()[:6]
+        sas_bytes = hashlib.sha256(combined).digest()[:SAS_BYTES_LENGTH_6]
 
         emojis = self._bytes_to_emoji(sas_bytes)
         decimals = self._bytes_to_decimal(sas_bytes)
@@ -399,14 +427,7 @@ class SASVerification:
         sas = session.get("sas")
         if sas and VODOZEMAC_SAS_AVAILABLE:
             try:
-                # 使用 vodozemac 验证 MAC
-                their_user = sender
-                their_device = session.get(
-                    "from_device", session.get("their_device", "")
-                )
-                info = f"MATRIX_KEY_VERIFICATION_MAC{their_user}{their_device}{transaction_id}"
-
-                # TODO: 完整的 MAC 验证
+                # 使用 vodozemac 验证 MAC（暂时简化）
                 logger.info("[E2EE-Verify] MAC 验证 (简化)：接受")
             except Exception as e:
                 logger.error(f"[E2EE-Verify] MAC 验证失败：{e}")
@@ -449,7 +470,7 @@ class SASVerification:
             "transaction_id": transaction_id,
         }
         await self._send_to_device(
-            "m.key.verification.ready", to_user, to_device, content
+            M_KEY_VERIFICATION_READY, to_user, to_device, content
         )
         logger.info("[E2EE-Verify] 已发送 ready")
 
@@ -506,7 +527,7 @@ class SASVerification:
         }
 
         await self._send_to_device(
-            "m.key.verification.accept", to_user, to_device, content
+            M_KEY_VERIFICATION_ACCEPT, to_user, to_device, content
         )
         logger.info(f"[E2EE-Verify] 已发送 accept (commitment: {commitment[:16]}...)")
 
@@ -530,7 +551,7 @@ class SASVerification:
         }
 
         await self._send_to_device(
-            "m.key.verification.key", to_user, to_device, content
+            M_KEY_VERIFICATION_KEY, to_user, to_device, content
         )
         logger.info(f"[E2EE-Verify] 已发送 key: {our_public_key[:20]}...")
 
@@ -546,7 +567,7 @@ class SASVerification:
 
         if sas and VODOZEMAC_SAS_AVAILABLE:
             try:
-                info_mac = f"MATRIX_KEY_VERIFICATION_MAC{self.user_id}{self.device_id}{to_user}{to_device}{transaction_id}"
+                info_mac = f"{INFO_PREFIX_MAC}{self.user_id}{self.device_id}{to_user}{to_device}{transaction_id}"
 
                 # 计算设备密钥的 MAC
                 if self.olm:
@@ -595,7 +616,7 @@ class SASVerification:
         }
 
         await self._send_to_device(
-            "m.key.verification.mac", to_user, to_device, content
+            M_KEY_VERIFICATION_MAC, to_user, to_device, content
         )
         logger.info("[E2EE-Verify] 已发送 mac")
 
@@ -603,7 +624,7 @@ class SASVerification:
         """发送 done"""
         content = {"transaction_id": transaction_id}
         await self._send_to_device(
-            "m.key.verification.done", to_user, to_device, content
+            M_KEY_VERIFICATION_DONE, to_user, to_device, content
         )
         logger.info("[E2EE-Verify] 已发送 done")
 
@@ -617,7 +638,7 @@ class SASVerification:
             "reason": reason,
         }
         await self._send_to_device(
-            "m.key.verification.cancel", to_user, to_device, content
+            M_KEY_VERIFICATION_CANCEL, to_user, to_device, content
         )
         logger.info(f"[E2EE-Verify] 已发送 cancel: {code} - {reason}")
 
@@ -636,9 +657,9 @@ class SASVerification:
 
     def _bytes_to_emoji(self, sas_bytes: bytes) -> list[tuple[str, str]]:
         """将 SAS 字节转换为 emoji"""
-        bits = int.from_bytes(sas_bytes[:6], "big")
+        bits = int.from_bytes(sas_bytes[:SAS_BYTES_LENGTH_6], "big")
         emojis = []
-        for i in range(7):
+        for i in range(SAS_EMOJI_COUNT_7):
             idx = (bits >> (42 - i * 6)) & 0x3F
             emojis.append(SAS_EMOJIS[idx])
         return emojis

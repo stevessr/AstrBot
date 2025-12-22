@@ -10,6 +10,8 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from ..constants import DEFAULT_TIMEOUT_MS_30000, DISPLAY_TRUNCATE_LENGTH_20
+
 
 class MatrixSyncManager:
     """
@@ -19,7 +21,7 @@ class MatrixSyncManager:
     def __init__(
         self,
         client,
-        sync_timeout: int = 30000,
+        sync_timeout: int = DEFAULT_TIMEOUT_MS_30000,
         auto_join_rooms: bool = True,
         sync_store_path: str | None = None,
     ):
@@ -63,9 +65,11 @@ class MatrixSyncManager:
                     self._next_batch = data.get("next_batch")
                     if self._next_batch:
                         self._first_sync = False
-                        logger.info(f"恢复同步令牌: {self._next_batch[:20]}...")
+                        logger.info(
+                            f"恢复同步令牌：{self._next_batch[:DISPLAY_TRUNCATE_LENGTH_20]}..."
+                        )
         except Exception as e:
-            logger.warning(f"加载同步令牌失败: {e}")
+            logger.warning(f"加载同步令牌失败：{e}")
 
     def _save_sync_token(self) -> None:
         """Save sync token to disk for future resumption"""
@@ -77,7 +81,7 @@ class MatrixSyncManager:
             with open(self.sync_store_path, "w") as f:
                 json.dump({"next_batch": self._next_batch}, f)
         except Exception as e:
-            logger.warning(f"保存同步令牌失败: {e}")
+            logger.warning(f"保存同步令牌失败：{e}")
 
     def set_room_event_callback(self, callback: Callable):
         """

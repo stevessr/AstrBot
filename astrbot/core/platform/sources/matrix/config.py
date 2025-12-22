@@ -6,6 +6,8 @@ import uuid
 
 from astrbot.api import logger
 
+from .constants import DEFAULT_TIMEOUT_MS_30000
+
 
 class MatrixConfig:
     def __init__(self, config: dict):
@@ -37,7 +39,7 @@ class MatrixConfig:
         # Ensure these attributes exist for other components
         self.store_path = self.config.get("matrix_store_path", "./data/matrix_store")
         self.auto_join_rooms = self.config.get("matrix_auto_join_rooms", True)
-        self.sync_timeout = self.config.get("matrix_sync_timeout", 30000)
+        self.sync_timeout = self.config.get("matrix_sync_timeout", DEFAULT_TIMEOUT_MS_30000)
 
         # 嘟文串（Threading）配置
         # 当启用时，回复消息会创建/加入线程而非普通的时间线回复

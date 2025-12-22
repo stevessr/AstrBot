@@ -11,6 +11,7 @@ from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from .utils.markdown_utils import (
     markdown_to_html,
 )
+from .constants import TEXT_TRUNCATE_LENGTH_50
 
 
 class MatrixPlatformEvent(AstrMessageEvent):
@@ -101,14 +102,12 @@ class MatrixPlatformEvent(AstrMessageEvent):
                 }
 
                 # 如果有回复引用信息，预处理 body 以包含 fallback (纯文本部分)
-                # Matrix 规范建议: body 包含 fallback，formatted_body 包含 HTML fallback
+                # Matrix 规范建议：body 包含 fallback，formatted_body 包含 HTML fallback
                 if original_message_info and reply_to:
-                    # 简单构建纯文本 fallback
-                    # > <@alice:example.org> This is the original message
                     orig_sender = original_message_info.get("sender", "")
                     orig_body = original_message_info.get("body", "")
-                    if len(orig_body) > 50:
-                        orig_body = orig_body[:50] + "..."
+                    if len(orig_body) > TEXT_TRUNCATE_LENGTH_50:
+                        orig_body = orig_body[:TEXT_TRUNCATE_LENGTH_50] + "..."
                     fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
                     # 这里更新 content["body"]，使其包含引用文本
                     content["body"] = fallback_text + content["body"]
@@ -207,7 +206,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         with PILImage.open(io.BytesIO(image_data)) as img:
                             width, height = img.size
                     except Exception as e:
-                        logger.debug(f"无法获取图片尺寸: {e}")
+                        logger.debug(f"无法获取图片尺寸：{e}")
 
                     # 猜测内容类型，默认使用 image/png
                     content_type = mimetypes.guess_type(filename)[0] or "image/png"
@@ -254,7 +253,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         room_id=room_id, msg_type="m.room.message", content=content
                     )
                     sent_count += 1
-                    logger.debug(f"图片消息发送成功，房间: {room_id}")
+                    logger.debug(f"图片消息发送成功，房间：{room_id}")
                 except Exception as e:
                     logger.error(f"发送图片消息失败：{e}")
 
@@ -350,7 +349,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     # 检查被回复消息是否已经是嘟文串的一部分
                     relates_to = resp["content"].get("m.relates_to", {})
                     if relates_to.get("rel_type") == "m.thread":
-                        # 如果是嘟文串的一部分，获取根消息ID
+                        # 如果是嘟文串的一部分，获取根消息 ID
                         thread_root = relates_to.get("event_id")
                         use_thread = True
                     elif self.enable_threading:
@@ -398,7 +397,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
         try:
             await self.client.set_typing(room_id, typing=True, timeout=typing_timeout)
         except Exception as e:
-            logger.debug(f"发送输入指示失败: {e}")
+            logger.debug(f"发送输入指示失败：{e}")
 
         try:
             async for chain in generator:
@@ -465,7 +464,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
             try:
                 await self.client.set_typing(room_id, typing=False)
             except Exception as e:
-                logger.debug(f"停止输入指示失败: {e}")
+                logger.debug(f"停止输入指示失败：{e}")
 
         # 发送累积的文本内容
         if accumulated_text:
@@ -488,8 +487,8 @@ class MatrixPlatformEvent(AstrMessageEvent):
                 if original_message_info and reply_to:
                     orig_sender = original_message_info.get("sender", "")
                     orig_body = original_message_info.get("body", "")
-                    if len(orig_body) > 50:
-                        orig_body = orig_body[:50] + "..."
+                    if len(orig_body) > TEXT_TRUNCATE_LENGTH_50:
+                        orig_body = orig_body[:TEXT_TRUNCATE_LENGTH_50] + "..."
                     fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
                     content["body"] = fallback_text + content["body"]
 
@@ -538,6 +537,6 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     original_message_info=original_message_info,
                 )
             except Exception as e:
-                logger.error(f"发送非文本组件失败: {e}")
+                logger.error(f"发送非文本组件失败：{e}")
 
         return await super().send_streaming(generator, use_fallback)

@@ -9,6 +9,21 @@ from typing import Literal
 
 from astrbot.api import logger
 
+from ..constants import (
+    M_FORWARDED_ROOM_KEY,
+    M_KEY_VERIFICATION_REQUEST,
+    M_ROOM_ENCRYPTED,
+    M_ROOM_KEY_REQUEST,
+    M_ROOM_MEMBER,
+    M_SAS_V1_METHOD,
+    MEGOLM_ALGO,
+    MEMBERSHIP_INVITE,
+    MEMBERSHIP_JOIN,
+    OLM_ALGO_SHA256,
+    PREFIX_CURVE25519,
+    PREFIX_ED25519,
+    SIGNED_CURVE25519,
+)
 from .crypto_store import CryptoStore
 from .olm_machine import VODOZEMAC_AVAILABLE, OlmMachine
 
@@ -196,7 +211,7 @@ class E2EEManager:
                     signatures = keys.get("signatures", {}).get(self.user_id, {})
                     # 检查是否有自签名密钥的签名
                     for sig_key in signatures.keys():
-                        if sig_key.startswith("ed25519:"):
+                        if sig_key.startswith(PREFIX_ED25519):
                             verified_devices.add(device_id)
                             break
 
@@ -244,14 +259,14 @@ class E2EEManager:
         # 构造 m.key.verification.request 内容
         request_content = {
             "from_device": self.device_id,
-            "methods": ["m.sas.v1"],
+            "methods": [M_SAS_V1_METHOD],
             "timestamp": int(__import__("time").time() * 1000),
             "transaction_id": txn_id,
         }
 
         # 发送 to-device 验证请求
         await self.client.send_to_device(
-            "m.key.verification.request",
+            M_KEY_VERIFICATION_REQUEST,
             {self.user_id: {target_device_id: request_content}},
             txn_id,
         )
@@ -270,7 +285,8 @@ class E2EEManager:
             device_keys = self._olm.get_device_keys()
 
             # 生成一次性密钥
-            one_time_keys = self._olm.generate_one_time_keys(50)
+            from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT
+            one_time_keys = self._olm.generate_one_time_keys(DEFAULT_ONE_TIME_KEYS_COUNT)
 
             # 上传到服务器
             response = await self.client.upload_keys(
@@ -307,7 +323,7 @@ class E2EEManager:
 
         algorithm = event_content.get("algorithm")
 
-        if algorithm == "m.megolm.v1.aes-sha2":
+        if algorithm == MEGOLM_ALGO:
             session_id = event_content.get("session_id")
             ciphertext = event_content.get("ciphertext")
             sender_key = event_content.get("sender_key")
@@ -338,7 +354,7 @@ class E2EEManager:
 
             return None
 
-        elif algorithm == "m.olm.v1.curve25519-aes-sha2-256":
+        elif algorithm == OLM_ALGO_SHA256:
             # Olm 消息解密
             sender_key = event_content.get("sender_key")
             ciphertext_data = event_content.get("ciphertext", {})
@@ -352,6 +368,11 @@ class E2EEManager:
             my_ciphertext = ciphertext_data[my_key]
             message_type = my_ciphertext.get("type")
             body = my_ciphertext.get("body")
+
+            # 基本校验
+            if not sender_key or message_type is None or body is None:
+                logger.warning("Olm 密文缺少必要字段")
+                return None
 
             try:
                 plaintext = self._olm.decrypt_olm_message(
@@ -384,7 +405,7 @@ class E2EEManager:
         session_key = event.get("session_key")
         algorithm = event.get("algorithm")
 
-        if algorithm != "m.megolm.v1.aes-sha2":
+        if algorithm != MEGOLM_ALGO:
             logger.warning(f"不支持的密钥算法：{algorithm}")
             return
 
@@ -422,7 +443,7 @@ class E2EEManager:
             content = {
                 "action": "request",
                 "body": {
-                    "algorithm": "m.megolm.v1.aes-sha2",
+                    "algorithm": MEGOLM_ALGO,
                     "room_id": room_id,
                     "sender_key": sender_key or "",
                     "session_id": session_id,
@@ -434,7 +455,7 @@ class E2EEManager:
             # 发送给所有自己的设备
             txn_id = secrets.token_hex(16)
             await self.client.send_to_device(
-                "m.room_key_request",
+                M_ROOM_KEY_REQUEST,
                 {self.user_id: {"*": content}},  # * 表示所有设备
                 txn_id,
             )
@@ -443,7 +464,7 @@ class E2EEManager:
             if sender_user_id and sender_user_id != self.user_id:
                 txn_id2 = secrets.token_hex(16)
                 await self.client.send_to_device(
-                    "m.room_key_request",
+                    M_ROOM_KEY_REQUEST,
                     {sender_user_id: {"*": content}},
                     txn_id2,
                 )
@@ -493,7 +514,7 @@ class E2EEManager:
                 return
 
             # 获取请求的 Megolm 会话
-            session = self._olm.get_inbound_session(room_id, session_id)
+            session = self._olm.get_megolm_inbound_session(session_id)
             if not session:
                 logger.debug(
                     f"[E2EE] 没有请求的会话：session={session_id[:8]}..."
@@ -513,21 +534,19 @@ class E2EEManager:
 
             # 构造 m.forwarded_room_key 内容
             forwarded_room_key = {
-                "algorithm": "m.megolm.v1.aes-sha2",
+                "algorithm": MEGOLM_ALGO,
                 "room_id": room_id,
                 "sender_key": sender_key,
                 "session_id": session_id,
                 "session_key": str(exported_key),
-                "sender_claimed_ed25519_key": str(self._olm._account.ed25519_key),
+                "sender_claimed_ed25519_key": str(self._olm.ed25519_key),
                 "forwarding_curve25519_key_chain": [],
             }
 
-            # 发送 m.forwarded_room_key 到请求设备
             import secrets
-
             txn_id = secrets.token_hex(16)
             await self.client.send_to_device(
-                "m.forwarded_room_key",
+                M_FORWARDED_ROOM_KEY,
                 {sender: {requesting_device_id: forwarded_room_key}},
                 txn_id,
             )
@@ -593,9 +612,9 @@ class E2EEManager:
             state = await self.client.get_room_state(room_id)
             members = []
             for event in state:
-                if event.get("type") == "m.room.member":
+                if event.get("type") == M_ROOM_MEMBER:
                     membership = event.get("content", {}).get("membership")
-                    if membership in ["join", "invite"]:
+                    if membership in [MEMBERSHIP_JOIN, MEMBERSHIP_INVITE]:
                         state_key = event.get("state_key")
                         if state_key and state_key != self.user_id:
                             members.append(state_key)
@@ -643,7 +662,7 @@ class E2EEManager:
             for user_id, user_devices in device_keys.items():
                 for device_id, device_info in user_devices.items():
                     keys = device_info.get("keys", {})
-                    curve_key = keys.get(f"curve25519:{device_id}")
+                    curve_key = keys.get(f"{PREFIX_CURVE25519}{device_id}")
                     if curve_key:
                         devices_to_send.append((user_id, device_id, curve_key))
 
@@ -656,7 +675,7 @@ class E2EEManager:
             for user_id, device_id, _ in devices_to_send:
                 if user_id not in one_time_claim:
                     one_time_claim[user_id] = {}
-                one_time_claim[user_id][device_id] = "signed_curve25519"
+                one_time_claim[user_id][device_id] = SIGNED_CURVE25519
 
             claimed = await self.client.claim_keys(one_time_claim)
             one_time_keys = claimed.get("one_time_keys", {})
@@ -684,7 +703,7 @@ class E2EEManager:
 
                     # 构造 m.room_key 内容
                     room_key_content = {
-                        "algorithm": "m.megolm.v1.aes-sha2",
+                        "algorithm": MEGOLM_ALGO,
                         "room_id": room_id,
                         "session_id": session_id,
                         "session_key": session_key,
@@ -693,11 +712,11 @@ class E2EEManager:
                     # 使用 Olm 加密
                     import json
 
-                    ciphertext = session.encrypt(json.dumps(room_key_content))
+                    ciphertext = session.encrypt(json.dumps(room_key_content).encode())
 
                     # 发送 to_device 消息
                     encrypted_content = {
-                        "algorithm": "m.olm.v1.curve25519-aes-sha2-256",
+                        "algorithm": OLM_ALGO_SHA256,
                         "sender_key": self._olm.curve25519_key,
                         "ciphertext": {
                             curve_key: {
@@ -709,7 +728,7 @@ class E2EEManager:
 
                     txn_id = secrets.token_hex(16)
                     await self.client.send_to_device(
-                        "m.room.encrypted",
+                        M_ROOM_ENCRYPTED,
                         {user_id: {device_id: encrypted_content}},
                         txn_id,
                     )

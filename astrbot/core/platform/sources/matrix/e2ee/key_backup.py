@@ -14,6 +14,28 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from ..constants import (
+    AES_BLOCK_SIZE_16,
+    AES_GCM_NONCE_LEN,
+    BASE58_ALPHABET,
+    CRYPTO_KEY_SIZE_32,
+    DEHYDRATED_DEVICE_EVENT,
+    HKDF_KEY_MATERIAL_LEN,
+    HKDF_MEGOLM_BACKUP_INFO,
+    MAC_TRUNCATED_BYTES_8,
+    MEGOLM_BACKUP_ALGO,
+    MEGOLM_BACKUP_INFO,
+    MSC2697_DEHYDRATED_DEVICE_EVENT,
+    RECOVERY_KEY_HDR_BYTE1,
+    RECOVERY_KEY_HDR_BYTE2,
+    RECOVERY_KEY_MAC_TRUNCATED_LEN,
+    RECOVERY_KEY_PRIV_LEN,
+    RECOVERY_KEY_TOTAL_LEN,
+    SSSS_BACKUP_SECRET,
+    SSSS_DEFAULT_KEY,
+    SSSS_KEY_PREFIX,
+)
+
 # 尝试导入加密库
 try:
     from cryptography.hazmat.backends import default_backend
@@ -40,7 +62,7 @@ except ImportError:
 
 
 def _compute_hkdf(
-    input_key: bytes, salt: bytes, info: bytes, length: int = 32
+    input_key: bytes, salt: bytes, info: bytes, length: int = CRYPTO_KEY_SIZE_32
 ) -> bytes:
     """计算 HKDF-SHA256"""
     if CRYPTO_AVAILABLE:
@@ -55,7 +77,7 @@ def _compute_hkdf(
     else:
         # 简化的 HKDF 实现
         if not salt:
-            salt = b"\x00" * 32
+            salt = b"\x00" * CRYPTO_KEY_SIZE_32
         prk = hmac.new(salt, input_key, hashlib.sha256).digest()
         output = b""
         t = b""
@@ -69,7 +91,7 @@ def _compute_hkdf(
 
 def _aes_encrypt(key: bytes, plaintext: bytes) -> tuple[bytes, bytes]:
     """AES-GCM 加密"""
-    nonce = secrets.token_bytes(12)
+    nonce = secrets.token_bytes(AES_GCM_NONCE_LEN)
     if CRYPTO_AVAILABLE:
         aesgcm = AESGCM(key)
         ciphertext = aesgcm.encrypt(nonce, plaintext, None)
@@ -209,13 +231,14 @@ def _manual_decrypt_v1(
     Spec: https://spec.matrix.org/v1.9/client-server-api/#backup-algorithm-mmegolm_backupv1curve25519-aes-sha2
     """
     try:
+        import hashlib
+        import hmac
+
+        from cryptography.hazmat.backends import default_backend
         from cryptography.hazmat.primitives import hashes, padding
         from cryptography.hazmat.primitives.asymmetric import x25519
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-        from cryptography.hazmat.backends import default_backend
-        import hmac
-        import hashlib
 
         # 1. ECDH: Calculate shared secret
         private_key = x25519.X25519PrivateKey.from_private_bytes(private_key_bytes)
@@ -226,15 +249,15 @@ def _manual_decrypt_v1(
         # Info MUST be "m.megolm_backup.v1"
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
-            length=80,  # 32 (AES) + 32 (MAC) + 16 (IV)
+            length=HKDF_KEY_MATERIAL_LEN,
             salt=b"",
-            info=b"m.megolm_backup.v1",
+            info=HKDF_MEGOLM_BACKUP_INFO,
             backend=default_backend(),
         )
         key_material = hkdf.derive(shared_secret)
 
-        aes_key = key_material[:32]
-        mac_key = key_material[32:64]
+        aes_key = key_material[:CRYPTO_KEY_SIZE_32]
+        mac_key = key_material[CRYPTO_KEY_SIZE_32:64]
         aes_iv = key_material[64:80]
 
         # 3. MAC Verification
@@ -243,8 +266,8 @@ def _manual_decrypt_v1(
 
         # Spec: "The MAC is the first 8 bytes of the HMAC-SHA-256 of the ciphertext."
         # Check if provided mac matches the first 8 bytes OR full bytes
-        if len(mac) == 8:
-            if not hmac.compare_digest(mac, full_mac[:8]):
+        if len(mac) == RECOVERY_KEY_MAC_TRUNCATED_LEN:
+            if not hmac.compare_digest(mac, full_mac[:MAC_TRUNCATED_BYTES_8]):
                 logger.warning(
                     f"[E2EE-Backup] Manual: MAC mismatch (8 bytes). "
                     f"Expected={full_mac[:8].hex()}, Got={mac.hex()}"
@@ -278,17 +301,17 @@ def _encode_recovery_key(key_bytes: bytes) -> str:
     """按照 Matrix 规范将 32 字节私钥编码为 Base58 恢复密钥字符串"""
 
     # 只使用前 32 字节，多余部分截断，不足补零
-    key_bytes = (key_bytes or b"").ljust(32, b"\x00")[:32]
+    key_bytes = (key_bytes or b"").ljust(CRYPTO_KEY_SIZE_32, b"\x00")[:CRYPTO_KEY_SIZE_32]
 
     # 前缀头 0x8B 0x01 + 私钥 + 校验（前面所有字节的 XOR）
-    payload = b"\x8b\x01" + key_bytes
+    payload = bytes([RECOVERY_KEY_HDR_BYTE1, RECOVERY_KEY_HDR_BYTE2]) + key_bytes
     checksum = 0
     for b in payload:
         checksum ^= b
     payload += bytes([checksum])
 
     # Base58 编码（比特币字符集）
-    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    alphabet = BASE58_ALPHABET
     n = int.from_bytes(payload, "big")
     encoded = ""
     while n > 0:
@@ -313,7 +336,7 @@ def _decode_recovery_key(key_str: str) -> bytes:
     """
     # 移除空格和破折号，兼容分组显示
     key_str = (key_str or "").replace(" ", "").replace("-", "")
-    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    alphabet = BASE58_ALPHABET
 
     # 优先尝试 Matrix 规范的 Base58 (58 字符，Bitcoin alphabet)
     if key_str and all(c in alphabet for c in key_str):
@@ -323,19 +346,19 @@ def _decode_recovery_key(key_str: str) -> bytes:
             for char in key_str:
                 n = n * 58 + alphabet.index(char)
 
-            decoded = n.to_bytes(35, "big")
+            decoded = n.to_bytes(RECOVERY_KEY_TOTAL_LEN, "big")
             leading_ones = len(key_str) - len(key_str.lstrip("1"))
             if leading_ones:
                 decoded = (b"\x00" * leading_ones) + decoded
 
-            # 规范长度应为 35 字节：0x8B 0x01 + 32B 密钥 + 1B 校验
-            if len(decoded) < 35:
-                decoded = decoded.rjust(35, b"\x00")
-            elif len(decoded) > 35:
-                decoded = decoded[-35:]
+            # 规范长度应为 RECOVERY_KEY_TOTAL_LEN 字节：0x8B 0x01 + 32B 密钥 + 1B 校验
+            if len(decoded) < RECOVERY_KEY_TOTAL_LEN:
+                decoded = decoded.rjust(RECOVERY_KEY_TOTAL_LEN, b"\x00")
+            elif len(decoded) > RECOVERY_KEY_TOTAL_LEN:
+                decoded = decoded[-RECOVERY_KEY_TOTAL_LEN:]
 
             # 验证头与校验
-            if decoded[0] != 0x8B or decoded[1] != 0x01:
+            if decoded[0] != RECOVERY_KEY_HDR_BYTE1 or decoded[1] != RECOVERY_KEY_HDR_BYTE2:
                 raise ValueError("恢复密钥头部不匹配，应为 0x8B01")
 
             checksum = 0
@@ -344,7 +367,7 @@ def _decode_recovery_key(key_str: str) -> bytes:
             if checksum != decoded[-1]:
                 raise ValueError("恢复密钥校验失败 (XOR mismatch)")
 
-            private_key = decoded[2:34]
+            private_key = decoded[2 : 2 + RECOVERY_KEY_PRIV_LEN]
             logger.info("[E2EE-Backup] 成功解析 Base58 恢复密钥")
             return private_key
         except Exception as e:
@@ -355,16 +378,16 @@ def _decode_recovery_key(key_str: str) -> bytes:
         decoded = base64.b64decode(key_str + "===")
         logger.info(f"[E2EE-Backup] Base64 解码：{len(decoded)}B")
 
-        if len(decoded) >= 35 and decoded[0] == 0x8B and decoded[1] == 0x01:
+        if len(decoded) >= RECOVERY_KEY_TOTAL_LEN and decoded[0] == RECOVERY_KEY_HDR_BYTE1 and decoded[1] == RECOVERY_KEY_HDR_BYTE2:
             checksum = 0
             for b in decoded[:-1]:
                 checksum ^= b
             if checksum != decoded[-1]:
                 raise ValueError("Base64 恢复密钥校验失败 (XOR mismatch)")
-            return decoded[2:34]
+            return decoded[2 : 2 + RECOVERY_KEY_PRIV_LEN]
 
-        if len(decoded) >= 32:
-            return decoded[:32]
+        if len(decoded) >= RECOVERY_KEY_PRIV_LEN:
+            return decoded[:RECOVERY_KEY_PRIV_LEN]
     except Exception:
         logger.debug("[E2EE-Backup] Base64 解码失败，尝试其他格式")
 
@@ -411,7 +434,7 @@ class KeyBackup:
             try:
                 self._recovery_key_bytes = _decode_recovery_key(recovery_key)
                 self._encryption_key = _compute_hkdf(
-                    self._recovery_key_bytes, b"", b"m.megolm_backup.v1"
+                    self._recovery_key_bytes, b"", HKDF_MEGOLM_BACKUP_INFO
                 )
                 logger.info("[E2EE-Backup] 使用用户配置的恢复密钥")
             except Exception as e:
@@ -428,9 +451,7 @@ class KeyBackup:
         dehydrated_device = None
         try:
             # 1. Get default key ID
-            default_key_data = await self.client.get_global_account_data(
-                "m.secret_storage.default_key"
-            )
+            default_key_data = await self.client.get_global_account_data(SSSS_DEFAULT_KEY)
             key_id = default_key_data.get("key")
             if not key_id:
                 logger.warning(
@@ -442,9 +463,7 @@ class KeyBackup:
 
             # 2. Try to decrypt the SSSS Key itself (if it's encrypted by the provided key)
             # Fetch key definition
-            key_data = await self.client.get_global_account_data(
-                f"m.secret_storage.key.{key_id}"
-            )
+            key_data = await self.client.get_global_account_data(f"{SSSS_KEY_PREFIX}{key_id}")
             # DEBUG LOGGING
             if key_data:
                 logger.info(
@@ -461,13 +480,9 @@ class KeyBackup:
             else:
                 logger.warning(f"[E2EE-Backup] Could not fetch data for key {key_id}")
                 # Check for Dehydrated Device
-                dehydrated_device = await self.client.get_global_account_data(
-                    "m.dehydrated_device"
-                )
+                dehydrated_device = await self.client.get_global_account_data(DEHYDRATED_DEVICE_EVENT)
                 if not dehydrated_device:
-                    dehydrated_device = await self.client.get_global_account_data(
-                        "org.matrix.msc2697.dehydrated_device"
-                    )
+                    dehydrated_device = await self.client.get_global_account_data(MSC2697_DEHYDRATED_DEVICE_EVENT)
                     if dehydrated_device:
                         logger.info(
                             "[E2EE-Backup] Found MSC2697 dehydrated device event"
@@ -546,9 +561,7 @@ class KeyBackup:
                     )
 
             # 3. Get Backup Secret (m.megolm_backup.v1)
-            backup_secret_data = await self.client.get_global_account_data(
-                "m.megolm_backup.v1"
-            )
+            backup_secret_data = await self.client.get_global_account_data(SSSS_BACKUP_SECRET)
             encrypted_data = backup_secret_data.get("encrypted", {}).get(key_id)
 
             if not encrypted_data:
@@ -648,7 +661,7 @@ class KeyBackup:
                                 )
                                 self._recovery_key_bytes = real_key
                                 self._encryption_key = _compute_hkdf(
-                                    self._recovery_key_bytes, b"", b"m.megolm_backup.v1"
+                                    self._recovery_key_bytes, b"", HKDF_MEGOLM_BACKUP_INFO
                                 )
                             else:
                                 logger.error("[E2EE-Backup] SSSS 提取的密钥验证失败")
@@ -685,9 +698,10 @@ class KeyBackup:
                 return True
 
             # Always use cryptography for verification to generate consistent Public Key
-            from cryptography.hazmat.primitives.asymmetric import x25519
-            from cryptography.hazmat.primitives import serialization
             import base64
+
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import x25519
 
             # Derive Public Key from Private Key
             priv = x25519.X25519PrivateKey.from_private_bytes(key_bytes)
@@ -702,7 +716,7 @@ class KeyBackup:
 
             # Matrix backup public key is usually standard base64? Let's check spec.
             # Spec says "The public key, encoded as unpadded base64." which usually means base64.b64encode (standard) or urlsafe?
-            # Curve25519 public keys are 32 bytes.
+            # Curve25519 public keys are CRYPTO_KEY_SIZE_32 bytes.
             # Usually Matrix uses unpadded Base64 (RFC 4648 without pad).
             # Let's try standard b64encode first as it's more common for keys in Matrix except for identifiers.
 
@@ -743,7 +757,7 @@ class KeyBackup:
         try:
             # 如果没有提供恢复密钥，生成新的
             if not self._recovery_key_bytes:
-                self._recovery_key_bytes = secrets.token_bytes(32)
+                self._recovery_key_bytes = secrets.token_bytes(CRYPTO_KEY_SIZE_32)
                 self._encryption_key = _compute_hkdf(
                     self._recovery_key_bytes, b"", b"m.megolm_backup.v1"
                 )
@@ -770,7 +784,7 @@ class KeyBackup:
                 "POST",
                 "/_matrix/client/v3/room_keys/version",
                 data={
-                    "algorithm": "m.megolm_backup.v1.curve25519-aes-sha2",
+                    "algorithm": MEGOLM_BACKUP_ALGO,
                     "auth_data": {
                         "public_key": public_key,
                     },
@@ -820,7 +834,7 @@ class KeyBackup:
                         "mac": base64.b64encode(
                             hmac.new(
                                 self._encryption_key, ciphertext, hashlib.sha256
-                            ).digest()[:8]
+                            ).digest()[:RECOVERY_KEY_MAC_TRUNCATED_LEN]
                         ).decode(),
                         "ephemeral": base64.b64encode(nonce).decode(),
                     },

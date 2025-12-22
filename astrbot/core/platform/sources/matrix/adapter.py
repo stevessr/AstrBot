@@ -15,6 +15,7 @@ from .client import MatrixHTTPClient
 
 # 组件导入 - Updated to new structure
 from .config import MatrixConfig
+from .constants import DEFAULT_TYPING_TIMEOUT_MS, MATRIX_HTML_FORMAT, REL_TYPE_THREAD
 from .event import MatrixPlatformEvent
 from .processors.event_handler import MatrixEventHandler
 from .processors.event_processor import MatrixEventProcessor
@@ -100,7 +101,7 @@ class MatrixPlatformAdapter(Platform):
             if VODOZEMAC_AVAILABLE:
                 recovery_key = self._matrix_config.e2ee_recovery_key
                 if recovery_key:
-                    logger.info(f"配置的恢复密钥: {recovery_key[:4]}...{recovery_key[-4:]}")
+                    logger.info(f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}")
                 else:
                     logger.warning("未配置恢复密钥 (matrix_e2ee_recovery_key)")
 
@@ -145,7 +146,9 @@ class MatrixPlatformAdapter(Platform):
 
             # Send typing notification
             try:
-                await self.client.set_typing(room_id, typing=True, timeout=5000)
+                await self.client.set_typing(
+                    room_id, typing=True, timeout=DEFAULT_TYPING_TIMEOUT_MS
+                )
             except Exception as e:
                 logger.debug(f"发送输入通知失败：{e}")
 
@@ -175,7 +178,7 @@ class MatrixPlatformAdapter(Platform):
                         if "content" in resp:
                             # 检查被回复消息是否已经是嘟文串的一部分
                             relates_to = resp["content"].get("m.relates_to", {})
-                            if relates_to.get("rel_type") == "m.thread":
+                            if relates_to.get("rel_type") == REL_TYPE_THREAD:
                                 # 如果是嘟文串的一部分，获取根消息 ID
                                 thread_root = relates_to.get("event_id")
                                 use_thread = True
@@ -233,7 +236,7 @@ class MatrixPlatformAdapter(Platform):
                         new_chain.append(
                             Plain(
                                 text=merged_text,
-                                format="org.matrix.custom.html",
+                                format=MATRIX_HTML_FORMAT,
                                 formatted_body=html,
                                 convert=True,
                             )
@@ -297,7 +300,7 @@ class MatrixPlatformAdapter(Platform):
                 # 创建包含 format 和 formatted_body 的 Plain 对象
                 processed_segment = Plain(
                     text=full_text,
-                    format="org.matrix.custom.html",
+                    format=MATRIX_HTML_FORMAT,
                     formatted_body=full_html,
                     convert=True,
                 )
