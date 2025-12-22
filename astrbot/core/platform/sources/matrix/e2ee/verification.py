@@ -206,6 +206,120 @@ class SASVerification:
             return True
         return False
 
+    async def handle_in_room_verification_event(
+        self, event_type: str, sender: str, content: dict, room_id: str, event_id: str
+    ) -> bool:
+        """处理房间内验证事件"""
+        # In-room verification uses m.relates_to to link events
+        relates_to = content.get("m.relates_to", {})
+        msgtype = content.get("msgtype", "")
+        
+        # For m.key.verification.request events (either as event_type OR msgtype), 
+        # use event_id as transaction_id
+        is_verification_request = (
+            event_type == M_KEY_VERIFICATION_REQUEST or 
+            msgtype == "m.key.verification.request"
+        )
+        
+        if is_verification_request:
+            transaction_id = event_id
+        else:
+            # For other events, get transaction_id from m.relates_to
+            transaction_id = relates_to.get("event_id") or content.get("transaction_id")
+
+        if not transaction_id:
+            logger.warning("[E2EE-Verify] 房间内验证事件缺少 transaction_id")
+            return False
+
+        logger.info(
+            f"[E2EE-Verify] 收到房间内验证事件：{event_type} "
+            f"from={sender} room={room_id[:16]}... txn={transaction_id[:16]}..."
+        )
+
+        # Store room_id in session for in-room responses
+        if transaction_id not in self._sessions:
+            self._sessions[transaction_id] = {}
+        self._sessions[transaction_id]["room_id"] = room_id
+        self._sessions[transaction_id]["is_in_room"] = True
+
+        handlers = {
+            M_KEY_VERIFICATION_REQUEST: self._handle_in_room_request,
+            M_KEY_VERIFICATION_READY: self._handle_ready,
+            M_KEY_VERIFICATION_START: self._handle_start,
+            M_KEY_VERIFICATION_ACCEPT: self._handle_accept,
+            M_KEY_VERIFICATION_KEY: self._handle_key,
+            M_KEY_VERIFICATION_MAC: self._handle_mac,
+            M_KEY_VERIFICATION_DONE: self._handle_done,
+            M_KEY_VERIFICATION_CANCEL: self._handle_cancel,
+        }
+
+        # For verification requests (m.room.message with msgtype m.key.verification.request),
+        # use _handle_in_room_request directly
+        if is_verification_request:
+            await self._handle_in_room_request(sender, content, transaction_id)
+            return True
+
+        handler = handlers.get(event_type)
+        if handler:
+            await handler(sender, content, transaction_id)
+            return True
+        return False
+
+    async def _handle_in_room_request(self, sender: str, content: dict, transaction_id: str):
+        """处理房间内验证请求"""
+        from_device = content.get("from_device")
+        methods = content.get("methods", [])
+        
+        if not from_device:
+            logger.warning("[E2EE-Verify] 房间内验证请求缺少 from_device")
+            return
+
+        logger.info(
+            f"[E2EE-Verify] 收到房间内验证请求："
+            f"sender={sender} device={from_device} methods={methods}"
+        )
+
+        # 创建 SAS 实例
+        sas = None
+        if VODOZEMAC_SAS_AVAILABLE:
+            try:
+                sas = Sas()
+                pub = str(sas.public_key)
+                logger.debug(f"[E2EE-Verify] 创建 SAS 实例，公钥：{pub[:16]}...")
+            except Exception as e:
+                logger.warning(f"[E2EE-Verify] 创建 SAS 实例失败：{e}")
+
+        session = self._sessions.get(transaction_id, {})
+        session.update({
+            "sender": sender,
+            "from_device": from_device,
+            "methods": methods,
+            "state": "requested",
+            "sas": sas,
+        })
+        self._sessions[transaction_id] = session
+
+        if self.auto_verify_mode == "auto_reject":
+            logger.info("[E2EE-Verify] 自动拒绝验证请求 (mode=auto_reject)")
+            await self._send_in_room_cancel(
+                session["room_id"], transaction_id, "m.user", "自动拒绝"
+            )
+            return
+
+        if self.auto_verify_mode == "manual":
+            logger.info("[E2EE-Verify] 手动模式，记录验证请求但不响应 (mode=manual)")
+            return
+
+        # auto_accept: 发送 ready
+        if "m.sas.v1" in methods:
+            logger.info("[E2EE-Verify] 自动接受房间内验证请求 (mode=auto_accept)")
+            await self._send_in_room_ready(session["room_id"], transaction_id)
+        else:
+            logger.warning(f"[E2EE-Verify] 不支持的验证方法：{methods}")
+            await self._send_in_room_cancel(
+                session["room_id"], transaction_id, "m.unknown_method", "不支持的验证方法"
+            )
+
     async def _handle_request(self, sender: str, content: dict, transaction_id: str):
         """处理验证请求"""
         from_device = content.get("from_device")
@@ -652,6 +766,49 @@ class SASVerification:
             await self.client.send_to_device(event_type, messages, txn_id)
         except Exception as e:
             logger.error(f"[E2EE-Verify] 发送 {event_type} 失败：{e}")
+
+    # ========== In-Room 验证消息发送 ==========
+
+    async def _send_in_room_event(
+        self, room_id: str, event_type: str, content: dict, transaction_id: str
+    ):
+        """发送房间内验证事件"""
+        try:
+            # Add m.relates_to to link to the original request
+            content["m.relates_to"] = {
+                "rel_type": "m.reference",
+                "event_id": transaction_id,
+            }
+            
+            await self.client.send_room_event(room_id, event_type, content)
+            logger.info(f"[E2EE-Verify] 已发送房间内事件：{event_type}")
+        except Exception as e:
+            logger.error(f"[E2EE-Verify] 发送房间内事件 {event_type} 失败：{e}")
+
+    async def _send_in_room_ready(self, room_id: str, transaction_id: str):
+        """发送房间内 ready 响应"""
+        content = {
+            "from_device": self.device_id,
+            "methods": SAS_METHODS,
+        }
+        logger.debug(f"[E2EE-Verify] 发送 ready: device_id={self.device_id} methods={SAS_METHODS}")
+        await self._send_in_room_event(
+            room_id, M_KEY_VERIFICATION_READY, content, transaction_id
+        )
+        logger.info("[E2EE-Verify] 已发送房间内 ready")
+
+    async def _send_in_room_cancel(
+        self, room_id: str, transaction_id: str, code: str, reason: str
+    ):
+        """发送房间内取消"""
+        content = {
+            "code": code,
+            "reason": reason,
+        }
+        await self._send_in_room_event(
+            room_id, M_KEY_VERIFICATION_CANCEL, content, transaction_id
+        )
+        logger.info(f"[E2EE-Verify] 已发送房间内 cancel: {code} - {reason}")
 
     # ========== SAS 计算 ==========
 
