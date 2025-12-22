@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import secrets
+from pathlib import Path
 from typing import Any, Literal
 
 from astrbot.api import logger
@@ -32,6 +33,7 @@ from ..constants import (
     SAS_BYTES_LENGTH_6,
     SAS_EMOJI_COUNT_7,
 )
+from .device_store import DeviceStore
 
 # 尝试导入 vodozemac
 try:
@@ -158,6 +160,7 @@ class SASVerification:
         user_id: str,
         device_id: str,
         olm_machine,
+        store_path: Path,
         auto_verify_mode: Literal[
             "auto_accept", "auto_reject", "manual"
         ] = "auto_accept",
@@ -170,6 +173,7 @@ class SASVerification:
 
         # 活跃的验证会话：transaction_id -> session_data
         self._sessions: dict[str, dict[str, Any]] = {}
+        self.device_store = DeviceStore(store_path)
 
     async def handle_verification_event(
         self, event_type: str, sender: str, content: dict
@@ -213,14 +217,14 @@ class SASVerification:
         # In-room verification uses m.relates_to to link events
         relates_to = content.get("m.relates_to", {})
         msgtype = content.get("msgtype", "")
-        
-        # For m.key.verification.request events (either as event_type OR msgtype), 
+
+        # For m.key.verification.request events (either as event_type OR msgtype),
         # use event_id as transaction_id
         is_verification_request = (
-            event_type == M_KEY_VERIFICATION_REQUEST or 
-            msgtype == "m.key.verification.request"
+            event_type == M_KEY_VERIFICATION_REQUEST
+            or msgtype == "m.key.verification.request"
         )
-        
+
         if is_verification_request:
             transaction_id = event_id
         else:
@@ -265,11 +269,13 @@ class SASVerification:
             return True
         return False
 
-    async def _handle_in_room_request(self, sender: str, content: dict, transaction_id: str):
+    async def _handle_in_room_request(
+        self, sender: str, content: dict, transaction_id: str
+    ):
         """处理房间内验证请求"""
         from_device = content.get("from_device")
         methods = content.get("methods", [])
-        
+
         if not from_device:
             logger.warning("[E2EE-Verify] 房间内验证请求缺少 from_device")
             return
@@ -290,14 +296,29 @@ class SASVerification:
                 logger.warning(f"[E2EE-Verify] 创建 SAS 实例失败：{e}")
 
         session = self._sessions.get(transaction_id, {})
-        session.update({
-            "sender": sender,
-            "from_device": from_device,
-            "methods": methods,
-            "state": "requested",
-            "sas": sas,
-        })
+        session.update(
+            {
+                "sender": sender,
+                "from_device": from_device,
+                "methods": methods,
+                "state": "requested",
+                "sas": sas,
+            }
+        )
         self._sessions[transaction_id] = session
+
+        # TOFU: Check if device is trusted
+        fingerprint = self.olm.ed25519_key if self.olm else "unavaliable"
+        if self.device_store.is_trusted(sender, from_device, fingerprint):
+            logger.info(f"[E-Verify] Trusted device {sender}|{from_device}")
+        else:
+            logger.info(f"[E2EE-Verify] Untrusted device {sender}|{from_device}")
+            await self._notify_user_for_approval(
+                sender, from_device, session.get("room_id")
+            )
+            if self.auto_verify_mode == "auto_accept":
+                logger.info("[E2EE-Verify] Auto-accept disabled for untrusted device")
+                return
 
         if self.auto_verify_mode == "auto_reject":
             logger.info("[E2EE-Verify] 自动拒绝验证请求 (mode=auto_reject)")
@@ -317,7 +338,10 @@ class SASVerification:
         else:
             logger.warning(f"[E2EE-Verify] 不支持的验证方法：{methods}")
             await self._send_in_room_cancel(
-                session["room_id"], transaction_id, "m.unknown_method", "不支持的验证方法"
+                session["room_id"],
+                transaction_id,
+                "m.unknown_method",
+                "不支持的验证方法",
             )
 
     async def _handle_request(self, sender: str, content: dict, transaction_id: str):
@@ -339,9 +363,7 @@ class SASVerification:
             try:
                 sas = Sas()
                 pub = sas.public_key.to_base64()
-                logger.debug(
-                    f"[E2EE-Verify] 创建 SAS 实例，公钥：{pub[:16]}..."
-                )
+                logger.debug(f"[E2EE-Verify] 创建 SAS 实例，公钥：{pub[:16]}...")
             except Exception as e:
                 logger.warning(f"[E2EE-Verify] 创建 SAS 实例失败：{e}")
 
@@ -664,9 +686,7 @@ class SASVerification:
             "key": our_public_key,
         }
 
-        await self._send_to_device(
-            M_KEY_VERIFICATION_KEY, to_user, to_device, content
-        )
+        await self._send_to_device(M_KEY_VERIFICATION_KEY, to_user, to_device, content)
         logger.info(f"[E2EE-Verify] 已发送 key: {our_public_key[:20]}...")
 
     async def _send_mac(
@@ -729,17 +749,13 @@ class SASVerification:
             "keys": keys_mac,
         }
 
-        await self._send_to_device(
-            M_KEY_VERIFICATION_MAC, to_user, to_device, content
-        )
+        await self._send_to_device(M_KEY_VERIFICATION_MAC, to_user, to_device, content)
         logger.info("[E2EE-Verify] 已发送 mac")
 
     async def _send_done(self, to_user: str, to_device: str, transaction_id: str):
         """发送 done"""
         content = {"transaction_id": transaction_id}
-        await self._send_to_device(
-            M_KEY_VERIFICATION_DONE, to_user, to_device, content
-        )
+        await self._send_to_device(M_KEY_VERIFICATION_DONE, to_user, to_device, content)
         logger.info("[E2EE-Verify] 已发送 done")
 
     async def _send_cancel(
@@ -779,7 +795,7 @@ class SASVerification:
                 "rel_type": "m.reference",
                 "event_id": transaction_id,
             }
-            
+
             await self.client.send_room_event(room_id, event_type, content)
             logger.info(f"[E2EE-Verify] 已发送房间内事件：{event_type}")
         except Exception as e:
@@ -791,7 +807,9 @@ class SASVerification:
             "from_device": self.device_id,
             "methods": SAS_METHODS,
         }
-        logger.debug(f"[E2EE-Verify] 发送 ready: device_id={self.device_id} methods={SAS_METHODS}")
+        logger.debug(
+            f"[E2EE-Verify] 发送 ready: device_id={self.device_id} methods={SAS_METHODS}"
+        )
         await self._send_in_room_event(
             room_id, M_KEY_VERIFICATION_READY, content, transaction_id
         )
@@ -811,6 +829,20 @@ class SASVerification:
         logger.info(f"[E2EE-Verify] 已发送房间内 cancel: {code} - {reason}")
 
     # ========== SAS 计算 ==========
+
+    async def _notify_user_for_approval(self, sender: str, device_id: str, room_id: str | None = None):
+        """ "Notify user for verification approval"""
+        if not room_id:
+            room_id = await self.client.get_user_room(sender)
+
+        if room_id:
+            message = (
+                f"New device verification request from {sender} ({device_id}). "
+                f"Please approve or deny."
+            )
+            await self.client.send_room_message(room_id, message)
+        else:
+            logger.warning(f"Could not find a room to notify {sender}")
 
     def _bytes_to_emoji(self, sas_bytes: bytes) -> list[tuple[str, str]]:
         """将 SAS 字节转换为 emoji"""

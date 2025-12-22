@@ -835,6 +835,49 @@ class MatrixHTTPClient:
 
         return await self._request("GET", endpoint)
 
+    async def get_user_room(self, user_id: str) -> str | None:
+        """
+        Find a direct message room with the specified user
+
+        Args:
+            user_id: The user ID to find a DM room for
+
+        Returns:
+            The room ID if found, None otherwise
+        """
+        try:
+            # Get direct chat map from account data
+            account_data = await self.get_global_account_data("m.direct")
+            content = account_data.get("content", {})
+
+            # Look for rooms with this user
+            rooms = content.get(user_id, [])
+            if rooms and isinstance(rooms, list) and len(rooms) > 0:
+                # Return the first room found
+                return rooms[0]
+
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to find DM room for {user_id}: {e}")
+            return None
+
+    async def send_room_message(self, room_id: str, message: str) -> dict[str, Any]:
+        """
+        Helper to send a simple text message to a room
+
+        Args:
+            room_id: Room ID
+            message: Message text
+
+        Returns:
+            Response data
+        """
+        return await self.send_message(
+            room_id,
+            "m.room.message",
+            {"msgtype": "m.text", "body": message}
+        )
+
     async def send_to_device(
         self, event_type: str, messages: dict[str, Any], txn_id: str | None = None
     ) -> dict[str, Any]:

@@ -113,6 +113,7 @@ class E2EEManager:
                 user_id=self.user_id,
                 device_id=self.device_id,
                 olm_machine=self._olm,
+                store_path=self.store_path,
                 auto_verify_mode=self.auto_verify_mode,
             )
             logger.info(f"SAS 验证已初始化 (mode: {self.auto_verify_mode})")
