@@ -13,6 +13,9 @@ from .auth.auth import MatrixAuth
 # 自定义 Matrix 客户端（不依赖 matrix-nio）
 from .client import MatrixHTTPClient
 
+# Import commands to register them
+from .commands import approve_device
+
 # 组件导入 - Updated to new structure
 from .config import MatrixConfig
 from .constants import DEFAULT_TYPING_TIMEOUT_MS, MATRIX_HTML_FORMAT, REL_TYPE_THREAD
@@ -436,6 +439,7 @@ class MatrixPlatformAdapter(Platform):
                 session_id=message.session_id,
                 client=self.client,
                 enable_threading=self._matrix_config.enable_threading,
+                e2ee_manager=self.e2ee_manager,
             )
             self.commit_event(message_event)
             logger.debug(

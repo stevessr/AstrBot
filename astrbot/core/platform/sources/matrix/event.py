@@ -7,11 +7,12 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import File, Image, Plain, Reply
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 
+from .constants import TEXT_TRUNCATE_LENGTH_50
+
 # Update import: markdown_utils is now in utils.markdown_utils
 from .utils.markdown_utils import (
     markdown_to_html,
 )
-from .constants import TEXT_TRUNCATE_LENGTH_50
 
 
 class MatrixPlatformEvent(AstrMessageEvent):
@@ -25,10 +26,12 @@ class MatrixPlatformEvent(AstrMessageEvent):
         session_id: str,
         client,
         enable_threading: bool = False,
+        e2ee_manager=None,
     ):
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.client = client  # MatrixHTTPClient instance
         self.enable_threading = enable_threading  # 试验性：是否默认开启嘟文串模式
+        self.e2ee_manager = e2ee_manager
 
     @staticmethod
     async def send_with_client(

@@ -234,6 +234,60 @@ class OlmMachine:
 
         return session
 
+    def encrypt_olm(self, their_identity_key: str, content: dict, session: Session | None = None, recipient_user_id: str = "unknown") -> dict:
+        """
+        使用 Olm 加密内容并添加 Matrix 协议外壳
+
+        Args:
+            their_identity_key: 对方的 curve25519 密钥
+            content: 要加密的内容 (m.room_key 等)
+            session: 可选，已有的 Olm 会话
+            recipient_user_id: 接收者用户 ID
+
+        Returns:
+            符合 m.room.encrypted (Olm) 格式 a 字典
+        """
+        if not session:
+            # 尝试使用现有会话
+            sessions = self._olm_sessions.get(their_identity_key, [])
+            if sessions:
+                session = sessions[0]
+                logger.debug(f"使用现有 Olm 会话对 {their_identity_key[:8]}... 加密")
+            else:
+                logger.warning(f"没有可用于 {their_identity_key[:8]}... 的 Olm 会话")
+                raise RuntimeError(f"没有可用于 {their_identity_key} 的 Olm 会话")
+
+        # 构造 Matrix 协议外壳
+        wrapper = {
+            "sender": self.user_id,
+            "sender_device": self.device_id,
+            "keys": {"ed25519": self.ed25519_key},
+            "recipient": recipient_user_id,
+            "recipient_keys": {"ed25519": "unknown"},
+            "type": content.get("type", "m.room_key"),
+            "content": content,
+        }
+
+        # 加密
+        payload_json = json.dumps(wrapper, ensure_ascii=False)
+        ciphertext = session.encrypt(payload_json.encode())
+
+        logger.debug(f"Olm 加密完成：type={ciphertext.message_type} payload_len={len(payload_json)}")
+
+        # 更新存储
+        self.store.update_olm_session(their_identity_key, 0, session.pickle(self._pickle_key))
+
+        return {
+            "algorithm": OLM_ALGO,
+            "sender_key": self.curve25519_key,
+            "ciphertext": {
+                their_identity_key: {
+                    "type": ciphertext.message_type,
+                    "body": ciphertext.ciphertext,
+                }
+            },
+        }
+
     def decrypt_olm_message(
         self, sender_key: str, message_type: int, ciphertext: str
     ) -> str:
@@ -251,35 +305,45 @@ class OlmMachine:
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
 
+        logger.debug(f"开始 Olm 解密：sender={sender_key[:8]}... type={message_type}")
+
         # 尝试使用现有会话解密
         sessions = self._olm_sessions.get(sender_key, [])
         for i, session in enumerate(sessions):
             try:
                 plaintext = session.decrypt(message_type, ciphertext)
+                logger.debug(f"使用现有会话 {i} 解密成功")
                 # 更新会话
                 self.store.update_olm_session(
                     sender_key, i, session.pickle(self._pickle_key)
                 )
                 return plaintext
-            except Exception:
+            except Exception as e:
+                logger.debug(f"会话 {i} 解密失败：{e}")
                 continue
 
         # 如果是 prekey 消息，创建新的入站会话
         if message_type == 0:
-            session = self._account.create_inbound_session(sender_key, ciphertext)
-            plaintext = session.decrypt(message_type, ciphertext)
+            logger.info(f"收到 PreKey 消息，尝试从 {sender_key[:8]}... 创建入站会话")
+            try:
+                session = self._account.create_inbound_session(sender_key, ciphertext)
+                plaintext = session.decrypt(message_type, ciphertext)
+                logger.info("创建入站会话并解密成功")
 
-            # 移除已使用的一次性密钥
-            self._account.remove_one_time_keys(session)
+                # 移除已使用的一次性密钥
+                self._account.remove_one_time_keys(session)
 
-            # 缓存和保存会话
-            if sender_key not in self._olm_sessions:
-                self._olm_sessions[sender_key] = []
-            self._olm_sessions[sender_key].append(session)
-            self.store.add_olm_session(sender_key, session.pickle(self._pickle_key))
-            self._save_account()
+                # 缓存和保存会话
+                if sender_key not in self._olm_sessions:
+                    self._olm_sessions[sender_key] = []
+                self._olm_sessions[sender_key].append(session)
+                self.store.add_olm_session(sender_key, session.pickle(self._pickle_key))
+                self._save_account()
 
-            return plaintext
+                return plaintext
+            except Exception as e:
+                logger.error(f"创建入站会话失败：{e}")
+                raise
 
         raise RuntimeError(f"无法解密来自 {sender_key} 的 Olm 消息")
 
@@ -394,13 +458,13 @@ class OlmMachine:
             room_id: 房间 ID
 
         Returns:
-            (session_id, session_key) 元组
+            (session_id, session_key_base64) 元组
         """
         session = GroupSession()
         self._megolm_outbound[room_id] = session
         self.store.save_megolm_outbound(room_id, session.pickle(self._pickle_key))
 
-        return session.session_id, session.session_key
+        return session.session_id, session.session_key.to_base64()
 
     def encrypt_megolm(self, room_id: str, event_type: str, content: dict) -> dict:
         """
@@ -446,7 +510,7 @@ class OlmMachine:
             "algorithm": MEGOLM_ALGO,
             "sender_key": self._account.curve25519_key.to_base64() if self._account else "",
             "session_id": session.session_id,
-            "ciphertext": ciphertext,
+            "ciphertext": ciphertext.to_base64(),
             "device_id": self.device_id,
         }
 

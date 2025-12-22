@@ -340,12 +340,21 @@ class MatrixEventProcessor:
                         )
                         if decrypted:
                             inner_type = decrypted.get("type")
+                            inner_content = decrypted.get("content", decrypted)
                             if inner_type == "m.room_key":
                                 sender_key = content.get("sender_key", "")
                                 await self.e2ee_manager.handle_room_key(
-                                    decrypted.get("content", decrypted), sender_key
+                                    inner_content, sender_key
                                 )
                                 logger.debug("成功处理加密的 m.room_key 事件")
+                            elif inner_type == "m.forwarded_room_key":
+                                sender_key = content.get("sender_key", "")
+                                await self.e2ee_manager.handle_room_key(
+                                    inner_content, sender_key
+                                )
+                                logger.debug("成功处理加密的 m.forwarded_room_key 事件")
+                            else:
+                                logger.debug(f"收到未知的加密 to_device 事件类型：{inner_type}")
                     except Exception as e:
                         logger.error(f"处理加密 to_device 事件失败：{e}")
                 continue
