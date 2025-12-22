@@ -452,6 +452,9 @@ class MatrixHTTPClient:
             if self.access_token:
                 headers["Authorization"] = f"Bearer {self.access_token}"
 
+            # 添加调试日志
+            logger.debug(f"Downloading from {url} with auth: {'yes' if self.access_token else 'no'}")
+
             try:
                 logger.debug(f"Downloading media from: {url}")
                 async with self.session.get(
