@@ -98,6 +98,12 @@ class MatrixPlatformAdapter(Platform):
             from .e2ee import VODOZEMAC_AVAILABLE, E2EEManager
 
             if VODOZEMAC_AVAILABLE:
+                recovery_key = self._matrix_config.e2ee_recovery_key
+                if recovery_key:
+                    logger.info(f"配置的恢复密钥: {recovery_key[:4]}...{recovery_key[-4:]}")
+                else:
+                    logger.warning("未配置恢复密钥 (matrix_e2ee_recovery_key)")
+
                 self.e2ee_manager = E2EEManager(
                     client=self.client,
                     user_id=self._matrix_config.user_id,
@@ -105,7 +111,7 @@ class MatrixPlatformAdapter(Platform):
                     store_path=self._matrix_config.e2ee_store_path,
                     auto_verify_mode=self._matrix_config.e2ee_auto_verify,
                     enable_key_backup=self._matrix_config.e2ee_key_backup,
-                    recovery_key=self._matrix_config.e2ee_recovery_key,
+                    recovery_key=recovery_key,
                 )
                 # 传递给 event_processor 用于解密
                 self.event_processor.e2ee_manager = self.e2ee_manager

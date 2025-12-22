@@ -28,11 +28,12 @@ except ImportError:
 
 # 尝试导入 vodozemac (用于 Matrix 兼容的 PkDecryption)
 try:
-    from vodozemac import Curve25519SecretKey, PkDecryption
+    from vodozemac import Curve25519SecretKey, PkDecodeException, PkDecryption
 
     VODOZEMAC_PK_AVAILABLE = True
 except ImportError:
     VODOZEMAC_PK_AVAILABLE = False
+    PkDecodeException = Exception  # 回退到通用异常
     logger.debug("vodozemac PkDecryption 不可用")
 
 
@@ -135,6 +136,12 @@ def _decrypt_backup_data(
             PkDecryption,
         )
 
+        # Try to import PkDecodeException if available
+        try:
+            from vodozemac import PkDecodeException
+        except ImportError:
+            PkDecodeException = Exception
+
         logger.info(
             f"[E2EE-Backup] 使用 vodozemac 解密：private_key={len(private_key_bytes)}B, "
             f"ephemeral={len(ephemeral_public_key)}B, ciphertext={len(ciphertext)}B, mac={len(mac)}B"
@@ -165,19 +172,93 @@ def _decrypt_backup_data(
             logger.info(f"[E2EE-Backup] vodozemac 解密成功！明文长度={len(plaintext)}B")
             return plaintext
 
-        except Exception as e1:
+        except BaseException as e1:
+            # 捕获所有异常类型（包括 vodozemac 的特殊异常）
             error_msg = str(e1)
-            if "MAC" in error_msg or "mac" in error_msg or "mismatch" in error_msg:
-                logger.warning(
-                    "[E2EE-Backup] MAC 验证失败 - 恢复密钥可能与备份不匹配！"
-                    "请确认您配置的恢复密钥是用于创建此备份的密钥。"
-                )
-            else:
-                logger.debug(f"[E2EE-Backup] vodozemac 解密失败：{e1}")
-            return None
+            logger.warning(f"[E2EE-Backup] vodozemac 解密失败 ({error_msg})，尝试手动解密...")
+
+            # Fallback to manual decryption
+            return _manual_decrypt_v1(private_key_bytes, ephemeral_public_key, ciphertext, mac)
 
     except ImportError:
-        logger.warning("[E2EE-Backup] vodozemac 不可用，无法解密备份")
+        logger.warning("[E2EE-Backup] vodozemac 未安装，使用 Python 原生实现")
+        return _manual_decrypt_v1(private_key_bytes, ephemeral_public_key, ciphertext, mac)
+    except Exception as e:
+        logger.error(f"[E2EE-Backup] 初始化 vodozemac 失败：{e}")
+        return _manual_decrypt_v1(private_key_bytes, ephemeral_public_key, ciphertext, mac)
+
+
+def _manual_decrypt_v1(
+    private_key_bytes: bytes,
+    ephemeral_key_bytes: bytes,
+    ciphertext: bytes,
+    mac: bytes,
+) -> bytes | None:
+    """
+    手动实现 Matrix Key Backup v1 解密 (curve25519-aes-sha2)
+    Spec: https://spec.matrix.org/v1.9/client-server-api/#backup-algorithm-mmegolm_backupv1curve25519-aes-sha2
+    """
+    try:
+        from cryptography.hazmat.primitives import hashes, padding
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.backends import default_backend
+        import hmac
+        import hashlib
+
+        # 1. ECDH: Calculate shared secret
+        private_key = x25519.X25519PrivateKey.from_private_bytes(private_key_bytes)
+        public_key = x25519.X25519PublicKey.from_public_bytes(ephemeral_key_bytes)
+        shared_secret = private_key.exchange(public_key)
+
+        # 2. HKDF: Derive keys
+        # Info MUST be "m.megolm_backup.v1"
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=80,  # 32 (AES) + 32 (MAC) + 16 (IV)
+            salt=b"",
+            info=b"m.megolm_backup.v1",
+            backend=default_backend(),
+        )
+        key_material = hkdf.derive(shared_secret)
+
+        aes_key = key_material[:32]
+        mac_key = key_material[32:64]
+        aes_iv = key_material[64:80]
+
+        # 3. MAC Verification
+        h = hmac.new(mac_key, ciphertext, hashlib.sha256)
+        full_mac = h.digest()
+        
+        # Spec: "The MAC is the first 8 bytes of the HMAC-SHA-256 of the ciphertext."
+        # Check if provided mac matches the first 8 bytes OR full bytes
+        if len(mac) == 8:
+            if not hmac.compare_digest(mac, full_mac[:8]):
+                logger.warning(
+                    f"[E2EE-Backup] Manual: MAC mismatch (8 bytes). "
+                    f"Expected={full_mac[:8].hex()}, Got={mac.hex()}"
+                )
+                return None
+        else:
+            if not hmac.compare_digest(mac, full_mac):
+                logger.warning("[E2EE-Backup] Manual: MAC mismatch (full)")
+                return None
+
+        # 4. AES-CBC Decryption
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(aes_iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        plaintext_padded = decryptor.update(ciphertext) + decryptor.finalize()
+
+        # 5. PKCS7 Unpadding
+        unpadder = padding.PKCS7(128).unpadder()
+        plaintext = unpadder.update(plaintext_padded) + unpadder.finalize()
+
+        logger.info(f"[E2EE-Backup] Manual: 解密成功！长度={len(plaintext)}B")
+        return plaintext
+
+    except Exception as e:
+        logger.error(f"[E2EE-Backup] Manual decryption failed: {e}")
         return None
     except Exception as e:
         logger.warning(f"[E2EE-Backup] 解密失败：{e}")
@@ -283,6 +364,7 @@ class KeyBackup:
         self.olm = olm_machine
 
         self._backup_version: str | None = None
+        self._backup_auth_data: dict = {}
         self._recovery_key_bytes: bytes | None = None
         self._encryption_key: bytes | None = None
 
@@ -315,9 +397,63 @@ class KeyBackup:
             response = await self.client._request(
                 "GET", "/_matrix/client/v3/room_keys/version"
             )
-            return response.get("version")
+            version = response.get("version")
+            if version:
+                self._backup_auth_data = response.get("auth_data", {})
+            return version
         except Exception:
             return None
+
+    def _verify_recovery_key(self, key_bytes: bytes) -> bool:
+        """验证恢复密钥是否与当前备份匹配"""
+        if not self._backup_auth_data:
+            return True  # 无法验证，假设正确
+
+        try:
+            expected_public_key = self._backup_auth_data.get("public_key")
+            if not expected_public_key:
+                return True
+
+            # Always use cryptography for verification to generate consistent Public Key
+            from cryptography.hazmat.primitives.asymmetric import x25519
+            from cryptography.hazmat.primitives import serialization
+            import base64
+
+            # Derive Public Key from Private Key
+            priv = x25519.X25519PrivateKey.from_private_bytes(key_bytes)
+            pub = priv.public_key()
+            
+            # Matrix uses unpadded base64 representation of the raw bytes
+            pub_bytes = pub.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw
+            )
+            public_key = base64.urlsafe_b64encode(pub_bytes).decode().rstrip("=")
+            
+            # Matrix backup public key is usually standard base64? Let's check spec.
+            # Spec says "The public key, encoded as unpadded base64." which usually means base64.b64encode (standard) or urlsafe?
+            # Curve25519 public keys are 32 bytes.
+            # Usually Matrix uses unpadded Base64 (RFC 4648 without pad).
+            # Let's try standard b64encode first as it's more common for keys in Matrix except for identifiers.
+            
+            public_key_std = base64.b64encode(pub_bytes).decode().rstrip("=")
+
+            if public_key_std != expected_public_key and public_key != expected_public_key:
+                logger.error("[E2EE-Backup] ❌ 恢复密钥不匹配！")
+                logger.error(f"[E2EE-Backup] 备份版本要求公钥: {expected_public_key}")
+                logger.error(f"[E2EE-Backup] 您的密钥生成公钥: {public_key_std} (或者 {public_key})")
+                
+                # Check if it matches after padding?
+                return False
+            
+            logger.info(f"[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"[E2EE-Backup] 验证密钥失败：{e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+            return True
 
     async def create_backup(self) -> tuple[str, str] | None:
         """
@@ -451,6 +587,10 @@ class KeyBackup:
             key_bytes = self._recovery_key_bytes
         else:
             logger.error("[E2EE-Backup] 无恢复密钥，无法解密备份")
+            return
+
+        # 验证密钥是否匹配备份版本
+        if not self._verify_recovery_key(key_bytes):
             return
 
         # 创建 PkDecryption 对象 (如果 vodozemac 可用)

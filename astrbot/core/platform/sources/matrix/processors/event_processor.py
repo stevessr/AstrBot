@@ -267,6 +267,50 @@ class MatrixEventProcessor:
                         logger.error(f"处理 m.forwarded_room_key 事件失败：{e}")
                 continue
 
+            # 处理 m.room_key_request 事件 (来自其他设备的密钥请求)
+            if event_type == "m.room_key_request":
+                if self.e2ee_manager:
+                    try:
+                        action = content.get("action", "")
+                        requesting_device_id = content.get("requesting_device_id", "")
+                        body = content.get("body", {})
+
+                        if action == "request":
+                            # 跳过自己设备发出的请求
+                            if (
+                                self.e2ee_manager
+                                and requesting_device_id == self.e2ee_manager.device_id
+                            ):
+                                logger.debug(
+                                    "[E2EE] 忽略来自自己设备的密钥请求"
+                                )
+                                continue
+
+                            room_id = body.get("room_id", "")
+                            session_id = body.get("session_id", "")
+                            sender_key = body.get("sender_key", "")
+
+                            logger.info(
+                                f"[E2EE] 收到密钥请求：来自设备 {requesting_device_id}，"
+                                f"room={room_id[:16]}...，session={session_id[:8]}..."
+                            )
+
+                            # 调用 E2EE 管理器响应密钥请求
+                            await self.e2ee_manager.respond_to_key_request(
+                                sender=sender,
+                                requesting_device_id=requesting_device_id,
+                                room_id=room_id,
+                                session_id=session_id,
+                                sender_key=sender_key,
+                            )
+                        elif action == "request_cancellation":
+                            logger.debug(
+                                f"[E2EE] 密钥请求已取消：device={requesting_device_id}"
+                            )
+                    except Exception as e:
+                        logger.error(f"处理 m.room_key_request 事件失败：{e}")
+                continue
+
             # Log other event types
             logger.debug(f"收到设备间事件：{event_type} 来自 {sender}")
 
