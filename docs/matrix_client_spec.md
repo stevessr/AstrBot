@@ -60,11 +60,11 @@ Matrix 是一组开放的 API，用于开放联邦的即时通讯 (IM)、VoIP �
 
 ### 2.1 用户 (Users)
 
-用户 ID 格式: `@localpart:domain`
+用户 ID 格式：`@localpart:domain`
 
 - `localpart`: 区分大小写，仅包含 `[a-z0-9._=-/]`
 - `domain`: 服务器域名
-- 最大长度: 255 字符 (包括 `@` 和 `:`)
+- 最大长度：255 字符 (包括 `@` 和 `:`)
 
 ### 2.2 设备 (Devices)
 
@@ -75,7 +75,7 @@ Matrix 是一组开放的 API，用于开放联邦的即时通讯 (IM)、VoIP �
 
 ### 2.3 事件 (Events)
 
-Matrix 中的所有数据都表示为事件:
+Matrix 中的所有数据都表示为事件：
 
 ```json
 {
@@ -189,7 +189,7 @@ GET /_matrix/client/versions
 
 ### 5.2 用户交互认证 (UIA)
 
-用于敏感操作的多阶段认证:
+用于敏感操作的多阶段认证：
 
 ```json
 {
@@ -313,7 +313,7 @@ POST /_matrix/client/v3/account/deactivate
 
 ### 6.4 第三方标识符 (3PID)
 
-管理邮箱、手机等关联:
+管理邮箱、手机等关联：
 
 ```
 GET  /_matrix/client/v3/account/3pid
@@ -393,7 +393,7 @@ POST /_matrix/client/v3/user/{userId}/filter
 
 ### 8.3 延迟加载成员
 
-在过滤器中设置:
+在过滤器中设置：
 ```json
 {
   "room": {
@@ -467,7 +467,7 @@ POST /_matrix/client/v3/user/{userId}/filter
 
 ### 9.4 事件关系
 
-通过 `m.relates_to` 建立事件关系:
+通过 `m.relates_to` 建立事件关系：
 
 ```json
 {
@@ -599,7 +599,7 @@ GET /_matrix/client/v3/rooms/{roomId}/messages
 |------|------|
 | `from` | 起始位置 (prev_batch) |
 | `to` | 结束位置 |
-| `dir` | 方向 (b=向后, f=向前) |
+| `dir` | 方向 (b=向后，f=向前) |
 | `limit` | 返回数量 |
 | `filter` | 过滤器 |
 
@@ -669,7 +669,7 @@ POST /_matrix/client/v3/knock/{roomIdOrAlias}     # 敲门
 
 ### 11.4 成员状态
 
-`m.room.member` 事件的 `membership` 字段:
+`m.room.member` 事件的 `membership` 字段：
 
 | 状态 | 说明 |
 |------|------|
@@ -813,7 +813,7 @@ POST /_matrix/client/v3/user_directory/search
 
 ## 14. 模块
 
-Matrix 客户端必须实现所有模块。主要模块包括:
+Matrix 客户端必须实现所有模块。主要模块包括：
 
 ### 14.1 即时消息 (Instant Messaging)
 
@@ -920,7 +920,7 @@ PUT /_matrix/client/v3/user/{userId}/rooms/{roomId}/account_data/{type}
 
 ### 15.1 概述
 
-Matrix 使用 Olm 和 Megolm 协议实现端到端加密:
+Matrix 使用 Olm 和 Megolm 协议实现端到端加密：
 
 - **Olm**: 用于建立一对一安全通道
 - **Megolm**: 用于高效的群组消息加密
@@ -1008,7 +1008,7 @@ GET /_matrix/client/v3/keys/changes?from=s123&to=s456
 
 ### 15.7 房间加密
 
-`m.room.encryption` 状态事件:
+`m.room.encryption` 状态事件：
 ```json
 {
   "algorithm": "m.megolm.v1.aes-sha2"
@@ -1017,7 +1017,7 @@ GET /_matrix/client/v3/keys/changes?from=s123&to=s456
 
 ### 15.8 加密消息
 
-`m.room.encrypted` 事件:
+`m.room.encrypted` 事件：
 ```json
 {
   "algorithm": "m.megolm.v1.aes-sha2",
@@ -1029,12 +1029,12 @@ GET /_matrix/client/v3/keys/changes?from=s123&to=s456
 
 ### 15.9 交叉签名
 
-上传交叉签名密钥:
+上传交叉签名密钥：
 ```
 POST /_matrix/client/v3/keys/device_signing/upload
 ```
 
-上传签名:
+上传签名：
 ```
 POST /_matrix/client/v3/keys/signatures/upload
 ```
@@ -1098,7 +1098,7 @@ GET  /_matrix/client/v3/room_keys/keys
 
 ### 16.1 MXC URI
 
-格式: `mxc://<server-name>/<media-id>`
+格式：`mxc://<server-name>/<media-id>`
 
 ### 16.2 上传媒体
 
@@ -1119,12 +1119,12 @@ POST /_matrix/media/v3/upload
 
 ### 16.3 异步上传
 
-1. 创建占位符:
+1. 创建占位符：
 ```
 POST /_matrix/media/v1/create
 ```
 
-2. 上传内容:
+2. 上传内容：
 ```
 PUT /_matrix/media/v3/upload/{serverName}/{mediaId}
 ```
@@ -1362,7 +1362,7 @@ POST /_matrix/client/v3/search
 
 ## 22. 第三方网络
 
-用于桥接其他通信网络:
+用于桥接其他通信网络：
 
 ```
 GET /_matrix/client/v3/thirdparty/protocols
@@ -1387,7 +1387,7 @@ GET /_matrix/client/v3/thirdparty/user
 
 ### 23.2 必须实现
 
-所有符合规范的客户端实现必须支持:
+所有符合规范的客户端实现必须支持：
 
 1. ✅ 服务器发现
 2. ✅ 登录/登出
@@ -1507,5 +1507,5 @@ GET /_matrix/client/v3/thirdparty/user
 
 ---
 
-*文档版本: 基于 Matrix Spec v1.17 生成*
-*生成时间: 2025-12-21*
+*文档版本：基于 Matrix Spec v1.17 生成*
+*生成时间：2025-12-21*
