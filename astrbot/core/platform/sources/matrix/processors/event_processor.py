@@ -95,6 +95,25 @@ class MatrixEventProcessor:
         from ..client.event_types import parse_event
 
         event_type = event_data.get("type")
+        content = event_data.get("content", {})
+        msgtype = content.get("msgtype", "")
+        
+        # Debug: Log all event types for troubleshooting
+        logger.debug(f"[EventProcessor] 收到房间事件：type={event_type} msgtype={msgtype} room={room.room_id[:16]}...")
+
+        # Handle in-room verification events
+        # Matrix spec: standalone verification events have type m.key.verification.*
+        # But in-room verification REQUEST is sent as m.room.message with msgtype m.key.verification.request
+        if event_type and event_type.startswith("m.key.verification."):
+            logger.info(f"[EventProcessor] 检测到验证事件：{event_type}")
+            await self._handle_in_room_verification(room, event_data)
+            return
+
+        # Check for in-room verification request (m.room.message with msgtype m.key.verification.request)
+        if event_type == "m.room.message" and msgtype == "m.key.verification.request":
+            logger.info(f"[EventProcessor] 检测到房间内验证请求 (msgtype={msgtype})")
+            await self._handle_in_room_verification(room, event_data)
+            return
 
         if event_type in ("m.room.message", "m.room.encrypted", "m.sticker"):
             # Parse plaintext message event, encrypted event, or sticker
@@ -135,6 +154,19 @@ class MatrixEventProcessor:
                         logger.debug(
                             f"成功解密消息 (room_id={room.room_id}, event_id={event.event_id})"
                         )
+                        
+                        # Check if decrypted message is a verification request
+                        if event.msgtype == "m.key.verification.request":
+                            logger.info(f"[EventProcessor] 检测到加密的验证请求 (msgtype={event.msgtype})")
+                            # Reconstruct event_data for verification handler
+                            verification_event = {
+                                "type": event.event_type,
+                                "sender": event.sender,
+                                "event_id": event.event_id,
+                                "content": event.content,
+                            }
+                            await self._handle_in_room_verification(room, verification_event)
+                            return
                     else:
                         logger.warning(
                             f"无法解密消息 (room_id={room.room_id}, event_id={event.event_id})"
@@ -188,6 +220,40 @@ class MatrixEventProcessor:
 
         except Exception as e:
             logger.error(f"处理消息事件时出错：{e}")
+
+    async def _handle_in_room_verification(self, room, event_data: dict):
+        """
+        Handle in-room verification events (m.key.verification.*)
+
+        Args:
+            room: Room object
+            event_data: Event data
+        """
+        event_type = event_data.get("type")
+        sender = event_data.get("sender")
+        content = event_data.get("content", {})
+        event_id = event_data.get("event_id")
+
+        # Ignore events from self
+        if sender == self.user_id:
+            return
+
+        logger.info(f"[E2EE] 收到房间内验证事件：{event_type} from {sender}")
+
+        if self.e2ee_manager:
+            try:
+                # Forward to E2EE manager with room_id for in-room response
+                await self.e2ee_manager.handle_in_room_verification_event(
+                    event_type=event_type,
+                    sender=sender,
+                    content=content,
+                    room_id=room.room_id,
+                    event_id=event_id,
+                )
+            except Exception as e:
+                logger.error(f"处理房间内验证事件失败：{e}")
+        else:
+            logger.warning("E2EE 未启用，忽略房间内验证事件")
 
     async def process_to_device_events(self, events: list):
         """

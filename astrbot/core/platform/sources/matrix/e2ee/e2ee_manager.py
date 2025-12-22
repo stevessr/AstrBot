@@ -184,6 +184,33 @@ class E2EEManager:
             )
         return False
 
+    async def handle_in_room_verification_event(
+        self,
+        event_type: str,
+        sender: str,
+        content: dict,
+        room_id: str,
+        event_id: str,
+    ) -> bool:
+        """
+        处理房间内验证事件 (m.key.verification.*)
+
+        Args:
+            event_type: 事件类型
+            sender: 发送者
+            content: 事件内容
+            room_id: 房间 ID
+            event_id: 事件 ID
+
+        Returns:
+            是否处理了事件
+        """
+        if self._verification:
+            return await self._verification.handle_in_room_verification_event(
+                event_type, sender, content, room_id, event_id
+            )
+        return False
+
     async def _verify_untrusted_own_devices(self):
         """
         查询自己的所有设备，为未验证/未信任的设备发起验证请求
@@ -284,6 +311,11 @@ class E2EEManager:
         try:
             # 获取设备密钥
             device_keys = self._olm.get_device_keys()
+            
+            # Debug: 显示上传的设备密钥内容
+            logger.info(f"[E2EE] 上传设备密钥：device_id={device_keys.get('device_id')}")
+            logger.info(f"[E2EE] algorithms={device_keys.get('algorithms')}")
+            logger.info(f"[E2EE] keys={list(device_keys.get('keys', {}).keys())}")
 
             # 生成一次性密钥
             from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT
@@ -294,6 +326,9 @@ class E2EEManager:
                 device_keys=device_keys,
                 one_time_keys=one_time_keys,
             )
+            
+            # Debug: 显示完整响应
+            logger.info(f"[E2EE] upload_keys 响应：{response}")
 
             # 标记密钥为已发布
             self._olm.mark_keys_as_published()
