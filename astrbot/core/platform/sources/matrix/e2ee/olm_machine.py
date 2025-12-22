@@ -20,6 +20,8 @@ try:
         GroupSession,  # 出站会话 (vodozemac 中称为 GroupSession)
         InboundGroupSession,
         Session,
+        ExportedSessionKey,  # 构造函数接受 base64 字符串
+        MegolmMessage,  # 解密时需要将密文转换为此类型
     )
 
     VODOZEMAC_AVAILABLE = True
@@ -282,19 +284,30 @@ class OlmMachine:
         self, room_id: str, session_id: str, session_key: str, sender_key: str
     ):
         """
-        添加 Megolm 入站会话 (从 m.room_key 事件)
+        添加 Megolm 入站会话 (从 m.room_key 事件或备份恢复)
 
         Args:
             room_id: 房间 ID
             session_id: 会话 ID
-            session_key: 会话密钥
+            session_key: 会话密钥 (base64 编码的字符串)
             sender_key: 发送者的 curve25519 密钥
         """
         try:
-            session = InboundGroupSession(session_key)
-            self._megolm_inbound[session_id] = session
-            self.store.save_megolm_inbound(session_id, session.pickle(self._pickle_key))
-            logger.debug(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
+            # vodozemac ExportedSessionKey constructor accepts base64 strings
+            # Matrix key backups store exported session keys (starting with "AQ")
+            if isinstance(session_key, str):
+                # Use ExportedSessionKey constructor which implements from_base64
+                exported_key = ExportedSessionKey(session_key)
+                session = InboundGroupSession.import_session(exported_key)
+                self._megolm_inbound[session_id] = session
+                self.store.save_megolm_inbound(session_id, session.pickle(self._pickle_key))
+                logger.info(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
+            else:
+                # vodozemac SessionKey object (from m.room_key events)
+                session = InboundGroupSession(session_key)
+                self._megolm_inbound[session_id] = session
+                self.store.save_megolm_inbound(session_id, session.pickle(self._pickle_key))
+                logger.debug(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
         except Exception as e:
             logger.error(f"添加 Megolm 入站会话失败：{e}")
 
@@ -312,7 +325,7 @@ class OlmMachine:
         # 尝试从缓存获取会话
         session = self._megolm_inbound.get(session_id)
 
-        # 尝试从存储加载
+        # 尝试从存储加载 vodozemac session
         if not session:
             pickle = self.store.get_megolm_inbound(session_id)
             if pickle:
@@ -328,7 +341,12 @@ class OlmMachine:
             return None
 
         try:
-            plaintext = session.decrypt(ciphertext)
+            # Convert ciphertext string to MegolmMessage
+            if isinstance(ciphertext, str):
+                message = MegolmMessage.from_base64(ciphertext)
+            else:
+                message = ciphertext
+            plaintext = session.decrypt(message)
             # 解析解密后的 JSON
             return json.loads(plaintext.plaintext)
         except Exception as e:
