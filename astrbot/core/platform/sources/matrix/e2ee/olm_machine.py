@@ -111,8 +111,8 @@ class OlmMachine:
             raise RuntimeError("Olm 账户未初始化")
 
         # vodozemac 返回的是 Key 对象，需要转换为字符串
-        curve25519 = str(self._account.curve25519_key)
-        ed25519 = str(self._account.ed25519_key)
+        curve25519 = self._account.curve25519_key.to_base64()
+        ed25519 = self._account.ed25519_key.to_base64()
 
         return {
             f"curve25519:{self.device_id}": curve25519,
@@ -143,7 +143,7 @@ class OlmMachine:
 
         # 生成签名 (vodozemac sign 需要 bytes 输入，返回 Ed25519Signature 对象)
         device_keys_json = self._canonical_json(device_keys)
-        signature = str(self._account.sign(device_keys_json.encode()))
+        signature = self._account.sign(device_keys_json.encode()).to_base64()
 
         device_keys["signatures"] = {
             self.user_id: {f"ed25519:{self.device_id}": signature}
@@ -173,14 +173,14 @@ class OlmMachine:
         # 签名每个密钥 (key 是 Curve25519PublicKey 对象，需要转为字符串)
         signed_keys = {}
         for key_id, key in one_time_keys.items():
-            key_str = str(key)  # 转换为字符串
+            key_str = key.to_base64()  # 转换为字符串
             signed_key = {
                 "key": key_str,
             }
 
             # 生成签名 (vodozemac sign 需要 bytes 输入)
             key_json = self._canonical_json(signed_key)
-            signature = str(self._account.sign(key_json.encode()))
+            signature = self._account.sign(key_json.encode()).to_base64()
             signed_key["signatures"] = {
                 self.user_id: {f"ed25519:{self.device_id}": signature}
             }
@@ -429,7 +429,7 @@ class OlmMachine:
 
         return {
             "algorithm": MEGOLM_ALGO,
-            "sender_key": str(self._account.curve25519_key) if self._account else "",
+            "sender_key": self._account.curve25519_key.to_base64() if self._account else "",
             "session_id": session.session_id,
             "ciphertext": ciphertext,
             "device_id": self.device_id,
@@ -449,11 +449,11 @@ class OlmMachine:
         """获取本设备的 curve25519 密钥"""
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
-        return str(self._account.curve25519_key)
+        return self._account.curve25519_key.to_base64()
 
     @property
     def ed25519_key(self) -> str:
         """获取本设备的 ed25519 密钥"""
         if not self._account:
             raise RuntimeError("Olm 账户未初始化")
-        return str(self._account.ed25519_key)
+        return self._account.ed25519_key.to_base64()

@@ -574,7 +574,7 @@ class E2EEManager:
                 "room_id": room_id,
                 "sender_key": sender_key,
                 "session_id": session_id,
-                "session_key": str(exported_key),
+                "session_key": exported_key.to_base64(),
                 "sender_claimed_ed25519_key": str(self._olm.ed25519_key),
                 "forwarding_curve25519_key_chain": [],
             }
