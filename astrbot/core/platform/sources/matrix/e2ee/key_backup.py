@@ -167,7 +167,7 @@ def _decrypt_backup_data(
             PkDecodeException = Exception
 
         logger.info(
-            f"[E2EE-Backup] 使用 vodozemac 解密：private_key={len(private_key_bytes)}B, "
+            f"使用 vodozemac 解密：private_key={len(private_key_bytes)}B, "
             f"ephemeral={len(ephemeral_public_key)}B, ciphertext={len(ciphertext)}B, mac={len(mac)}B"
         )
 
@@ -193,14 +193,14 @@ def _decrypt_backup_data(
             )
             plaintext = pk_decryption.decrypt(message)
 
-            logger.info(f"[E2EE-Backup] vodozemac 解密成功！明文长度={len(plaintext)}B")
+            logger.info(f"vodozemac 解密成功！明文长度={len(plaintext)}B")
             return plaintext
 
         except BaseException as e1:
             # 捕获所有异常类型（包括 vodozemac 的特殊异常）
             error_msg = str(e1)
             logger.warning(
-                f"[E2EE-Backup] vodozemac 解密失败 ({error_msg})，尝试手动解密..."
+                f"vodozemac 解密失败 ({error_msg})，尝试手动解密..."
             )
 
             # Fallback to manual decryption
@@ -209,12 +209,12 @@ def _decrypt_backup_data(
             )
 
     except ImportError:
-        logger.warning("[E2EE-Backup] vodozemac 未安装，使用 Python 原生实现")
+        logger.warning("vodozemac 未安装，使用 Python 原生实现")
         return _manual_decrypt_v1(
             private_key_bytes, ephemeral_public_key, ciphertext, mac
         )
     except Exception as e:
-        logger.error(f"[E2EE-Backup] 初始化 vodozemac 失败：{e}")
+        logger.error(f"初始化 vodozemac 失败：{e}")
         return _manual_decrypt_v1(
             private_key_bytes, ephemeral_public_key, ciphertext, mac
         )
@@ -269,13 +269,13 @@ def _manual_decrypt_v1(
         if len(mac) == RECOVERY_KEY_MAC_TRUNCATED_LEN:
             if not hmac.compare_digest(mac, full_mac[:MAC_TRUNCATED_BYTES_8]):
                 logger.warning(
-                    f"[E2EE-Backup] Manual: MAC mismatch (8 bytes). "
+                    f"Manual: MAC mismatch (8 bytes). "
                     f"Expected={full_mac[:8].hex()}, Got={mac.hex()}"
                 )
                 return None
         else:
             if not hmac.compare_digest(mac, full_mac):
-                logger.warning("[E2EE-Backup] Manual: MAC mismatch (full)")
+                logger.warning("Manual: MAC mismatch (full)")
                 return None
 
         # 4. AES-CBC Decryption
@@ -289,11 +289,11 @@ def _manual_decrypt_v1(
         unpadder = padding.PKCS7(128).unpadder()
         plaintext = unpadder.update(plaintext_padded) + unpadder.finalize()
 
-        logger.info(f"[E2EE-Backup] Manual: 解密成功！长度={len(plaintext)}B")
+        logger.info(f"Manual: 解密成功！长度={len(plaintext)}B")
         return plaintext
 
     except Exception as e:
-        logger.error(f"[E2EE-Backup] Manual decryption failed: {e}")
+        logger.error(f"Manual decryption failed: {e}")
         return None
 
 
@@ -373,15 +373,15 @@ def _decode_recovery_key(key_str: str) -> bytes:
                 raise ValueError("恢复密钥校验失败 (XOR mismatch)")
 
             private_key = decoded[2 : 2 + RECOVERY_KEY_PRIV_LEN]
-            logger.info("[E2EE-Backup] 成功解析 Base58 恢复密钥")
+            logger.info("成功解析 Base58 恢复密钥")
             return private_key
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] Base58 恢复密钥解析失败：{e}")
+            logger.warning(f"Base58 恢复密钥解析失败：{e}")
 
     # 尝试 Base64（兼容旧格式或直接私钥字符串）
     try:
         decoded = base64.b64decode(key_str + "===")
-        logger.info(f"[E2EE-Backup] Base64 解码：{len(decoded)}B")
+        logger.info(f"Base64 解码：{len(decoded)}B")
 
         if (
             len(decoded) >= RECOVERY_KEY_TOTAL_LEN
@@ -398,7 +398,7 @@ def _decode_recovery_key(key_str: str) -> bytes:
         if len(decoded) >= RECOVERY_KEY_PRIV_LEN:
             return decoded[:RECOVERY_KEY_PRIV_LEN]
     except Exception:
-        logger.debug("[E2EE-Backup] Base64 解码失败，尝试其他格式")
+        logger.debug("Base64 解码失败，尝试其他格式")
 
     raise ValueError("无法解码恢复密钥，请检查输入格式（应为 Matrix Base58 或 Base64）")
 
@@ -449,9 +449,9 @@ class KeyBackup:
                 self._encryption_key = _compute_hkdf(
                     self._recovery_key_bytes, b"", HKDF_MEGOLM_BACKUP_INFO
                 )
-                logger.info("[E2EE-Backup] 使用用户配置的恢复密钥")
+                logger.info("使用用户配置的恢复密钥")
             except Exception as e:
-                logger.error(f"[E2EE-Backup] 解析恢复密钥失败：{e}")
+                logger.error(f"解析恢复密钥失败：{e}")
 
     def _get_extracted_key_path(self) -> str:
         """获取提取的备份密钥存储路径"""
@@ -473,9 +473,9 @@ class KeyBackup:
             with open(path, 'wb') as f:
                 f.write(key_bytes)
             
-            logger.info(f"[E2EE-Backup] 已保存提取的备份密钥到 {path}")
+            logger.info(f"已保存提取的备份密钥到 {path}")
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] 保存提取的备份密钥失败：{e}")
+            logger.warning(f"保存提取的备份密钥失败：{e}")
 
     def _load_extracted_key(self) -> bytes | None:
         """从本地加载之前提取的备份密钥"""
@@ -492,13 +492,13 @@ class KeyBackup:
                 key_bytes = f.read()
             
             if len(key_bytes) == CRYPTO_KEY_SIZE_32:
-                logger.info(f"[E2EE-Backup] 从本地加载了提取的备份密钥")
+                logger.info(f"从本地加载了提取的备份密钥")
                 return key_bytes
             else:
-                logger.warning(f"[E2EE-Backup] 本地备份密钥长度不正确：{len(key_bytes)} bytes")
+                logger.warning(f"本地备份密钥长度不正确：{len(key_bytes)} bytes")
                 return None
         except Exception as e:
-            logger.debug(f"[E2EE-Backup] 加载提取的备份密钥失败：{e}")
+            logger.debug(f"加载提取的备份密钥失败：{e}")
             return None
 
     async def _try_restore_from_secret_storage(
@@ -508,7 +508,7 @@ class KeyBackup:
         尝试从 Secret Storage 解密真正的备份密钥
         支持直接解密和通过 Recovery Key 解密 SSSS Key 的链式解密
         """
-        logger.info("[E2EE-Backup] 尝试从 Secret Storage 恢复密钥...")
+        logger.info("尝试从 Secret Storage 恢复密钥...")
         dehydrated_device = None
         try:
             # 1. Get default key ID
@@ -518,11 +518,11 @@ class KeyBackup:
             key_id = default_key_data.get("key")
             if not key_id:
                 logger.warning(
-                    "[E2EE-Backup] SSSS Account Data 'm.secret_storage.default_key' 未找到或无 'key'"
+                    "SSSS Account Data 'm.secret_storage.default_key' 未找到或无 'key'"
                 )
                 return None
 
-            logger.info(f"[E2EE-Backup] SSSS Default Key ID: {key_id}")
+            logger.info(f"SSSS Default Key ID: {key_id}")
 
             # 2. Try to decrypt the SSSS Key itself (if it's encrypted by the provided key)
             # Fetch key definition
@@ -532,18 +532,18 @@ class KeyBackup:
             # DEBUG LOGGING
             if key_data:
                 logger.info(
-                    f"[E2EE-Backup] Key Data for {key_id}: keys={list(key_data.keys())}"
+                    f"Key Data for {key_id}: keys={list(key_data.keys())}"
                 )
                 if "encrypted" in key_data:
                     logger.info(
-                        f"[E2EE-Backup] Key {key_id} has encrypted data: {list(key_data['encrypted'].keys())}"
+                        f"Key {key_id} has encrypted data: {list(key_data['encrypted'].keys())}"
                     )
                 else:
                     logger.warning(
-                        f"[E2EE-Backup] Key data for {key_id} does not contain 'encrypted' section"
+                        f"Key data for {key_id} does not contain 'encrypted' section"
                     )
             else:
-                logger.warning(f"[E2EE-Backup] Could not fetch data for key {key_id}")
+                logger.warning(f"Could not fetch data for key {key_id}")
                 # Check for Dehydrated Device
                 dehydrated_device = await self.client.get_global_account_data(
                     DEHYDRATED_DEVICE_EVENT
@@ -554,16 +554,16 @@ class KeyBackup:
                     )
                     if dehydrated_device:
                         logger.info(
-                            "[E2EE-Backup] Found MSC2697 dehydrated device event"
+                            "Found MSC2697 dehydrated device event"
                         )
             if dehydrated_device:
                 logger.info(
-                    f"[E2EE-Backup] Found dehydrated device event: {dehydrated_device.keys()}"
+                    f"Found dehydrated device event: {dehydrated_device.keys()}"
                 )
                 device_data = dehydrated_device.get("device_data", {})
                 if device_data:
                     logger.info(
-                        f"[E2EE-Backup] Dehydrated device data keys: {device_data.keys()}"
+                        f"Dehydrated device data keys: {device_data.keys()}"
                     )
                     # Try to decrypt using provided key (dehydrated device key from FluffyChat)
                     # Dehydrated device uses "org.matrix.msc2697.dehydrated_device" or "m.dehydrated_device" as secret name
@@ -574,7 +574,7 @@ class KeyBackup:
                     )
                     if decrypted_device:
                         logger.info(
-                            "[E2EE-Backup] ✅ Successfully decrypted Dehydrated Device data!"
+                            "✅ Successfully decrypted Dehydrated Device data!"
                         )
                         # The decrypted data might contain the actual backup recovery key
                         # Try to extract it and use it as the SSSS key
@@ -585,7 +585,7 @@ class KeyBackup:
                             try:
                                 device_info = json.loads(decrypted_device)
                                 logger.info(
-                                    f"[E2EE-Backup] Decrypted Dehydrated Device Info keys: {device_info.keys()}"
+                                    f"Decrypted Dehydrated Device Info keys: {device_info.keys()}"
                                 )
 
                                 # Look for backup key in common locations
@@ -594,12 +594,12 @@ class KeyBackup:
                                 if "m.megolm_backup.v1" in device_info:
                                     backup_key = device_info["m.megolm_backup.v1"]
                                     logger.info(
-                                        "[E2EE-Backup] Found backup key in dehydrated device: m.megolm_backup.v1"
+                                        "Found backup key in dehydrated device: m.megolm_backup.v1"
                                     )
                                 elif "backup_key" in device_info:
                                     backup_key = device_info["backup_key"]
                                     logger.info(
-                                        "[E2EE-Backup] Found backup key in dehydrated device: backup_key"
+                                        "Found backup key in dehydrated device: backup_key"
                                     )
 
                                 if backup_key:
@@ -608,47 +608,47 @@ class KeyBackup:
                                         try:
                                             extracted_key = base64.b64decode(backup_key)
                                             logger.info(
-                                                f"[E2EE-Backup] ✅ Extracted backup key from dehydrated device ({len(extracted_key)} bytes)"
+                                                f"✅ Extracted backup key from dehydrated device ({len(extracted_key)} bytes)"
                                             )
                                             # Use this as the actual recovery key!
                                             return extracted_key
                                         except:
                                             logger.warning(
-                                                "[E2EE-Backup] Failed to base64 decode backup key from device"
+                                                "Failed to base64 decode backup key from device"
                                             )
                                     elif isinstance(backup_key, bytes):
                                         logger.info(
-                                            f"[E2EE-Backup] ✅ Extracted backup key from dehydrated device ({len(backup_key)} bytes)"
+                                            f"✅ Extracted backup key from dehydrated device ({len(backup_key)} bytes)"
                                         )
                                         return backup_key
 
                             except (json.JSONDecodeError, ValueError):
                                 # Not JSON, might be pickled Olm account or raw key material
                                 logger.info(
-                                    f"[E2EE-Backup] Decrypted Dehydrated Device data is not JSON (len: {len(decrypted_device)})"
+                                    f"Decrypted Dehydrated Device data is not JSON (len: {len(decrypted_device)})"
                                 )
                                 # If it's exactly 32 bytes, it might be the raw backup key
                                 if len(decrypted_device) == CRYPTO_KEY_SIZE_32:
                                     logger.info(
-                                        "[E2EE-Backup] ✅ Dehydrated device data is exactly 32 bytes, using as backup key"
+                                        "✅ Dehydrated device data is exactly 32 bytes, using as backup key"
                                     )
                                     return decrypted_device
                         except Exception as e:
                             logger.warning(
-                                f"[E2EE-Backup] Failed to extract backup key from dehydrated device: {e}"
+                                f"Failed to extract backup key from dehydrated device: {e}"
                             )
                     else:
                         logger.warning(
-                            "[E2EE-Backup] Failed to decrypt Dehydrated Device with provided key"
+                            "Failed to decrypt Dehydrated Device with provided key"
                         )
             else:
-                logger.info("[E2EE-Backup] No dehydrated device event found")
+                logger.info("No dehydrated device event found")
 
             ssss_key = provided_key_bytes
             # If the key definition contains 'encrypted', it means the actual SSSS key is encrypted            # (usually by the Recovery Key or Passphrase)
             if key_data and "encrypted" in key_data:
                 logger.info(
-                    f"[E2EE-Backup] 检测到 SSSS Key {key_id} 是加密存储的，尝试解密..."
+                    f"检测到 SSSS Key {key_id} 是加密存储的，尝试解密..."
                 )
                 encrypted_map = key_data["encrypted"]
                 decrypted_ssss_key = None
@@ -661,7 +661,7 @@ class KeyBackup:
                     )
                     if decrypted:
                         logger.info(
-                            f"[E2EE-Backup] 成功使用提供的密钥解密了 SSSS Key (ID: {kid})"
+                            f"成功使用提供的密钥解密了 SSSS Key (ID: {kid})"
                         )
                         decrypted_ssss_key = decrypted
                         break
@@ -679,7 +679,7 @@ class KeyBackup:
                         ssss_key = decrypted_ssss_key
                 else:
                     logger.warning(
-                        "[E2EE-Backup] 无法解密 SSSS Key，尝试直接使用提供的密钥作为 SSSS Key..."
+                        "无法解密 SSSS Key，尝试直接使用提供的密钥作为 SSSS Key..."
                     )
 
             # 3. Get Backup Secret (m.megolm_backup.v1)
@@ -690,7 +690,7 @@ class KeyBackup:
 
             if not encrypted_data:
                 logger.warning(
-                    f"[E2EE-Backup] Account Data 'm.megolm_backup.v1' 中未找到 Key ID {key_id} 的加密数据"
+                    f"Account Data 'm.megolm_backup.v1' 中未找到 Key ID {key_id} 的加密数据"
                 )
                 return None
 
@@ -701,7 +701,7 @@ class KeyBackup:
             )
 
             if decrypted_secret:
-                logger.info("[E2EE-Backup] SSSS MAC 验证成功，解密备份密钥成功")
+                logger.info("SSSS MAC 验证成功，解密备份密钥成功")
                 # Check format (usually base64 string in Matrix)
                 try:
                     secret_str = decrypted_secret.decode("utf-8")
@@ -712,12 +712,12 @@ class KeyBackup:
                     return decrypted_secret
             else:
                 logger.error(
-                    "[E2EE-Backup] SSSS MAC 验证失败！提供的密钥（或解密出的 SSSS Key）不正确"
+                    "SSSS MAC 验证失败！提供的密钥（或解密出的 SSSS Key）不正确"
                 )
                 return None
 
         except Exception as e:
-            logger.error(f"[E2EE-Backup] SSSS 恢复失败：{e}")
+            logger.error(f"SSSS 恢复失败：{e}")
             import traceback
 
             logger.error(traceback.format_exc())
@@ -750,7 +750,7 @@ class KeyBackup:
             return None
 
         if not CRYPTO_AVAILABLE:
-            logger.error("[E2EE-Backup] 缺少 cryptography 库，无法进行 SSSS 解密")
+            logger.error("缺少 cryptography 库，无法进行 SSSS 解密")
             return None
 
         # Derive AES and MAC keys using HKDF per Matrix spec
@@ -764,9 +764,9 @@ class KeyBackup:
             aes_key = derived[:CRYPTO_KEY_SIZE_32]
             hmac_key = derived[CRYPTO_KEY_SIZE_32:64]
 
-            logger.debug(f"[E2EE-Backup] SSSS 密钥派生：info={repr(info)}, 派生 64 字节")
+            logger.debug(f"SSSS 密钥派生：info={repr(info)}, 派生 64 字节")
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] HKDF 密钥派生失败：{e}, 使用原始密钥")
+            logger.warning(f"HKDF 密钥派生失败：{e}, 使用原始密钥")
             # Fallback: use key directly (backward compatibility)
             aes_key = key
             hmac_key = key
@@ -783,7 +783,7 @@ class KeyBackup:
             # Decrypt
             return _aes_ctr_decrypt(aes_key, iv, ciphertext)
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] 解密异常：{e}")
+            logger.warning(f"解密异常：{e}")
             return None
 
     async def initialize(self):
@@ -792,21 +792,21 @@ class KeyBackup:
             version = await self._get_current_backup_version()
             if version:
                 self._backup_version = version
-                logger.info(f"[E2EE-Backup] 发现现有密钥备份：version={version}")
+                logger.info(f"发现现有密钥备份：version={version}")
 
                 # 验证现有密钥
                 if self._recovery_key_bytes:
                     # 先尝试直接验证
                     if not self._verify_recovery_key(self._recovery_key_bytes):
                         logger.warning(
-                            "[E2EE-Backup] 恢复密钥与备份公钥不匹配，尝试按 Secret Storage Key 处理..."
+                            "恢复密钥与备份公钥不匹配，尝试按 Secret Storage Key 处理..."
                         )
 
                         # 尝试加载之前保存的提取密钥
                         extracted_key = self._load_extracted_key()
                         if extracted_key and self._verify_recovery_key(extracted_key):
                             logger.info(
-                                "[E2EE-Backup] ✅ 使用本地保存的提取密钥成功验证！"
+                                "✅ 使用本地保存的提取密钥成功验证！"
                             )
                             self._recovery_key_bytes = extracted_key
                             self._encryption_key = _compute_hkdf(
@@ -821,11 +821,11 @@ class KeyBackup:
                             )
                             if real_key:
                                 logger.info(
-                                    "[E2EE-Backup] 从 SSSS 成功提取密钥，再次验证..."
+                                    "从 SSSS 成功提取密钥，再次验证..."
                                 )
                                 if self._verify_recovery_key(real_key):
                                     logger.info(
-                                        "[E2EE-Backup] ✅ 成功获取并验证了真正的备份密钥！"
+                                        "✅ 成功获取并验证了真正的备份密钥！"
                                     )
                                     self._recovery_key_bytes = real_key
                                     self._encryption_key = _compute_hkdf(
@@ -836,15 +836,15 @@ class KeyBackup:
                                     # 保存提取的密钥到本地
                                     self._save_extracted_key(real_key)
                                 else:
-                                    logger.error("[E2EE-Backup] SSSS 提取的密钥验证失败")
+                                    logger.error("SSSS 提取的密钥验证失败")
                             else:
-                                logger.error("[E2EE-Backup] 无法通过 SSSS 恢复密钥")
+                                logger.error("无法通过 SSSS 恢复密钥")
                     else:
-                        logger.info("[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配")
+                        logger.info("✅ 恢复密钥与备份版本公钥匹配")
             else:
-                logger.info("[E2EE-Backup] 未发现密钥备份")
+                logger.info("未发现密钥备份")
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] 初始化失败：{e}")
+            logger.warning(f"初始化失败：{e}")
 
     async def _get_current_backup_version(self) -> str | None:
         """获取当前备份版本"""
@@ -898,22 +898,22 @@ class KeyBackup:
                 public_key_std != expected_public_key
                 and public_key != expected_public_key
             ):
-                logger.error("[E2EE-Backup] ❌ 恢复密钥不匹配！")
-                logger.error(f"[E2EE-Backup] 备份版本要求公钥：{expected_public_key}")
+                logger.error("❌ 恢复密钥不匹配！")
+                logger.error(f"备份版本要求公钥：{expected_public_key}")
                 logger.error(
-                    f"[E2EE-Backup] 您的密钥生成公钥：{public_key_std} (或者 {public_key})"
+                    f"您的密钥生成公钥：{public_key_std} (或者 {public_key})"
                 )
 
                 # Check if it matches after padding?
                 return False
 
             logger.info(
-                f"[E2EE-Backup] ✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})"
+                f"✅ 恢复密钥与备份版本公钥匹配 ({expected_public_key})"
             )
             return True
 
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] 验证密钥失败：{e}")
+            logger.warning(f"验证密钥失败：{e}")
             import traceback
 
             logger.warning(traceback.format_exc())
@@ -935,13 +935,13 @@ class KeyBackup:
                 )
                 recovery_key_str = _encode_recovery_key(self._recovery_key_bytes)
 
-                logger.warning("[E2EE-Backup] " + "=" * 50)
-                logger.warning("[E2EE-Backup] ⚠️  新生成的恢复密钥（请务必保存）:")
-                logger.warning(f"[E2EE-Backup] {recovery_key_str}")
+                logger.warning("" + "=" * 50)
+                logger.warning("⚠️  新生成的恢复密钥（请务必保存）:")
+                logger.warning(f"{recovery_key_str}")
                 logger.warning(
-                    "[E2EE-Backup] 可将此密钥配置到 matrix_e2ee_recovery_key"
+                    "可将此密钥配置到 matrix_e2ee_recovery_key"
                 )
-                logger.warning("[E2EE-Backup] " + "=" * 50)
+                logger.warning("" + "=" * 50)
             else:
                 recovery_key_str = _encode_recovery_key(self._recovery_key_bytes)
 
@@ -966,11 +966,11 @@ class KeyBackup:
             version = response.get("version")
             if version:
                 self._backup_version = version
-                logger.info(f"[E2EE-Backup] 创建备份成功：version={version}")
+                logger.info(f"创建备份成功：version={version}")
                 return (version, recovery_key_str)
 
         except Exception as e:
-            logger.error(f"[E2EE-Backup] 创建备份失败：{e}")
+            logger.error(f"创建备份失败：{e}")
         return None
 
     async def upload_room_keys(self, room_id: str | None = None):
@@ -981,13 +981,13 @@ class KeyBackup:
             room_id: 可选，指定房间 ID
         """
         if not self._backup_version or not self._encryption_key:
-            logger.warning("[E2EE-Backup] 未创建备份或无加密密钥，无法上传")
+            logger.warning("未创建备份或无加密密钥，无法上传")
             return
 
         try:
             sessions = self.store._megolm_inbound
             if not sessions:
-                logger.debug("[E2EE-Backup] 没有可上传的会话密钥")
+                logger.debug("没有可上传的会话密钥")
                 return
 
             rooms: dict[str, dict[str, dict]] = {}
@@ -1023,10 +1023,10 @@ class KeyBackup:
                 data={"rooms": rooms},
             )
 
-            logger.info(f"[E2EE-Backup] 已上传 {len(sessions)} 个会话密钥")
+            logger.info(f"已上传 {len(sessions)} 个会话密钥")
 
         except Exception as e:
-            logger.error(f"[E2EE-Backup] 上传密钥失败：{e}")
+            logger.error(f"上传密钥失败：{e}")
 
     async def restore_room_keys(self, recovery_key: str | None = None):
         """
@@ -1036,7 +1036,7 @@ class KeyBackup:
             recovery_key: 恢复密钥 (覆盖初始化时的密钥)
         """
         if not self._backup_version:
-            logger.warning("[E2EE-Backup] 未发现备份，无法恢复")
+            logger.warning("未发现备份，无法恢复")
             return
 
         # 确定使用的恢复密钥
@@ -1045,12 +1045,12 @@ class KeyBackup:
             try:
                 key_bytes = _decode_recovery_key(recovery_key)
             except Exception as e:
-                logger.error(f"[E2EE-Backup] 解析恢复密钥失败：{e}")
+                logger.error(f"解析恢复密钥失败：{e}")
                 return
         elif self._recovery_key_bytes:
             key_bytes = self._recovery_key_bytes
         else:
-            logger.error("[E2EE-Backup] 无恢复密钥，无法解密备份")
+            logger.error("无恢复密钥，无法解密备份")
             return
 
         # 验证密钥是否匹配备份版本
@@ -1064,13 +1064,13 @@ class KeyBackup:
                 # key_bytes 需要转换为 Curve25519SecretKey 对象
                 secret_key = Curve25519SecretKey.from_bytes(key_bytes)
                 _pk_decryption = PkDecryption.from_key(secret_key)
-                logger.debug("[E2EE-Backup] 使用 vodozemac PkDecryption 解密备份")
+                logger.debug("使用 vodozemac PkDecryption 解密备份")
             except Exception as e:
-                logger.warning(f"[E2EE-Backup] 创建 PkDecryption 失败：{e}")
+                logger.warning(f"创建 PkDecryption 失败：{e}")
 
         try:
             logger.info(
-                f"[E2EE-Backup] 开始从备份恢复密钥 (version={self._backup_version})"
+                f"开始从备份恢复密钥 (version={self._backup_version})"
             )
             response = await self.client._request(
                 "GET",
@@ -1080,7 +1080,7 @@ class KeyBackup:
             rooms = response.get("rooms", {})
             total_sessions = sum(len(s) for s in rooms.values())
             logger.info(
-                f"[E2EE-Backup] 获取到 {len(rooms)} 个房间，共 {total_sessions} 个会话"
+                f"获取到 {len(rooms)} 个房间，共 {total_sessions} 个会话"
             )
 
             restored = 0
@@ -1096,20 +1096,20 @@ class KeyBackup:
                         encrypted_data = session_data.get("session_data", {})
                         # 记录数据结构以便调试
                         logger.info(
-                            f"[E2EE-Backup] 会话 {session_id[:8]}... 数据结构：{list(encrypted_data.keys())}"
+                            f"会话 {session_id[:8]}... 数据结构：{list(encrypted_data.keys())}"
                         )
                         # 获取加密数据
                         ciphertext_b64 = encrypted_data.get("ciphertext", "")
                         ephemeral_b64 = encrypted_data.get("ephemeral", "")
                         mac_b64 = encrypted_data.get("mac", "")
                         logger.info(
-                            f"[E2EE-Backup] ciphertext={bool(ciphertext_b64)}, "
+                            f"ciphertext={bool(ciphertext_b64)}, "
                             f"ephemeral={bool(ephemeral_b64)}, mac={bool(mac_b64)}"
                         )
 
                         if not ciphertext_b64:
                             logger.warning(
-                                f"[E2EE-Backup] 会话 {session_id[:8]}... 无 ciphertext"
+                                f"会话 {session_id[:8]}... 无 ciphertext"
                             )
                             skipped += 1
                             continue
@@ -1141,10 +1141,10 @@ class KeyBackup:
                                 )
                                 if plaintext:
                                     logger.info(
-                                        f"[E2EE-Backup] 成功解密会话：{session_id[:8]}..."
+                                        f"成功解密会话：{session_id[:8]}..."
                                     )
                             except Exception as e:
-                                logger.warning(f"[E2EE-Backup] 备份解密失败：{e}")
+                                logger.warning(f"备份解密失败：{e}")
 
                         if plaintext is None:
                             skipped += 1
@@ -1164,7 +1164,7 @@ class KeyBackup:
                                 )
                                 restored += 1
                                 logger.debug(
-                                    f"[E2EE-Backup] 恢复会话：room={room_id[:16]}... session={session_id[:8]}..."
+                                    f"恢复会话：room={room_id[:16]}... session={session_id[:8]}..."
                                 )
                             else:
                                 skipped += 1
@@ -1175,17 +1175,17 @@ class KeyBackup:
 
                     except Exception as e:
                         logger.debug(
-                            f"[E2EE-Backup] 恢复会话 {session_id[:8]}... 失败：{e}"
+                            f"恢复会话 {session_id[:8]}... 失败：{e}"
                         )
                         skipped += 1
 
             if restored > 0:
-                logger.info(f"[E2EE-Backup] 已恢复 {restored} 个会话密钥")
+                logger.info(f"已恢复 {restored} 个会话密钥")
             if skipped > 0:
-                logger.debug(f"[E2EE-Backup] 跳过 {skipped} 个不兼容的会话")
+                logger.debug(f"跳过 {skipped} 个不兼容的会话")
 
         except Exception as e:
-            logger.warning(f"[E2EE-Backup] 恢复密钥失败：{e}")
+            logger.warning(f"恢复密钥失败：{e}")
 
 
 class CrossSigning:

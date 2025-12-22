@@ -142,7 +142,7 @@ class E2EEManager:
 
             # 始终尝试从备份恢复密钥（如果有配置恢复密钥）
             if self._key_backup._backup_version and self.recovery_key:
-                logger.info("[E2EE] 尝试从服务器备份恢复密钥...")
+                logger.info("尝试从服务器备份恢复密钥...")
                 await self._key_backup.restore_room_keys()
 
             # 自动签名自己的设备（使设备变为"已验证"状态）
@@ -234,7 +234,7 @@ class E2EEManager:
 
             device_keys = response.get("device_keys", {}).get(self.user_id, {})
             if not device_keys:
-                logger.debug("[E2EE] 未找到其他设备")
+                logger.debug("未找到其他设备")
                 return
 
             # 获取已验证的设备列表（通过交叉签名）
@@ -258,11 +258,11 @@ class E2EEManager:
                     untrusted_devices.append(device_id)
 
             if not untrusted_devices:
-                logger.info("[E2EE] 所有其他设备已验证")
+                logger.info("所有其他设备已验证")
                 return
 
             logger.info(
-                f"[E2EE] 发现 {len(untrusted_devices)} 个未验证设备，尝试发起验证..."
+                f"发现 {len(untrusted_devices)} 个未验证设备，尝试发起验证..."
             )
 
             # 为每个未验证设备发起验证请求
@@ -270,10 +270,10 @@ class E2EEManager:
                 try:
                     await self._initiate_verification_for_device(device_id)
                 except Exception as e:
-                    logger.warning(f"[E2EE] 无法为设备 {device_id} 发起验证：{e}")
+                    logger.warning(f"无法为设备 {device_id} 发起验证：{e}")
 
         except Exception as e:
-            logger.warning(f"[E2EE] 查询设备验证状态失败：{e}")
+            logger.warning(f"查询设备验证状态失败：{e}")
 
     async def _initiate_verification_for_device(self, target_device_id: str):
         """
@@ -306,7 +306,7 @@ class E2EEManager:
         )
 
         logger.info(
-            f"[E2EE] 已向设备 {target_device_id} 发起验证请求 (txn={txn_id[:8]}...)"
+            f"已向设备 {target_device_id} 发起验证请求 (txn={txn_id[:8]}...)"
         )
 
     async def _upload_device_keys(self):
@@ -319,9 +319,9 @@ class E2EEManager:
             device_keys = self._olm.get_device_keys()
             
             # Debug: 显示上传的设备密钥内容
-            logger.info(f"[E2EE] 上传设备密钥：device_id={device_keys.get('device_id')}")
-            logger.info(f"[E2EE] algorithms={device_keys.get('algorithms')}")
-            logger.info(f"[E2EE] keys={list(device_keys.get('keys', {}).keys())}")
+            logger.info(f"上传设备密钥：device_id={device_keys.get('device_id')}")
+            logger.info(f"algorithms={device_keys.get('algorithms')}")
+            logger.info(f"keys={list(device_keys.get('keys', {}).keys())}")
 
             # 生成一次性密钥
             from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT
@@ -334,7 +334,7 @@ class E2EEManager:
             )
             
             # Debug: 显示完整响应
-            logger.info(f"[E2EE] upload_keys 响应：{response}")
+            logger.info(f"upload_keys 响应：{response}")
 
             # 标记密钥为已发布
             self._olm.mark_keys_as_published()
@@ -539,27 +539,27 @@ class E2EEManager:
             sender_key: 发送者密钥
         """
         if not self._olm or not self._initialized:
-            logger.warning("[E2EE] 未初始化，无法响应密钥请求")
+            logger.warning("未初始化，无法响应密钥请求")
             return
 
         try:
             # 只响应同一用户的请求（安全限制）
             if sender != self.user_id:
                 logger.debug(
-                    f"[E2EE] 忽略来自其他用户的密钥请求：{sender}"
+                    f"忽略来自其他用户的密钥请求：{sender}"
                 )
                 return
 
             # 不响应自己设备的请求
             if requesting_device_id == self.device_id:
-                logger.debug("[E2EE] 忽略来自自己的密钥请求")
+                logger.debug("忽略来自自己的密钥请求")
                 return
 
             # 获取请求的 Megolm 会话
             session = self._olm.get_megolm_inbound_session(session_id)
             if not session:
                 logger.debug(
-                    f"[E2EE] 没有请求的会话：session={session_id[:8]}..."
+                    f"没有请求的会话：session={session_id[:8]}..."
                 )
                 return
 
@@ -567,11 +567,11 @@ class E2EEManager:
             try:
                 exported_key = session.export_at_first_known_index()
                 logger.info(
-                    f"[E2EE] 导出会话密钥：session={session_id[:8]}..., "
+                    f"导出会话密钥：session={session_id[:8]}..., "
                     f"first_index={session.first_known_index}"
                 )
             except Exception as e:
-                logger.warning(f"[E2EE] 导出会话密钥失败：{e}")
+                logger.warning(f"导出会话密钥失败：{e}")
                 return
 
             # 构造 m.forwarded_room_key 内容
@@ -594,11 +594,11 @@ class E2EEManager:
             )
 
             logger.info(
-                f"[E2EE] 已转发密钥：session={session_id[:8]}... -> device={requesting_device_id}"
+                f"已转发密钥：session={session_id[:8]}... -> device={requesting_device_id}"
             )
 
         except Exception as e:
-            logger.warning(f"[E2EE] 响应密钥请求失败：{e}")
+            logger.warning(f"响应密钥请求失败：{e}")
 
     async def encrypt_message(
         self, room_id: str, event_type: str, content: dict
