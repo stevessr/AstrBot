@@ -425,7 +425,11 @@ class MatrixPlatformEvent(AstrMessageEvent):
         return await super().send(message_chain)
 
     async def send_streaming(self, generator, use_fallback: bool = False):
-        """Matrix 流式发送 - 直接消费上游流式输出，累积后整块发送"""
+        """Matrix 流式发送 - 直接消费上游流式输出，累积后整块发送
+
+        注意：Matrix 平台支持真正的流式发送，因此忽略 use_fallback 参数，
+        始终使用累积后一次性发送的方式，避免消息被不必要的分割。
+        """
         room_id = self.session_id
         accumulated_text = ""  # 累积的文本内容
         non_text_components = []  # 非文本组件列表
