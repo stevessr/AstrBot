@@ -98,6 +98,12 @@ class MatrixConfig:
                 user_id=self.user_id, homeserver=self.homeserver, store_path=store_path
             )
 
+    def set_device_id(self, device_id: str):
+        """设置设备 ID"""
+        self._ensure_device_manager()
+        self._device_manager.set_device_id(device_id)
+        self._device_id = device_id
+
     def reset_device_id(self) -> str:
         """重置设备 ID（生成新的设备 ID）"""
         self._ensure_device_manager()

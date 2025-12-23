@@ -117,7 +117,7 @@ class MatrixPlatformAdapter(Platform):
                 self.e2ee_manager = E2EEManager(
                     client=self.client,
                     user_id=self._matrix_config.user_id,
-                    device_id=self._matrix_config.device_id,  # 现在通过属性获取
+                    device_id=self.client.device_id or self._matrix_config.device_id,  # 优先使用服务器返回的device_id
                     store_path=self._matrix_config.e2ee_store_path,
                     homeserver=self._matrix_config.homeserver,
                     auto_verify_mode=self._matrix_config.e2ee_auto_verify,

@@ -578,18 +578,7 @@ class MatrixHTTPClient:
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/leave"
         return await self._request("POST", endpoint, data={})
 
-    async def get_room_state(self, room_id: str) -> dict[str, Any]:
-        """
-        Get room state events
 
-        Args:
-            room_id: Room ID
-
-        Returns:
-            List of state events
-        """
-        endpoint = f"/_matrix/client/v3/rooms/{room_id}/state"
-        return await self._request("GET", endpoint)
 
     async def get_global_account_data(self, type: str) -> dict[str, Any]:
         """

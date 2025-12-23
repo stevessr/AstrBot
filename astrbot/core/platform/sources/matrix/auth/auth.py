@@ -16,7 +16,7 @@ class MatrixAuth:
         self.config = config
         self.user_id = config.user_id
         # device_id 现在通过配置类的属性获取，会自动生成或从存储中恢复
-        self.device_id = None  # 将在需要时通过 config.device_id 获取
+        # 不再设置 self.device_id，直接使用 config.device_id 属性
         self.password = config.password
         self.access_token = config.access_token
         self.auth_method = config.auth_method
@@ -107,7 +107,9 @@ class MatrixAuth:
                 return False
 
             self.access_token = data.get("access_token")
-            self.device_id = data.get("device_id")
+            device_id = data.get("device_id")
+            if device_id:
+                self.config.set_device_id(device_id)
             self.refresh_token = data.get("refresh_token")
 
             if self.access_token:
@@ -206,7 +208,9 @@ class MatrixAuth:
                 device_id=self.device_id,
             )
             self.user_id = response.get("user_id")
-            self.device_id = response.get("device_id")
+            device_id = response.get("device_id")
+            if device_id:
+                self.config.set_device_id(device_id)
             self.access_token = response.get("access_token")
             self.refresh_token = response.get("refresh_token")
             self._log("info", f"Successfully logged in as {self.user_id}")
@@ -230,7 +234,9 @@ class MatrixAuth:
 
             whoami = await self.client.whoami()
             self.user_id = whoami.get("user_id", self.user_id)
-            self.device_id = whoami.get("device_id", self.device_id)
+            device_id = whoami.get("device_id")
+            if device_id:
+                self.config.set_device_id(device_id)
             self._log("info", f"Successfully logged in as {self.user_id}")
         except Exception as e:
             error_str = str(e)
@@ -288,7 +294,9 @@ class MatrixAuth:
 
             # Update credentials
             self.user_id = response.get("user_id")
-            self.device_id = response.get("device_id")
+            device_id = response.get("device_id")
+            if device_id:
+                self.config.set_device_id(device_id)
             self.access_token = response.get("access_token")
             self.refresh_token = response.get("refresh_token")
 

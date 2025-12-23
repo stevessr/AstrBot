@@ -1231,25 +1231,38 @@ class CrossSigning:
                     self._user_signing_key = server_user_signing
                     logger.info("[E2EE-CrossSign] 发现服务器用户签名密钥")
 
-            # 如果服务器已有密钥但本地缺少私钥，重新生成并覆盖
+            # 如果服务器已有密钥但本地缺少私钥，尝试重新生成并覆盖
             if server_master and not self._master_priv:
                 logger.warning(
-                    "[E2EE-CrossSign] 服务器已有交叉签名密钥，但本地缺少私钥，正在重新生成并覆盖..."
+                    "[E2EE-CrossSign] 服务器已有交叉签名密钥，但本地缺少私钥，正在尝试重新生成..."
                 )
-                await self._generate_and_upload_keys(force_regen=True)
-                return
+                try:
+                    await self._generate_and_upload_keys(force_regen=True)
+                    return
+                except Exception as e:
+                    logger.error(f"[E2EE-CrossSign] 重新生成交叉签名密钥失败：{e}")
+                    logger.warning("[E2EE-CrossSign] 将继续使用服务器现有的密钥（但无法签名新设备）")
+                    # 继续执行，不返回
 
             # 如缺少密钥则生成并上传
             if not server_master:
-                await self._generate_and_upload_keys()
+                try:
+                    await self._generate_and_upload_keys()
+                except Exception as e:
+                    logger.error(f"[E2EE-CrossSign] 生成交叉签名密钥失败：{e}")
+                    logger.warning("[E2EE-CrossSign] 交叉签名功能将不可用")
             elif server_master and server_self_signing and server_user_signing:
                 logger.info("[E2EE-CrossSign] 交叉签名密钥已就绪")
                 return
             elif server_master and self._master_priv:
                 # 补全缺失的 self/user keys
-                await self._generate_and_upload_keys(
-                    force_regen=False, reuse_master=True
-                )
+                try:
+                    await self._generate_and_upload_keys(
+                        force_regen=False, reuse_master=True
+                    )
+                except Exception as e:
+                    logger.error(f"[E2EE-CrossSign] 补全交叉签名密钥失败：{e}")
+                    logger.warning("[E2EE-CrossSign] 部分交叉签名功能可能不可用")
 
         except Exception as e:
             logger.warning(f"[E2EE-CrossSign] 初始化失败：{e}")

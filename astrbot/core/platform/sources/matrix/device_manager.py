@@ -3,7 +3,7 @@ Matrix Device ID 管理器
 负责生成、存储和恢复 Matrix 设备 ID
 """
 
-import hashlib
+import base64
 import json
 import secrets
 from pathlib import Path
@@ -63,20 +63,30 @@ class MatrixDeviceManager:
         """
         生成新的设备 ID
 
-        基于用户 ID、服务器信息和随机数生成稳定的设备 ID
-        格式：ASTRBOT_<12 位大写十六进制>
-
         Returns:
-            生成的设备 ID
+            设备 ID 字符串
         """
-        # 使用用户 ID、服务器 URL 和随机种子生成设备 ID
-        seed_data = f"{self.user_id}:{self.homeserver}:{secrets.token_bytes(16).hex()}"
+        # 生成符合 Matrix 标准的设备 ID
+        # 使用 Base64 编码的随机字节，但使用 URL 和文件名安全的字符集
 
-        # 生成 SHA-256 哈希并取前 12 个字符
-        hash_obj = hashlib.sha256(seed_data.encode())
-        device_hex = hash_obj.hexdigest()[:12].upper()
+        # 生成 9 字节的随机数据，Base64 编码后得到 12 个字符
+        random_bytes = secrets.token_bytes(9)
+        # 使用标准 Base64，然后替换字符使其更符合 Matrix 风格
+        device_id = base64.b64encode(random_bytes).decode("ascii")
 
-        device_id = f"ASTRBOT_{device_hex}"
+        # 移除末尾可能的 '=' 填充
+        device_id = device_id.rstrip("=")
+
+        # 替换一些字符使其更像 Matrix 设备 ID
+        device_id = device_id.replace("+", "").replace("/", "")
+
+        # 确保长度在合理范围内（10-15 个字符）
+        if len(device_id) < 10:
+            # 如果太短，添加更多随机字符
+            device_id += secrets.token_urlsafe(5)[: 15 - len(device_id)]
+        elif len(device_id) > 15:
+            # 如果太长，截断
+            device_id = device_id[:15]
 
         logger.info(
             f"生成新的 Matrix 设备 ID: {device_id}",
@@ -138,6 +148,8 @@ class MatrixDeviceManager:
                 "homeserver": self.homeserver,
                 "created_at": int(__import__("time").time() * 1000),  # 毫秒时间戳
             }
+            # 确保目录存在
+            Path(self.device_info_path).parent.mkdir(parents=True, exist_ok=True)
 
             with open(self.device_info_path, "w") as f:
                 json.dump(device_info, f, indent=2)
@@ -214,6 +226,13 @@ class MatrixDeviceManager:
             extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
         )
         return self.get_or_create_device_id(force_new=True)
+
+    def set_device_id(self, device_id: str):
+        """设置设备 ID"""
+        self._device_id = device_id
+        # 保存到文件
+        device_info = {"device_id": device_id}
+        self.device_info_path.write_text(json.dumps(device_info, indent=2))
 
     def delete_device_info(self):
         """删除存储的设备信息"""

@@ -92,7 +92,14 @@ class OlmMachine:
                 self._account = Account.from_pickle(pickle, self._pickle_key)
                 logger.info("从存储恢复 Olm 账户")
             except Exception as e:
-                logger.error(f"恢复 Olm 账户失败：{e}")
+                logger.warning(f"恢复 Olm 账户失败（可能是密钥不匹配或数据损坏）：{e}")
+                logger.info("将创建新的 Olm 账户")
+                # 删除损坏的 pickle 文件
+                try:
+                    self.store._account_file.unlink(missing_ok=True)
+                    logger.info("已删除损坏的账户文件")
+                except Exception as cleanup_e:
+                    logger.warning(f"删除损坏文件失败：{cleanup_e}")
                 self._create_new_account()
         else:
             self._create_new_account()
