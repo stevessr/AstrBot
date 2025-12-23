@@ -15,7 +15,8 @@ class MatrixAuth:
         self.client = client
         self.config = config
         self.user_id = config.user_id
-        self.device_id = config.device_id
+        # device_id 现在通过配置类的属性获取，会自动生成或从存储中恢复
+        self.device_id = None  # 将在需要时通过 config.device_id 获取
         self.password = config.password
         self.access_token = config.access_token
         self.auth_method = config.auth_method
@@ -35,6 +36,11 @@ class MatrixAuth:
         elif level == "error":
             logger.error(msg, extra=extra)
 
+    @property
+    def device_id(self) -> str:
+        """获取设备 ID"""
+        return self.config.device_id
+    
     def _get_token_store_path(self) -> str:
         """Get path for storing auth token"""
         if self.token_store_path:

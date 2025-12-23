@@ -10,7 +10,12 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT, MEGOLM_ALGO, OLM_ALGO
+from ..constants import (
+    DEFAULT_ONE_TIME_KEYS_COUNT,
+    MEGOLM_ALGO,
+    OLM_ALGO,
+    OLM_ALGO_SHA256,
+)
 from .crypto_store import CryptoStore
 
 # 尝试导入 vodozemac
@@ -134,11 +139,12 @@ class OlmMachine:
         device_keys = {
             "user_id": self.user_id,
             "device_id": self.device_id,
-            "algorithms": [OLM_ALGO, MEGOLM_ALGO],
+            "algorithms": [OLM_ALGO, OLM_ALGO_SHA256, MEGOLM_ALGO],
             "keys": keys,
             # 设备显示名称，帮助用户识别设备
             "unsigned": {
                 "device_display_name": "AstrBot",
+                "device_id": self.device_id,
             },
         }
 
@@ -152,7 +158,9 @@ class OlmMachine:
 
         return device_keys
 
-    def generate_one_time_keys(self, count: int = DEFAULT_ONE_TIME_KEYS_COUNT) -> dict[str, dict]:
+    def generate_one_time_keys(
+        self, count: int = DEFAULT_ONE_TIME_KEYS_COUNT
+    ) -> dict[str, dict]:
         """
         生成一次性密钥
 
@@ -219,9 +227,7 @@ class OlmMachine:
         identity_key = Curve25519PublicKey(their_identity_key)
         one_time_key = Curve25519PublicKey(their_one_time_key)
 
-        session = self._account.create_outbound_session(
-            identity_key, one_time_key
-        )
+        session = self._account.create_outbound_session(identity_key, one_time_key)
 
         # 缓存会话
         if their_identity_key not in self._olm_sessions:
@@ -234,7 +240,13 @@ class OlmMachine:
 
         return session
 
-    def encrypt_olm(self, their_identity_key: str, content: dict, session: Session | None = None, recipient_user_id: str = "unknown") -> dict:
+    def encrypt_olm(
+        self,
+        their_identity_key: str,
+        content: dict,
+        session: Session | None = None,
+        recipient_user_id: str = "unknown",
+    ) -> dict:
         """
         使用 Olm 加密内容并添加 Matrix 协议外壳
 
@@ -272,10 +284,14 @@ class OlmMachine:
         payload_json = json.dumps(wrapper, ensure_ascii=False)
         ciphertext = session.encrypt(payload_json.encode())
 
-        logger.debug(f"Olm 加密完成：type={ciphertext.message_type} payload_len={len(payload_json)}")
+        logger.debug(
+            f"Olm 加密完成：type={ciphertext.message_type} payload_len={len(payload_json)}"
+        )
 
         # 更新存储
-        self.store.update_olm_session(their_identity_key, 0, session.pickle(self._pickle_key))
+        self.store.update_olm_session(
+            their_identity_key, 0, session.pickle(self._pickle_key)
+        )
 
         return {
             "algorithm": OLM_ALGO,
@@ -369,14 +385,22 @@ class OlmMachine:
                 exported_key = ExportedSessionKey(session_key)
                 session = InboundGroupSession.import_session(exported_key)
                 self._megolm_inbound[session_id] = session
-                self.store.save_megolm_inbound(session_id, session.pickle(self._pickle_key))
-                logger.info(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
+                self.store.save_megolm_inbound(
+                    session_id, session.pickle(self._pickle_key)
+                )
+                logger.info(
+                    f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}"
+                )
             else:
                 # vodozemac SessionKey object (from m.room_key events)
                 session = InboundGroupSession(session_key)
                 self._megolm_inbound[session_id] = session
-                self.store.save_megolm_inbound(session_id, session.pickle(self._pickle_key))
-                logger.debug(f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}")
+                self.store.save_megolm_inbound(
+                    session_id, session.pickle(self._pickle_key)
+                )
+                logger.debug(
+                    f"添加 Megolm 入站会话：{session_id[:8]}... 房间：{room_id}"
+                )
         except Exception as e:
             logger.error(f"添加 Megolm 入站会话失败：{e}")
 
@@ -508,7 +532,9 @@ class OlmMachine:
 
         return {
             "algorithm": MEGOLM_ALGO,
-            "sender_key": self._account.curve25519_key.to_base64() if self._account else "",
+            "sender_key": self._account.curve25519_key.to_base64()
+            if self._account
+            else "",
             "session_id": session.session_id,
             "ciphertext": ciphertext.to_base64(),
             "device_id": self.device_id,

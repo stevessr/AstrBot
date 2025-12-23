@@ -495,11 +495,6 @@ CONFIG_METADATA_2 = {
                         "description": "自动加入房间",
                         "type": "bool",
                     },
-                    "matrix_device_id": {
-                        "description": "matrix 设备 ID",
-                        "type": "string",
-                        "hint": "用于 matrix 设备验证",
-                    },
                     "matrix_enable_threading": {
                         "description": "启用线程回复（试验性）",
                         "type": "bool",

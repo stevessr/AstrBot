@@ -1,0 +1,220 @@
+"""
+Matrix Device ID 管理器
+负责生成、存储和恢复 Matrix 设备 ID
+"""
+
+import hashlib
+import json
+import secrets
+from pathlib import Path
+from typing import Optional
+
+from astrbot.api import logger
+
+
+class MatrixDeviceManager:
+    """
+    Matrix 设备 ID 管理器
+
+    功能：
+    - 基于用户信息和服务器信息生成稳定的设备 ID
+    - 持久化存储设备 ID
+    - 在需要时生成新的设备 ID
+    """
+
+    def __init__(
+        self, user_id: str, homeserver: str, store_path: str = "./data/matrix_store"
+    ):
+        """
+        初始化设备管理器
+
+        Args:
+            user_id: Matrix 用户 ID
+            homeserver: Matrix 服务器地址
+            store_path: 存储路径
+        """
+        self.user_id = user_id
+        self.homeserver = homeserver.rstrip("/")
+        self.store_path = Path(store_path)
+
+        # 为每个用户创建独立的存储目录
+        sanitized_user = user_id.replace(":", "_").replace("@", "")
+        self.user_store_path = self.store_path / sanitized_user
+        self.user_store_path.mkdir(parents=True, exist_ok=True)
+
+        # 设备信息文件路径
+        self.device_info_path = self.user_store_path / "device_info.json"
+
+        self._device_id: Optional[str] = None
+
+    def _generate_device_id(self) -> str:
+        """
+        生成新的设备 ID
+
+        基于用户 ID、服务器信息和随机数生成稳定的设备 ID
+        格式：ASTRBOT_<12 位大写十六进制>
+
+        Returns:
+            生成的设备 ID
+        """
+        # 使用用户 ID、服务器 URL 和随机种子生成设备 ID
+        seed_data = f"{self.user_id}:{self.homeserver}:{secrets.token_bytes(16).hex()}"
+
+        # 生成 SHA-256 哈希并取前 12 个字符
+        hash_obj = hashlib.sha256(seed_data.encode())
+        device_hex = hash_obj.hexdigest()[:12].upper()
+
+        device_id = f"ASTRBOT_{device_hex}"
+
+        logger.info(
+            f"生成新的 Matrix 设备 ID: {device_id}",
+            extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
+        )
+
+        return device_id
+
+    def _load_device_info(self) -> Optional[dict]:
+        """
+        从磁盘加载设备信息
+
+        Returns:
+            设备信息字典，如果不存在则返回 None
+        """
+        try:
+            if not self.device_info_path.exists():
+                return None
+
+            with open(self.device_info_path, "r") as f:
+                device_info = json.load(f)
+
+            # 验证设备信息是否匹配当前用户和服务器
+            if (
+                device_info.get("user_id") != self.user_id
+                or device_info.get("homeserver") != self.homeserver
+            ):
+                logger.warning(
+                    "存储的设备信息与当前用户/服务器不匹配，将生成新的设备 ID",
+                    extra={"plugin_tag": "matrix", "short_levelname": "WARN"},
+                )
+                return None
+
+            logger.debug(
+                f"从磁盘加载设备信息：device_id={device_info.get('device_id')}",
+                extra={"plugin_tag": "matrix", "short_levelname": "DBUG"},
+            )
+
+            return device_info
+
+        except Exception as e:
+            logger.error(
+                f"加载设备信息失败：{e}",
+                extra={"plugin_tag": "matrix", "short_levelname": "ERRO"},
+            )
+            return None
+
+    def _save_device_info(self, device_id: str):
+        """
+        保存设备信息到磁盘
+
+        Args:
+            device_id: 要保存的设备 ID
+        """
+        try:
+            device_info = {
+                "device_id": device_id,
+                "user_id": self.user_id,
+                "homeserver": self.homeserver,
+                "created_at": int(__import__("time").time() * 1000),  # 毫秒时间戳
+            }
+
+            with open(self.device_info_path, "w") as f:
+                json.dump(device_info, f, indent=2)
+
+            logger.debug(
+                f"设备信息已保存到：{self.device_info_path}",
+                extra={"plugin_tag": "matrix", "short_levelname": "DBUG"},
+            )
+
+        except Exception as e:
+            logger.error(
+                f"保存设备信息失败：{e}",
+                extra={"plugin_tag": "matrix", "short_levelname": "ERRO"},
+            )
+
+    def get_or_create_device_id(self, force_new: bool = False) -> str:
+        """
+        获取现有设备 ID 或创建新的设备 ID
+
+        Args:
+            force_new: 是否强制生成新的设备 ID
+
+        Returns:
+            设备 ID
+        """
+        # 如果已经有缓存的设备 ID 且不强制重新生成，直接返回
+        if self._device_id and not force_new:
+            return self._device_id
+
+        # 尝试从磁盘加载现有设备信息
+        if not force_new:
+            device_info = self._load_device_info()
+            if device_info and "device_id" in device_info:
+                self._device_id = device_info["device_id"]
+                logger.info(
+                    f"使用已存储的设备 ID: {self._device_id}",
+                    extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
+                )
+                return self._device_id
+
+        # 生成新的设备 ID
+        self._device_id = self._generate_device_id()
+
+        # 保存到磁盘
+        self._save_device_info(self._device_id)
+
+        return self._device_id
+
+    def get_device_id(self) -> Optional[str]:
+        """
+        获取当前设备 ID（不自动生成）
+
+        Returns:
+            当前设备 ID，如果不存在则返回 None
+        """
+        if self._device_id:
+            return self._device_id
+
+        device_info = self._load_device_info()
+        if device_info and "device_id" in device_info:
+            self._device_id = device_info["device_id"]
+
+        return self._device_id
+
+    def reset_device_id(self) -> str:
+        """
+        重置设备 ID（生成新的设备 ID）
+
+        Returns:
+            新的设备 ID
+        """
+        logger.info(
+            "重置 Matrix 设备 ID",
+            extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
+        )
+        return self.get_or_create_device_id(force_new=True)
+
+    def delete_device_info(self):
+        """删除存储的设备信息"""
+        try:
+            if self.device_info_path.exists():
+                self.device_info_path.unlink()
+                logger.info(
+                    "已删除存储的设备信息",
+                    extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
+                )
+            self._device_id = None
+        except Exception as e:
+            logger.error(
+                f"删除设备信息失败：{e}",
+                extra={"plugin_tag": "matrix", "short_levelname": "ERRO"},
+            )

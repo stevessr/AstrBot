@@ -138,6 +138,9 @@ class MatrixEventProcessor:
             # Handle encrypted messages first
             if event_type == "m.room.encrypted" or event_content.get("algorithm"):
                 if self.e2ee_manager:
+                    algorithm = event_content.get("algorithm")
+                    logger.debug(f"检测到加密事件，算法：{algorithm}")
+
                     # 尝试解密
                     decrypted = await self.e2ee_manager.decrypt_event(
                         event_content, event.sender, room.room_id
@@ -149,7 +152,7 @@ class MatrixEventProcessor:
                         event.msgtype = event.content.get("msgtype", "")
                         event.body = event.content.get("body", "")
                         logger.debug(
-                            f"成功解密消息 (room_id={room.room_id}, event_id={event.event_id})"
+                            f"成功解密消息 (room_id={room.room_id}, event_id={event.event_id}, algorithm={algorithm})"
                         )
 
                         # Check if decrypted message is a verification event (request or other steps)
@@ -354,7 +357,9 @@ class MatrixEventProcessor:
                                 )
                                 logger.debug("成功处理加密的 m.forwarded_room_key 事件")
                             else:
-                                logger.debug(f"收到未知的加密 to_device 事件类型：{inner_type}")
+                                logger.debug(
+                                    f"收到未知的加密 to_device 事件类型：{inner_type}"
+                                )
                     except Exception as e:
                         logger.error(f"处理加密 to_device 事件失败：{e}")
                 continue

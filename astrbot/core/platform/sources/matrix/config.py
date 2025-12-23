@@ -2,11 +2,10 @@
 Matrix 配置与初始化组件
 """
 
-import uuid
-
 from astrbot.api import logger
 
 from .constants import DEFAULT_TIMEOUT_MS_30000
+from .device_manager import MatrixDeviceManager
 
 
 class MatrixConfig:
@@ -23,14 +22,20 @@ class MatrixConfig:
         # Supported methods: password, token, oauth2
         self.auth_method = self.config.get("matrix_auth_method", "password")
         self.device_name = self.config.get("matrix_device_name", "AstrBot")
-        self.device_id = self.config.get("matrix_device_id")
-        if not self.device_id:
-            self.device_id = f"ASTRBOT_{uuid.uuid4().hex[:12].upper()}"
-            self.config["matrix_device_id"] = self.device_id
-            logger.info(
-                f"Auto-generated Matrix device_id: {self.device_id}",
-                extra={"plugin_tag": "matrix", "short_levelname": "INFO"},
+
+        # 设备 ID 现在由 DeviceManager 管理，不再支持手动配置
+        # 如果配置中有旧的 device_id，忽略它并记录警告
+        if self.config.get("matrix_device_id"):
+            logger.warning(
+                "matrix_device_id 配置选项已弃用，设备 ID 现在由系统自动生成和管理",
+                extra={"plugin_tag": "matrix", "short_levelname": "WARN"},
             )
+            # 从配置中移除旧的 device_id
+            del self.config["matrix_device_id"]
+
+        # 初始化设备管理器（延迟到有 user_id 时）
+        self._device_manager: MatrixDeviceManager = None
+        self._device_id: str = None
 
         # OAuth2 configuration - all parameters auto-discovered from server
         # Only refresh_token is stored locally (auto-saved after login)
@@ -39,7 +44,9 @@ class MatrixConfig:
         # Ensure these attributes exist for other components
         self.store_path = self.config.get("matrix_store_path", "./data/matrix_store")
         self.auto_join_rooms = self.config.get("matrix_auto_join_rooms", True)
-        self.sync_timeout = self.config.get("matrix_sync_timeout", DEFAULT_TIMEOUT_MS_30000)
+        self.sync_timeout = self.config.get(
+            "matrix_sync_timeout", DEFAULT_TIMEOUT_MS_30000
+        )
 
         # 嘟文串（Threading）配置
         # 当启用时，回复消息会创建/加入线程而非普通的时间线回复
@@ -69,6 +76,28 @@ class MatrixConfig:
         self.e2ee_recovery_key = self.config.get("matrix_e2ee_recovery_key", "")
 
         self._validate()
+
+    @property
+    def device_id(self) -> str:
+        """获取设备 ID，如果不存在则自动生成"""
+        if self._device_id is None:
+            self._ensure_device_manager()
+            self._device_id = self._device_manager.get_or_create_device_id()
+        return self._device_id
+
+    def _ensure_device_manager(self):
+        """确保设备管理器已初始化"""
+        if self._device_manager is None and self.user_id:
+            store_path = self.config.get("matrix_store_path", "./data/matrix_store")
+            self._device_manager = MatrixDeviceManager(
+                user_id=self.user_id, homeserver=self.homeserver, store_path=store_path
+            )
+
+    def reset_device_id(self) -> str:
+        """重置设备 ID（生成新的设备 ID）"""
+        self._ensure_device_manager()
+        self._device_id = self._device_manager.reset_device_id()
+        return self._device_id
 
     def _validate(self):
         if not self.user_id and self.auth_method != "oauth2":

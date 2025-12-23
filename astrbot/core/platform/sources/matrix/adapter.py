@@ -112,7 +112,7 @@ class MatrixPlatformAdapter(Platform):
                 self.e2ee_manager = E2EEManager(
                     client=self.client,
                     user_id=self._matrix_config.user_id,
-                    device_id=self._matrix_config.device_id,
+                    device_id=self._matrix_config.device_id,  # 现在通过属性获取
                     store_path=self._matrix_config.e2ee_store_path,
                     auto_verify_mode=self._matrix_config.e2ee_auto_verify,
                     enable_key_backup=self._matrix_config.e2ee_key_backup,
@@ -393,7 +393,7 @@ class MatrixPlatformAdapter(Platform):
             # Find and update our platform config
             for platform in main_config.get("platform", []):
                 if platform.get("id") == self._original_config.get("id"):
-                    platform["matrix_device_id"] = self._matrix_config.device_id
+                    # device_id 现在由系统管理，不再保存到配置中
                     if self._matrix_config.access_token and not platform.get(
                         "matrix_access_token"
                     ):

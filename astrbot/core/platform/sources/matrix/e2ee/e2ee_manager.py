@@ -19,6 +19,7 @@ from ..constants import (
     MEGOLM_ALGO,
     MEMBERSHIP_INVITE,
     MEMBERSHIP_JOIN,
+    OLM_ALGO,
     OLM_ALGO_SHA256,
     PREFIX_CURVE25519,
     PREFIX_ED25519,
@@ -330,8 +331,17 @@ class E2EEManager:
             
             # Debug: 显示上传的设备密钥内容
             logger.info(f"上传设备密钥：device_id={device_keys.get('device_id')}")
-            logger.info(f"algorithms={device_keys.get('algorithms')}")
+            algorithms = device_keys.get('algorithms', [])
+            logger.info(f"支持的加密算法：{algorithms}")
             logger.info(f"keys={list(device_keys.get('keys', {}).keys())}")
+            
+            # 验证算法列表包含必要的加密算法
+            required_algos = [OLM_ALGO, MEGOLM_ALGO]
+            missing_algos = [algo for algo in required_algos if algo not in algorithms]
+            if missing_algos:
+                logger.error(f"缺少必要的加密算法：{missing_algos}")
+            else:
+                logger.info("设备密钥包含所有必要的加密算法")
 
             # 生成一次性密钥
             from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT
@@ -407,7 +417,7 @@ class E2EEManager:
             return None
 
         elif algorithm in (OLM_ALGO, OLM_ALGO_SHA256):
-            # Olm 消息解密
+            # Olm 消息解密（支持两种算法变体）
             sender_key = event_content.get("sender_key")
             ciphertext_data = event_content.get("ciphertext", {})
 

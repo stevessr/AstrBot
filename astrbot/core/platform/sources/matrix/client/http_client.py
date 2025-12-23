@@ -1094,9 +1094,17 @@ class MatrixHTTPClient:
 
         if device_keys:
             data["device_keys"] = device_keys
+            # 记录设备密钥信息用于调试
+            algorithms = device_keys.get("algorithms", [])
+            device_id = device_keys.get("device_id", "unknown")
+            logger.info(f"上传设备密钥：device_id={device_id}, algorithms={algorithms}")
+            
         if one_time_keys:
+            otk_count = len(one_time_keys)
+            logger.debug(f"上传 {otk_count} 个一次性密钥")
             data["one_time_keys"] = one_time_keys
         if fallback_keys:
+            logger.debug("上传备用密钥")
             data["fallback_keys"] = fallback_keys
 
         return await self._request("POST", endpoint, data=data)
