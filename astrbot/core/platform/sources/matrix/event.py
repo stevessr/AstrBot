@@ -430,6 +430,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
         注意：Matrix 平台支持真正的流式发送，因此忽略 use_fallback 参数，
         始终使用累积后一次性发送的方式，避免消息被不必要的分割。
         """
+        logger.info(f"Matrix send_streaming 开始，use_fallback={use_fallback}")
         room_id = self.session_id
         accumulated_text = ""  # 累积的文本内容
         non_text_components = []  # 非文本组件列表
@@ -450,8 +451,11 @@ class MatrixPlatformEvent(AstrMessageEvent):
         except Exception as e:
             logger.debug(f"发送输入指示失败：{e}")
 
+        chain_count = 0
         try:
             async for chain in generator:
+                chain_count += 1
+                logger.info(f"处理第 {chain_count} 个消息链")
                 if isinstance(chain, MessageChain):
                     # 只在第一个消息链中检查回复信息
                     if not first_chain_processed:
@@ -566,6 +570,9 @@ class MatrixPlatformEvent(AstrMessageEvent):
                 await self.client.set_typing(room_id, typing=False)
             except Exception as e:
                 logger.debug(f"停止输入指示失败：{e}")
+            logger.info(
+                f"流式处理完成，共处理 {chain_count} 个消息链，累积文本长度：{len(accumulated_text)}"
+            )
 
         # 发送累积的文本内容
         if accumulated_text:
@@ -615,11 +622,15 @@ class MatrixPlatformEvent(AstrMessageEvent):
                 elif reply_to:
                     content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
 
+                logger.info(
+                    f"发送流式消息，长度：{len(accumulated_text)}，回复对象：{reply_to}"
+                )
                 await self.client.send_message(
                     room_id=room_id,
                     msg_type="m.room.message",
                     content=content,
                 )
+                logger.info(f"流式消息发送成功")
             except Exception as e:
                 logger.error(f"发送消息失败 (streaming): {e}")
 
