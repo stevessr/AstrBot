@@ -126,6 +126,7 @@ class RespondStage(Stage):
             "qq_official",
             "weixin_official_account",
             "dingtalk",
+            "matrix",  # Matrix 平台支持完整消息发送，不需要分段回复
         ]:
             return False
 
