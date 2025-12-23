@@ -173,9 +173,12 @@ class MatrixSyncManager:
                 unused_fallback_key_types = sync_response.get(
                     "device_unused_fallback_key_types", []
                 )
-                if (
-                    one_time_keys_count or unused_fallback_key_types
-                ) and self.on_device_one_time_keys_count:
+                # Trigger callback if we have the callback set and either:
+                # - key counts dict exists (even if empty, as 0 keys is valid)
+                # - or we have fallback key type info
+                if self.on_device_one_time_keys_count and (
+                    one_time_keys_count is not None or unused_fallback_key_types
+                ):
                     await self.on_device_one_time_keys_count(
                         one_time_keys_count, unused_fallback_key_types
                     )

@@ -150,7 +150,8 @@ class MatrixPlatformAdapter(Platform):
             )
 
         # Track last sent message per room (for auto-reply-to)
-        self._last_sent_message_ids: dict[str, str] = {}
+        # This tracks the last USER message received, not our own bot messages
+        self._last_received_message_ids: dict[str, str] = {}
 
         logger.info("Matrix Adapter 初始化完成")
 
@@ -182,11 +183,11 @@ class MatrixPlatformAdapter(Platform):
                 except Exception:
                     pass
 
-            # 如果仍然没有 reply_to，使用上一个发出的消息 ID（阻止消息逃逸）
-            if reply_to is None and room_id in self._last_sent_message_ids:
-                reply_to = self._last_sent_message_ids[room_id]
+            # 如果仍然没有 reply_to，使用上一个接收到的用户消息 ID（阻止消息逃逸）
+            if reply_to is None and room_id in self._last_received_message_ids:
+                reply_to = self._last_received_message_ids[room_id]
                 logger.debug(
-                    f"未指定 reply_to，自动回复到上一个发出的消息：{reply_to[:16]}..."
+                    f"未指定 reply_to，自动回复到上一个接收的消息：{reply_to[:16]}..."
                 )
 
             # 检查是否需要使用嘟文串模式
@@ -275,8 +276,8 @@ class MatrixPlatformAdapter(Platform):
 
                 new_message_chain = MessageChain(new_chain)
 
-                # 发送消息并记录最后发送的事件 ID
-                last_event_id = await MatrixPlatformEvent.send_with_client(
+                # 发送消息（不再追踪发送的消息ID，改为追踪接收到的用户消息ID）
+                await MatrixPlatformEvent.send_with_client(
                     self.client,
                     new_message_chain,
                     room_id,
@@ -286,13 +287,6 @@ class MatrixPlatformAdapter(Platform):
                     original_message_info=original_message_info,
                     e2ee_manager=self.e2ee_manager,
                 )
-
-                # 记录最后发送的消息 ID（用于后续自动回复）
-                if last_event_id:
-                    self._last_sent_message_ids[room_id] = last_event_id
-                    logger.debug(
-                        f"已记录房间 {room_id} 的最后发送消息 ID：{last_event_id[:16]}..."
-                    )
 
             await super().send_by_session(session, message_chain)
 
@@ -445,6 +439,14 @@ class MatrixPlatformAdapter(Platform):
             event: Parsed event object
         """
         try:
+            # Track last received message ID for auto-reply (prevent message escape)
+            # This tracks the last USER message, not our own messages
+            if event.event_id:
+                self._last_received_message_ids[room.room_id] = event.event_id
+                logger.debug(
+                    f"已记录房间 {room.room_id} 的最后接收消息 ID：{event.event_id[:16]}..."
+                )
+
             # Convert to AstrBot message format
             abm = await self.receiver.convert_message(room, event)
             if abm is None:

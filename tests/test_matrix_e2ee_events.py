@@ -145,8 +145,8 @@ class TestAutoReplyToTracking(unittest.TestCase):
             adapter = MatrixPlatformAdapter(platform_config, {}, event_queue)
 
             # Verify the tracking dict exists
-            self.assertIsInstance(adapter._last_sent_message_ids, dict)
-            self.assertEqual(len(adapter._last_sent_message_ids), 0)
+            self.assertIsInstance(adapter._last_received_message_ids, dict)
+            self.assertEqual(len(adapter._last_received_message_ids), 0)
 
 
 class TestE2EEEventTypes(unittest.TestCase):

@@ -10,6 +10,7 @@ from typing import Literal
 from astrbot.api import logger
 
 from ..constants import (
+    DEFAULT_ONE_TIME_KEYS_COUNT,
     M_FORWARDED_ROOM_KEY,
     M_KEY_VERIFICATION_REQUEST,
     M_ROOM_ENCRYPTED,
@@ -20,6 +21,7 @@ from ..constants import (
     MEMBERSHIP_INVITE,
     MEMBERSHIP_JOIN,
     OLM_ALGO_SHA256,
+    ONE_TIME_KEYS_REPLENISH_THRESHOLD,
     PREFIX_CURVE25519,
     PREFIX_ED25519,
     SIGNED_CURVE25519,
@@ -273,7 +275,7 @@ class E2EEManager:
             logger.debug(f"一次性密钥剩余数量：signed_curve25519={signed_curve_count}")
 
             # 如果密钥数量不足，上传新的一次性密钥
-            if signed_curve_count < DEFAULT_ONE_TIME_KEYS_COUNT // 2:
+            if signed_curve_count < ONE_TIME_KEYS_REPLENISH_THRESHOLD:
                 logger.info(f"一次性密钥不足 ({signed_curve_count})，上传新密钥...")
                 await self._upload_device_keys()
 
