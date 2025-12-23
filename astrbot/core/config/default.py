@@ -531,8 +531,11 @@ CONFIG_METADATA_2 = {
                         "condition": {"matrix_enable_e2ee": True},
                     },
                     "matrix_e2ee_recovery_key": {
-                        "description": "恢复密钥",
+                        "description": "恢复密钥（推荐使用脱水设备密钥）",
                         "type": "string",
+                        "hint": "支持：1) 脱水设备密钥(FluffyChat/Element导出) 2) Matrix Base58恢复密钥 3) Base64 32字节密钥。留空将自动生成。用户应只提供脱水恢复密钥。",
+                        "condition": {"matrix_enable_e2ee": True},
+                    },
                         "hint": "用于加密和恢复密钥备份的密钥（base64 编码）。留空将自动生成新密钥并在日志中输出。请务必妥善保存此密钥！",
                         "condition": {"matrix_e2ee_key_backup": True},
                     },

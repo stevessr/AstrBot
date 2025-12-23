@@ -105,10 +105,12 @@ class MatrixPlatformAdapter(Platform):
                 recovery_key = self._matrix_config.e2ee_recovery_key
                 if recovery_key:
                     logger.info(
-                        f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}"
+                        f"配置的恢复密钥（支持脱水设备密钥）：{recovery_key[:4]}...{recovery_key[-4:]}"
                     )
                 else:
-                    logger.warning("未配置恢复密钥 (matrix_e2ee_recovery_key)")
+                    logger.warning(
+                        "未配置恢复密钥 (matrix_e2ee_recovery_key)，推荐使用脱水设备密钥"
+                    )
 
                 self.e2ee_manager = E2EEManager(
                     client=self.client,

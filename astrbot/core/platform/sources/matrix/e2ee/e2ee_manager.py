@@ -34,14 +34,32 @@ class E2EEManager:
     """
     端到端加密管理器
 
-    负责：
-    - 初始化加密组件
-    - 设备密钥上传
-    - 消息加密/解密
-    - 密钥交换
-    - SAS 设备验证
-    - 密钥备份
-    - 交叉签名
+    完整实现 Matrix E2EE 规范，包括：
+    
+    **密钥交换 (Key Exchange)**:
+    - Olm 协议：用于设备间一对一安全通道
+    - Megolm 协议：用于群组消息的高效加密
+    - 自动密钥分发和轮换
+    - 密钥请求和转发处理
+    
+    **设备验证 (Device Verification)**:
+    - SAS (Short Authentication String) 验证协议
+    - 支持 emoji 和 decimal 验证方式
+    - In-room 和 to-device 验证流程
+    - 自动验证模式：auto_accept / auto_reject / manual
+    - 交叉签名 (Cross-Signing) 支持
+    
+    **密钥交换控制 (Key Exchange Control)**:
+    - 可信设备：trust_on_first_use 选项
+    - 交叉验证设备：通过交叉签名建立信任链
+    - 所有设备：可接收来自任何设备的验证请求
+    - 允许从其他设备验证以交换密钥
+    
+    **密钥备份 (Key Backup)**:
+    - 支持脱水设备密钥恢复 (Dehydrated Device Key) - 推荐
+    - 支持 SSSS (Secret Storage) 恢复
+    - 自动提取和持久化备份密钥
+    - 兼容 FluffyChat、Element 等客户端
     """
 
     def __init__(
@@ -68,7 +86,7 @@ class E2EEManager:
             store_path: 加密存储路径
             auto_verify_mode: 自动验证模式 (auto_accept/auto_reject/manual)
             enable_key_backup: 是否启用密钥备份
-            recovery_key: 用户配置的恢复密钥 (base64)
+            recovery_key: 用户配置的恢复密钥（推荐使用脱水设备密钥）
             trust_on_first_use: 是否自动信任首次使用的设备
             password: 用户密码 (可选，用于 UIA)
         """

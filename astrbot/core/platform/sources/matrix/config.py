@@ -64,8 +64,13 @@ class MatrixConfig:
         )
         # 是否启用密钥备份
         self.e2ee_key_backup = self.config.get("matrix_e2ee_key_backup", False)
-        # 用户手动配置的恢复密钥（推荐 Matrix Base58 恢复密钥，兼容 Base64 32 字节密钥）
+        # 用户手动配置的恢复密钥（推荐使用脱水设备恢复密钥）
+        # 支持格式：
+        # 1. 脱水设备密钥 (Dehydrated Device Key) - FluffyChat/Element 导出的密钥
+        # 2. Matrix Base58 恢复密钥 (Recovery Key) - 标准 Matrix 恢复密钥格式
+        # 3. Base64 32字节密钥 - 兼容格式
         # 如果为空，将自动生成新密钥并在日志中输出
+        # 用户应该只提供脱水恢复密钥用于恢复，这是最安全和推荐的方式
         self.e2ee_recovery_key = self.config.get("matrix_e2ee_recovery_key", "")
 
         self._validate()
