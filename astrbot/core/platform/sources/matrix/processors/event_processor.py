@@ -354,7 +354,9 @@ class MatrixEventProcessor:
                                 )
                                 logger.debug("成功处理加密的 m.forwarded_room_key 事件")
                             else:
-                                logger.debug(f"收到未知的加密 to_device 事件类型：{inner_type}")
+                                logger.debug(
+                                    f"收到未知的加密 to_device 事件类型：{inner_type}"
+                                )
                     except Exception as e:
                         logger.error(f"处理加密 to_device 事件失败：{e}")
                 continue
@@ -413,6 +415,24 @@ class MatrixEventProcessor:
                             )
                     except Exception as e:
                         logger.error(f"处理 m.room_key_request 事件失败：{e}")
+                continue
+
+            # 处理 m.secret.request 事件 (秘密请求，用于交叉签名密钥共享等)
+            if event_type == "m.secret.request":
+                logger.debug(f"收到秘密请求事件：来自 {sender}")
+                # 这些通常由 E2EE 管理器处理，暂时只记录
+                continue
+
+            # 处理 m.secret.send 事件 (秘密发送响应)
+            if event_type == "m.secret.send":
+                logger.debug(f"收到秘密发送事件：来自 {sender}")
+                # 这些通常由 E2EE 管理器处理，暂时只记录
+                continue
+
+            # 处理 m.dummy 事件 (用于保持 Olm 会话活跃)
+            if event_type == "m.dummy":
+                logger.debug(f"收到 dummy 事件：来自 {sender} (用于会话轮换)")
+                # Dummy 事件不需要处理，只是用于保持加密会话活跃
                 continue
 
             # Log other event types
