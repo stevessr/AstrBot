@@ -89,6 +89,23 @@ class CryptoStore:
 
     # ========== Olm 账户 ==========
 
+    def delete_megolm_outbound(self, room_id: str):
+        """删除 Megolm 出站会话"""
+        with self.lock:
+            if "megolm_outbound" in self.data and room_id in self.data["megolm_outbound"]:
+                del self.data["megolm_outbound"][room_id]
+                self._save()
+
+    def clear_all_megolm_sessions(self):
+        """清除所有 Megolm 会话数据"""
+        with self.lock:
+            if "megolm_inbound" in self.data:
+                self.data["megolm_inbound"].clear()
+            if "megolm_outbound" in self.data:
+                self.data["megolm_outbound"].clear()
+            self._save()
+            logger.info("已清除所有 Megolm 会话数据")
+
     def get_account_pickle(self) -> str | None:
         """获取 Olm 账户的 pickle"""
         return self._account_pickle

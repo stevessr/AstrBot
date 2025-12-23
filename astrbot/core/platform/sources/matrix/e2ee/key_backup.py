@@ -406,10 +406,24 @@ class KeyBackup:
     """
     密钥备份管理器
 
-    使用用户配置的恢复密钥进行加密，支持：
-    - 创建密钥备份
+    支持多种密钥格式：
+    1. **脱水设备密钥 (Dehydrated Device Key)** - 推荐
+       - 从 FluffyChat、Element 等客户端导出的密钥
+       - 自动从 m.dehydrated_device 事件中提取备份密钥
+       - 最安全和推荐的恢复方式
+    
+    2. **Matrix Base58 恢复密钥 (Recovery Key)**
+       - 标准 Matrix 恢复密钥格式
+       - 通过 SSSS (Secret Storage) 解密备份
+    
+    3. **Base64 32字节密钥**
+       - 兼容格式，自动转换
+    
+    功能：
+    - 创建密钥备份到服务器
     - 上传 Megolm 会话密钥到备份
-    - 从备份恢复密钥
+    - 从备份恢复密钥（支持脱水设备和SSSS）
+    - 持久化提取的备份密钥到本地 (extracted_backup_key.bin)
     """
 
     def __init__(
@@ -427,7 +441,8 @@ class KeyBackup:
             client: MatrixHTTPClient
             crypto_store: CryptoStore
             olm_machine: OlmMachine
-            recovery_key: 用户配置的恢复密钥 (base58)
+            recovery_key: 用户配置的恢复密钥（推荐使用脱水设备密钥）
+                支持：1) 脱水设备密钥 2) Matrix Base58恢复密钥 3) Base64密钥
             store_path: 存储路径（用于持久化提取的备份密钥）
         """
         self.client = client
@@ -508,7 +523,15 @@ class KeyBackup:
     ) -> bytes | None:
         """
         尝试从 Secret Storage 解密真正的备份密钥
-        支持直接解密和通过 Recovery Key 解密 SSSS Key 的链式解密
+        
+        **优先支持脱水设备密钥 (Dehydrated Device Key)**：
+        - 用户应该提供从 FluffyChat/Element 等客户端导出的脱水设备密钥
+        - 这是最安全和推荐的恢复方式
+        - 自动从 m.dehydrated_device 或 org.matrix.msc2697.dehydrated_device 事件中提取备份密钥
+        
+        同时支持：
+        - 直接解密 SSSS 备份密钥
+        - 通过 Recovery Key 解密 SSSS Key 的链式解密
         """
         logger.info("尝试从 Secret Storage 恢复密钥...")
         dehydrated_device = None

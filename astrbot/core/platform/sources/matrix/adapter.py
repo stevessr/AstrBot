@@ -105,9 +105,13 @@ class MatrixPlatformAdapter(Platform):
             if VODOZEMAC_AVAILABLE:
                 recovery_key = self._matrix_config.e2ee_recovery_key
                 if recovery_key:
-                    logger.info(f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}")
+                    logger.info(
+                        f"配置的恢复密钥（支持脱水设备密钥）：{recovery_key[:4]}...{recovery_key[-4:]}"
+                    )
                 else:
-                    logger.warning("未配置恢复密钥 (matrix_e2ee_recovery_key)")
+                    logger.warning(
+                        "未配置恢复密钥 (matrix_e2ee_recovery_key)，推荐使用脱水设备密钥"
+                    )
 
                 self.e2ee_manager = E2EEManager(
                     client=self.client,
@@ -139,6 +143,19 @@ class MatrixPlatformAdapter(Platform):
         )  # Fixed: using event_handler method
         self.event_processor.set_message_callback(self.message_callback)
 
+        # Set up E2EE callbacks if E2EE is enabled
+        if self.e2ee_manager:
+            self.sync_manager.set_device_lists_callback(
+                self.e2ee_manager.handle_device_lists_changed
+            )
+            self.sync_manager.set_device_one_time_keys_callback(
+                self.e2ee_manager.handle_device_one_time_keys_count
+            )
+
+        # Track last sent message per room (for auto-reply-to)
+        # This tracks the last USER message received, not our own bot messages
+        self._last_received_message_ids: dict[str, str] = {}
+
         logger.info("Matrix Adapter 初始化完成")
 
     async def send_by_session(
@@ -168,6 +185,13 @@ class MatrixPlatformAdapter(Platform):
                             break
                 except Exception:
                     pass
+
+            # 如果仍然没有 reply_to，使用上一个接收到的用户消息 ID（阻止消息逃逸）
+            if reply_to is None and room_id in self._last_received_message_ids:
+                reply_to = self._last_received_message_ids[room_id]
+                logger.debug(
+                    f"未指定 reply_to，自动回复到上一个接收的消息：{reply_to[:16]}..."
+                )
 
             # 检查是否需要使用嘟文串模式
             if reply_to:
@@ -255,7 +279,7 @@ class MatrixPlatformAdapter(Platform):
 
                 new_message_chain = MessageChain(new_chain)
 
-                # 发送消息
+                # 发送消息（不再追踪发送的消息ID，改为追踪接收到的用户消息ID）
                 await MatrixPlatformEvent.send_with_client(
                     self.client,
                     new_message_chain,
@@ -418,6 +442,14 @@ class MatrixPlatformAdapter(Platform):
             event: Parsed event object
         """
         try:
+            # Track last received message ID for auto-reply (prevent message escape)
+            # This tracks the last USER message, not our own messages
+            if event.event_id:
+                self._last_received_message_ids[room.room_id] = event.event_id
+                logger.debug(
+                    f"已记录房间 {room.room_id} 的最后接收消息 ID：{event.event_id[:16]}..."
+                )
+
             # Convert to AstrBot message format
             abm = await self.receiver.convert_message(room, event)
             if abm is None:

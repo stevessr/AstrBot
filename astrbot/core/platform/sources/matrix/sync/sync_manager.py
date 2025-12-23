@@ -44,6 +44,8 @@ class MatrixSyncManager:
         self.on_to_device_event: Callable | None = None
         self.on_invite: Callable | None = None
         self.on_sync: Callable | None = None
+        self.on_device_lists_changed: Callable | None = None
+        self.on_device_one_time_keys_count: Callable | None = None
 
         # Sync state
         self._next_batch: str | None = None
@@ -110,6 +112,24 @@ class MatrixSyncManager:
         """
         self.on_invite = callback
 
+    def set_device_lists_callback(self, callback: Callable):
+        """
+        Set callback for device list changes
+
+        Args:
+            callback: Async function(changed, left) -> None
+        """
+        self.on_device_lists_changed = callback
+
+    def set_device_one_time_keys_callback(self, callback: Callable):
+        """
+        Set callback for one-time key count updates
+
+        Args:
+            callback: Async function(counts, unused_fallback_key_types) -> None
+        """
+        self.on_device_one_time_keys_count = callback
+
     async def sync_forever(self):
         """
         Run the sync loop forever
@@ -137,6 +157,31 @@ class MatrixSyncManager:
                 to_device_events = sync_response.get("to_device", {}).get("events", [])
                 if to_device_events and self.on_to_device_event:
                     await self.on_to_device_event(to_device_events)
+
+                # Process device_lists changes (for E2EE key tracking)
+                device_lists = sync_response.get("device_lists", {})
+                if device_lists and self.on_device_lists_changed:
+                    changed = device_lists.get("changed", [])
+                    left = device_lists.get("left", [])
+                    if changed or left:
+                        await self.on_device_lists_changed(changed, left)
+
+                # Process device_one_time_keys_count (for E2EE key replenishment)
+                one_time_keys_count = sync_response.get(
+                    "device_one_time_keys_count", {}
+                )
+                unused_fallback_key_types = sync_response.get(
+                    "device_unused_fallback_key_types", []
+                )
+                # Trigger callback if we have the callback set and either:
+                # - key counts dict exists (even if empty, as 0 keys is valid)
+                # - or we have fallback key type info
+                if self.on_device_one_time_keys_count and (
+                    one_time_keys_count is not None or unused_fallback_key_types
+                ):
+                    await self.on_device_one_time_keys_count(
+                        one_time_keys_count, unused_fallback_key_types
+                    )
 
                 # Process rooms events
                 rooms = sync_response.get("rooms", {})

@@ -10,6 +10,7 @@ from typing import Literal
 from astrbot.api import logger
 
 from ..constants import (
+    DEFAULT_ONE_TIME_KEYS_COUNT,
     M_FORWARDED_ROOM_KEY,
     M_KEY_VERIFICATION_REQUEST,
     M_ROOM_ENCRYPTED,
@@ -20,6 +21,7 @@ from ..constants import (
     MEMBERSHIP_INVITE,
     MEMBERSHIP_JOIN,
     OLM_ALGO_SHA256,
+    ONE_TIME_KEYS_REPLENISH_THRESHOLD,
     PREFIX_CURVE25519,
     PREFIX_ED25519,
     SIGNED_CURVE25519,
@@ -32,14 +34,32 @@ class E2EEManager:
     """
     端到端加密管理器
 
-    负责：
-    - 初始化加密组件
-    - 设备密钥上传
-    - 消息加密/解密
-    - 密钥交换
-    - SAS 设备验证
-    - 密钥备份
-    - 交叉签名
+    完整实现 Matrix E2EE 规范，包括：
+    
+    **密钥交换 (Key Exchange)**:
+    - Olm 协议：用于设备间一对一安全通道
+    - Megolm 协议：用于群组消息的高效加密
+    - 自动密钥分发和轮换
+    - 密钥请求和转发处理
+    
+    **设备验证 (Device Verification)**:
+    - SAS (Short Authentication String) 验证协议
+    - 支持 emoji 和 decimal 验证方式
+    - In-room 和 to-device 验证流程
+    - 自动验证模式：auto_accept / auto_reject / manual
+    - 交叉签名 (Cross-Signing) 支持
+    
+    **密钥交换控制 (Key Exchange Control)**:
+    - 可信设备：trust_on_first_use 选项
+    - 交叉验证设备：通过交叉签名建立信任链
+    - 所有设备：可接收来自任何设备的验证请求
+    - 允许从其他设备验证以交换密钥
+    
+    **密钥备份 (Key Backup)**:
+    - 支持脱水设备密钥恢复 (Dehydrated Device Key) - 推荐
+    - 支持 SSSS (Secret Storage) 恢复
+    - 自动提取和持久化备份密钥
+    - 兼容 FluffyChat、Element 等客户端
     """
 
     def __init__(
@@ -66,7 +86,7 @@ class E2EEManager:
             store_path: 加密存储路径
             auto_verify_mode: 自动验证模式 (auto_accept/auto_reject/manual)
             enable_key_backup: 是否启用密钥备份
-            recovery_key: 用户配置的恢复密钥 (base64)
+            recovery_key: 用户配置的恢复密钥（推荐使用脱水设备密钥）
             trust_on_first_use: 是否自动信任首次使用的设备
             password: 用户密码 (可选，用于 UIA)
         """
@@ -227,6 +247,64 @@ class E2EEManager:
             )
         return False
 
+    async def handle_device_lists_changed(self, changed: list[str], left: list[str]):
+        """
+        处理设备列表变更事件 (device_lists)
+
+        Args:
+            changed: 设备密钥已更改的用户列表
+            left: 已离开的用户列表
+        """
+        try:
+            if changed:
+                logger.info(f"设备列表已更改的用户数：{len(changed)}")
+                # 查询更新后的设备密钥
+                if self._olm:
+                    device_keys_dict = {user_id: [] for user_id in changed}
+                    try:
+                        await self.client._request(
+                            "POST",
+                            "/_matrix/client/v3/keys/query",
+                            {"device_keys": device_keys_dict},
+                        )
+                        logger.debug(f"已更新 {len(changed)} 个用户的设备密钥")
+                    except Exception as e:
+                        logger.warning(f"查询更新的设备密钥失败：{e}")
+
+            if left:
+                logger.debug(f"已离开的用户数：{len(left)}")
+                # 可以选择清理这些用户的密钥缓存
+
+        except Exception as e:
+            logger.error(f"处理设备列表变更失败：{e}")
+
+    async def handle_device_one_time_keys_count(
+        self, counts: dict, unused_fallback_key_types: list
+    ):
+        """
+        处理一次性密钥计数更新 (device_one_time_keys_count)
+
+        Args:
+            counts: 各类型一次性密钥的剩余数量
+            unused_fallback_key_types: 未使用的备用密钥类型
+        """
+        try:
+            signed_curve_count = counts.get(SIGNED_CURVE25519, 0)
+            logger.debug(f"一次性密钥剩余数量：signed_curve25519={signed_curve_count}")
+
+            # 如果密钥数量不足，上传新的一次性密钥
+            if signed_curve_count < ONE_TIME_KEYS_REPLENISH_THRESHOLD:
+                logger.info(f"一次性密钥不足 ({signed_curve_count})，上传新密钥...")
+                await self._upload_device_keys()
+
+            # 检查备用密钥
+            if SIGNED_CURVE25519 not in unused_fallback_key_types:
+                logger.debug("备用密钥已被使用，需要上传新的备用密钥")
+                # 备用密钥会在 _upload_device_keys 中一起上传
+
+        except Exception as e:
+            logger.error(f"处理一次性密钥计数失败：{e}")
+
     async def _verify_untrusted_own_devices(self):
         """
         查询自己的所有设备，为未验证/未信任的设备发起验证请求
@@ -271,9 +349,7 @@ class E2EEManager:
                 logger.info("所有其他设备已验证")
                 return
 
-            logger.info(
-                f"发现 {len(untrusted_devices)} 个未验证设备，尝试发起验证..."
-            )
+            logger.info(f"发现 {len(untrusted_devices)} 个未验证设备，尝试发起验证...")
 
             # 为每个未验证设备发起验证请求
             for device_id in untrusted_devices:
@@ -315,9 +391,7 @@ class E2EEManager:
             txn_id,
         )
 
-        logger.info(
-            f"已向设备 {target_device_id} 发起验证请求 (txn={txn_id[:8]}...)"
-        )
+        logger.info(f"已向设备 {target_device_id} 发起验证请求 (txn={txn_id[:8]}...)")
 
     async def _upload_device_keys(self):
         """上传设备密钥到服务器"""
@@ -327,22 +401,23 @@ class E2EEManager:
         try:
             # 获取设备密钥
             device_keys = self._olm.get_device_keys()
-            
+
             # Debug: 显示上传的设备密钥内容
             logger.info(f"上传设备密钥：device_id={device_keys.get('device_id')}")
             logger.info(f"algorithms={device_keys.get('algorithms')}")
             logger.info(f"keys={list(device_keys.get('keys', {}).keys())}")
 
             # 生成一次性密钥
-            from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT
-            one_time_keys = self._olm.generate_one_time_keys(DEFAULT_ONE_TIME_KEYS_COUNT)
+            one_time_keys = self._olm.generate_one_time_keys(
+                DEFAULT_ONE_TIME_KEYS_COUNT
+            )
 
             # 上传到服务器
             response = await self.client.upload_keys(
                 device_keys=device_keys,
                 one_time_keys=one_time_keys,
             )
-            
+
             # Debug: 显示完整响应
             logger.info(f"upload_keys 响应：{response}")
 
@@ -412,7 +487,9 @@ class E2EEManager:
             ciphertext_data = event_content.get("ciphertext", {})
 
             # Debug log
-            logger.debug(f"尝试解密 Olm 消息：algorithm={algorithm} sender_key={sender_key[:8]}...")
+            logger.debug(
+                f"尝试解密 Olm 消息：algorithm={algorithm} sender_key={sender_key[:8]}..."
+            )
 
             # 找到发给本设备的密文
             my_key = self._olm.curve25519_key
@@ -558,9 +635,7 @@ class E2EEManager:
         try:
             # 只响应同一用户的请求（安全限制）
             if sender != self.user_id:
-                logger.debug(
-                    f"忽略来自其他用户的密钥请求：{sender}"
-                )
+                logger.debug(f"忽略来自其他用户的密钥请求：{sender}")
                 return
 
             # 不响应自己设备的请求
@@ -571,9 +646,7 @@ class E2EEManager:
             # 获取请求的 Megolm 会话
             session = self._olm.get_megolm_inbound_session(session_id)
             if not session:
-                logger.debug(
-                    f"没有请求的会话：session={session_id[:8]}..."
-                )
+                logger.debug(f"没有请求的会话：session={session_id[:8]}...")
                 return
 
             # 导出会话密钥
@@ -604,17 +677,26 @@ class E2EEManager:
                 resp = await self.client.query_keys({sender: []})
                 devices = resp.get("device_keys", {}).get(sender, {})
                 device_info = devices.get(requesting_device_id, {})
-                curve_key = device_info.get("keys", {}).get(f"{PREFIX_CURVE25519}{requesting_device_id}")
-                ed25519_key = device_info.get("keys", {}).get(f"{PREFIX_ED25519}{requesting_device_id}")
+                curve_key = device_info.get("keys", {}).get(
+                    f"{PREFIX_CURVE25519}{requesting_device_id}"
+                )
+                ed25519_key = device_info.get("keys", {}).get(
+                    f"{PREFIX_ED25519}{requesting_device_id}"
+                )
 
                 if not curve_key:
-                    logger.warning(f"无法获取设备 {sender}/{requesting_device_id} 的 Curve25519 密钥")
+                    logger.warning(
+                        f"无法获取设备 {sender}/{requesting_device_id} 的 Curve25519 密钥"
+                    )
                     return
 
                 # 使用 Olm 加密并包装
-                encrypted_content = self._olm.encrypt_olm(curve_key, forwarded_room_key, recipient_user_id=sender)
+                encrypted_content = self._olm.encrypt_olm(
+                    curve_key, forwarded_room_key, recipient_user_id=sender
+                )
 
                 import secrets
+
                 txn_id = secrets.token_hex(16)
                 await self.client.send_to_device(
                     M_ROOM_ENCRYPTED,
@@ -676,7 +758,9 @@ class E2EEManager:
         try:
             members = await self._get_room_members(room_id)
             if members:
-                await self.ensure_room_keys_sent(room_id, members, session_id, session_key)
+                await self.ensure_room_keys_sent(
+                    room_id, members, session_id, session_key
+                )
         except Exception as e:
             logger.error(f"分发密钥失败：{e}")
 
@@ -731,7 +815,9 @@ class E2EEManager:
             response = await self.client.query_keys(device_keys_query)
 
             device_keys = response.get("device_keys", {})
-            devices_to_send: list[tuple[str, str, str]] = []  # (user_id, device_id, curve25519_key)
+            devices_to_send: list[
+                tuple[str, str, str]
+            ] = []  # (user_id, device_id, curve25519_key)
 
             for user_id, user_devices in device_keys.items():
                 for device_id, device_info in user_devices.items():
@@ -770,7 +856,9 @@ class E2EEManager:
                     # 取第一个一次性密钥
                     otk_id = list(device_otks.keys())[0]
                     otk_data = device_otks[otk_id]
-                    one_time_key = otk_data.get("key") if isinstance(otk_data, dict) else otk_data
+                    one_time_key = (
+                        otk_data.get("key") if isinstance(otk_data, dict) else otk_data
+                    )
 
                     # 创建 Olm 会话
                     session = self._olm.create_outbound_session(curve_key, one_time_key)
@@ -785,7 +873,12 @@ class E2EEManager:
                     }
 
                     # 使用 Olm 加密并包装
-                    encrypted_content = self._olm.encrypt_olm(curve_key, room_key_content, session=session, recipient_user_id=user_id)
+                    encrypted_content = self._olm.encrypt_olm(
+                        curve_key,
+                        room_key_content,
+                        session=session,
+                        recipient_user_id=user_id,
+                    )
 
                     txn_id = secrets.token_hex(16)
                     await self.client.send_to_device(

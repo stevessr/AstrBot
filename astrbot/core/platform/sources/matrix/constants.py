@@ -20,6 +20,9 @@ M_ROOM_KEY = "m.room_key"
 M_ROOM_KEY_REQUEST = "m.room_key_request"
 M_FORWARDED_ROOM_KEY = "m.forwarded_room_key"
 M_ROOM_MEMBER = "m.room.member"
+M_SECRET_REQUEST = "m.secret.request"
+M_SECRET_SEND = "m.secret.send"
+M_DUMMY = "m.dummy"
 MEMBERSHIP_JOIN = "join"
 MEMBERSHIP_INVITE = "invite"
 
@@ -51,6 +54,7 @@ AES_CBC_IV_LEN = 16
 
 # 默认数量/超时
 DEFAULT_ONE_TIME_KEYS_COUNT = 50
+ONE_TIME_KEYS_REPLENISH_THRESHOLD = 25  # 当密钥数量低于此值时补充
 DEFAULT_TYPING_TIMEOUT_MS = 5000
 
 # 验证相关
