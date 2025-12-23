@@ -104,7 +104,9 @@ class MatrixPlatformAdapter(Platform):
             if VODOZEMAC_AVAILABLE:
                 recovery_key = self._matrix_config.e2ee_recovery_key
                 if recovery_key:
-                    logger.info(f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}")
+                    logger.info(
+                        f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}"
+                    )
                 else:
                     logger.warning("未配置恢复密钥 (matrix_e2ee_recovery_key)")
 
@@ -138,6 +140,18 @@ class MatrixPlatformAdapter(Platform):
         )  # Fixed: using event_handler method
         self.event_processor.set_message_callback(self.message_callback)
 
+        # Set up E2EE callbacks if E2EE is enabled
+        if self.e2ee_manager:
+            self.sync_manager.set_device_lists_callback(
+                self.e2ee_manager.handle_device_lists_changed
+            )
+            self.sync_manager.set_device_one_time_keys_callback(
+                self.e2ee_manager.handle_device_one_time_keys_count
+            )
+
+        # Track last sent message per room (for auto-reply-to)
+        self._last_sent_message_ids: dict[str, str] = {}
+
         logger.info("Matrix Adapter 初始化完成")
 
     async def send_by_session(
@@ -167,6 +181,13 @@ class MatrixPlatformAdapter(Platform):
                             break
                 except Exception:
                     pass
+
+            # 如果仍然没有 reply_to，使用上一个发出的消息 ID（阻止消息逃逸）
+            if reply_to is None and room_id in self._last_sent_message_ids:
+                reply_to = self._last_sent_message_ids[room_id]
+                logger.debug(
+                    f"未指定 reply_to，自动回复到上一个发出的消息：{reply_to[:16]}..."
+                )
 
             # 检查是否需要使用嘟文串模式
             if reply_to:
@@ -254,8 +275,8 @@ class MatrixPlatformAdapter(Platform):
 
                 new_message_chain = MessageChain(new_chain)
 
-                # 发送消息
-                await MatrixPlatformEvent.send_with_client(
+                # 发送消息并记录最后发送的事件 ID
+                last_event_id = await MatrixPlatformEvent.send_with_client(
                     self.client,
                     new_message_chain,
                     room_id,
@@ -265,6 +286,13 @@ class MatrixPlatformAdapter(Platform):
                     original_message_info=original_message_info,
                     e2ee_manager=self.e2ee_manager,
                 )
+
+                # 记录最后发送的消息 ID（用于后续自动回复）
+                if last_event_id:
+                    self._last_sent_message_ids[room_id] = last_event_id
+                    logger.debug(
+                        f"已记录房间 {room_id} 的最后发送消息 ID：{last_event_id[:16]}..."
+                    )
 
             await super().send_by_session(session, message_chain)
 

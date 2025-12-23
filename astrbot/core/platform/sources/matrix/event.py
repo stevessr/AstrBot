@@ -43,7 +43,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
         use_thread: bool = False,
         original_message_info: dict | None = None,
         e2ee_manager=None,
-    ) -> int:
+    ) -> str | None:
         """使用提供的 client 将指定消息链发送到指定房间。
 
         Args:
@@ -57,9 +57,10 @@ class MatrixPlatformEvent(AstrMessageEvent):
             e2ee_manager: 可选，E2EEManager 实例（用于加密消息）
 
         Returns:
-            已发送的消息段数量
+            最后发送的消息的 event_id，如果发送失败则返回 None
         """
         sent_count = 0
+        last_event_id = None
 
         # 检查房间是否需要加密
         is_encrypted_room = False
@@ -169,24 +170,27 @@ class MatrixPlatformEvent(AstrMessageEvent):
                             room_id, "m.room.message", content
                         )
                         if encrypted:
-                            await client.send_message(
+                            response = await client.send_message(
                                 room_id=room_id,
                                 msg_type="m.room.encrypted",
                                 content=encrypted,
                             )
+                            last_event_id = response.get("event_id")
                             sent_count += 1
                         else:
                             logger.warning("加密消息失败，尝试发送未加密消息")
-                            await client.send_message(
+                            response = await client.send_message(
                                 room_id=room_id,
                                 msg_type="m.room.message",
                                 content=content,
                             )
+                            last_event_id = response.get("event_id")
                             sent_count += 1
                     else:
-                        await client.send_message(
+                        response = await client.send_message(
                             room_id=room_id, msg_type="m.room.message", content=content
                         )
+                        last_event_id = response.get("event_id")
                         sent_count += 1
                 except Exception as e:
                     logger.error(f"发送文本消息失败：{e}")
@@ -252,9 +256,10 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         }
 
                     # 发送未加密消息
-                    await client.send_message(
+                    response = await client.send_message(
                         room_id=room_id, msg_type="m.room.message", content=content
                     )
+                    last_event_id = response.get("event_id")
                     sent_count += 1
                     logger.debug(f"图片消息发送成功，房间：{room_id}")
                 except Exception as e:
@@ -303,16 +308,17 @@ class MatrixPlatformEvent(AstrMessageEvent):
 
                     try:
                         # 发送未加密消息
-                        await client.send_message(
+                        response = await client.send_message(
                             room_id=room_id, msg_type="m.room.message", content=content
                         )
+                        last_event_id = response.get("event_id")
                         sent_count += 1
                     except Exception as e:
                         logger.error(f"发送文件消息失败：{e}")
                 except Exception as e:
                     logger.error(f"处理文件消息过程出错：{e}")
 
-        return sent_count
+        return last_event_id
 
     async def send(self, message_chain: MessageChain):
         """发送消息"""
