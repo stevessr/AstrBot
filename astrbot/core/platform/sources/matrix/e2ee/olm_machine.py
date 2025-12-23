@@ -488,6 +488,11 @@ class OlmMachine:
                     self._megolm_outbound[room_id] = session
                 except Exception as e:
                     logger.error(f"加载 Megolm 出站会话失败：{e}")
+                    logger.info(f"为房间 {room_id} 创建新的 Megolm 会话")
+                    # Create new session instead of failing
+                    session = GroupSession()
+                    self._megolm_outbound[room_id] = session
+                    self.store.save_megolm_outbound(room_id, session.pickle(self._pickle_key))
 
         if not session:
             raise RuntimeError(f"房间 {room_id} 没有 Megolm 出站会话")
@@ -515,6 +520,41 @@ class OlmMachine:
         }
 
     # ========== 辅助方法 ==========
+
+    def clear_corrupted_sessions(self, room_id: str = None):
+        """清除损坏的会话数据
+
+        Args:
+            room_id: 特定房间ID，如果为None则清除所有
+        """
+        if room_id:
+            if room_id in self._megolm_outbound:
+                del self._megolm_outbound[room_id]
+            self.store.delete_megolm_outbound(room_id)
+            logger.info(f"已清除房间 {room_id} 的 Megolm 会话")
+        else:
+            self._megolm_outbound.clear()
+            self.store.clear_all_megolm_sessions()
+            logger.info("已清除所有 Megolm 会话")
+
+    def validate_megolm_session(self, room_id: str) -> bool:
+        """验证 Megolm 会话是否可用
+
+        Returns:
+            True if session is valid, False otherwise
+        """
+        session = self._megolm_outbound.get(room_id)
+        if not session:
+            return False
+
+        try:
+            # Test encryption with dummy data
+            test_payload = json.dumps({"type": "test", "content": {}})
+            session.encrypt(test_payload.encode())
+            return True
+        except Exception as e:
+            logger.warning(f"房间 {room_id} 的 Megolm 会话已损坏：{e}")
+            return False
 
     @staticmethod
     def _canonical_json(obj: dict) -> str:

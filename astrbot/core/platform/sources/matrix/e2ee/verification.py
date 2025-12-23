@@ -235,8 +235,13 @@ class SASVerification:
             # For other events, get transaction_id from m.relates_to
             transaction_id = relates_to.get("event_id") or content.get("transaction_id")
 
+            # Additional fallback for cancel events
+            if not transaction_id and event_type == "m.key.verification.cancel":
+                # Cancel events might use different transaction ID locations
+                transaction_id = relates_to.get("relates_to", {}).get("event_id") or content.get("transaction_id")
+
         if not transaction_id:
-            logger.warning("[E2EE-Verify] 房间内验证事件缺少 transaction_id")
+            logger.warning(f"[E2EE-Verify] 房间内验证事件缺少 transaction_id (type={event_type})")
             return False
 
         logger.info(
