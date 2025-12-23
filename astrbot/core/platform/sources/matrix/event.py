@@ -336,6 +336,50 @@ class MatrixPlatformEvent(AstrMessageEvent):
         except Exception:
             pass
 
+        # 如果没有找到回复对象，但消息链中包含 Reply 组件（表示开启了回复模式）
+        # 则尝试获取自己最近发送的消息作为回复对象
+        if not reply_to:
+            try:
+                from astrbot.api.message_components import Reply as _Reply
+
+                has_reply_component = any(
+                    isinstance(seg, _Reply) for seg in message_chain.chain
+                )
+
+                if has_reply_component:
+                    # 获取房间当前状态以找到自己的用户 ID
+                    try:
+                        # 尝试通过客户端获取自己的用户 ID
+                        whoami = await self.client.whoami()
+                        my_user_id = whoami.get("user_id")
+
+                        if my_user_id:
+                            # 获取房间最近的消息
+                            messages_resp = await self.client.room_messages(
+                                room_id=room_id,
+                                direction="b",  # 向后获取（最新的消息）
+                                limit=50,  # 获取最近 50 条消息
+                            )
+
+                            # 查找自己最近发送的消息
+                            chunk = messages_resp.get("chunk", [])
+                            for event in chunk:
+                                if (
+                                    event.get("type") == "m.room.message"
+                                    and event.get("sender") == my_user_id
+                                    and event.get("content", {}).get("msgtype")
+                                    == "m.text"
+                                ):
+                                    reply_to = event.get("event_id")
+                                    logger.debug(
+                                        f"找到自己最近的消息作为回复对象：{reply_to}"
+                                    )
+                                    break
+                    except Exception as e:
+                        logger.debug(f"获取自己最近消息失败：{e}")
+            except Exception as e:
+                logger.debug(f"处理回复模式时出错：{e}")
+
         # 如果有回复，检查是否需要使用嘟文串模式
         if reply_to:
             try:
@@ -416,6 +460,56 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                     break
                         except Exception:
                             pass
+
+                        # 如果没有找到回复对象，但消息链中包含 Reply 组件（表示开启了回复模式）
+                        # 则尝试获取自己最近发送的消息作为回复对象
+                        if not reply_to:
+                            try:
+                                from astrbot.api.message_components import (
+                                    Reply as _Reply,
+                                )
+
+                                has_reply_component = any(
+                                    isinstance(seg, _Reply) for seg in chain.chain
+                                )
+
+                                if has_reply_component:
+                                    # 获取房间当前状态以找到自己的用户 ID
+                                    try:
+                                        # 尝试通过客户端获取自己的用户 ID
+                                        whoami = await self.client.whoami()
+                                        my_user_id = whoami.get("user_id")
+
+                                        if my_user_id:
+                                            # 获取房间最近的消息
+                                            messages_resp = await self.client.room_messages(
+                                                room_id=room_id,
+                                                direction="b",  # 向后获取（最新的消息）
+                                                limit=50,  # 获取最近 50 条消息
+                                            )
+
+                                            # 查找自己最近发送的消息
+                                            chunk = messages_resp.get("chunk", [])
+                                            for event in chunk:
+                                                if (
+                                                    event.get("type")
+                                                    == "m.room.message"
+                                                    and event.get("sender")
+                                                    == my_user_id
+                                                    and event.get("content", {}).get(
+                                                        "msgtype"
+                                                    )
+                                                    == "m.text"
+                                                ):
+                                                    reply_to = event.get("event_id")
+                                                    logger.debug(
+                                                        f"找到自己最近的消息作为回复对象：{reply_to}"
+                                                    )
+                                                    break
+                                    except Exception as e:
+                                        logger.debug(f"获取自己最近消息失败：{e}")
+                            except Exception as e:
+                                logger.debug(f"处理回复模式时出错：{e}")
 
                         # 如果 message chain 中没有 Reply，则使用原始消息 ID 作为回复目标
                         if (

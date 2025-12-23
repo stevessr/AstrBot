@@ -32,6 +32,7 @@ from .utils.utils import MatrixUtils
     "matrix",
     "Matrix 协议适配器",
     adapter_display_name="Matrix",
+    support_streaming_message=True,
 )
 class MatrixPlatformAdapter(Platform):
     def __init__(
