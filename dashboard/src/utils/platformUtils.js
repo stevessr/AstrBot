@@ -5,7 +5,7 @@
 /**
  * 获取平台图标
  * @param {string} name - 平台名称或类型
- * @returns {string|undefined} 图标URL
+ * @returns {string|undefined} 图标 URL
  */
 export function getPlatformIcon(name) {
   if (name === 'aiocqhttp') {
@@ -34,6 +34,8 @@ export function getPlatformIcon(name) {
     return new URL('@/assets/images/platform_logos/satori.png', import.meta.url).href
   } else if (name === 'misskey') {
     return new URL('@/assets/images/platform_logos/misskey.png', import.meta.url).href
+  } else if (name === 'matrix') {
+    return new URL('@/assets/images/platform_logos/matrix.svg', import.meta.url).href
   }
 }
 
