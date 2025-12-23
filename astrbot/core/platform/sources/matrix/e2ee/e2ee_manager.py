@@ -584,6 +584,63 @@ class E2EEManager:
                 logger.debug("忽略来自自己的密钥请求")
                 return
 
+            # 获取请求者的设备密钥信息
+            resp = await self.client.query_keys({sender: []})
+            devices = resp.get("device_keys", {}).get(sender, {})
+            device_info = devices.get(requesting_device_id, {})
+            curve_key = device_info.get("keys", {}).get(
+                f"{PREFIX_CURVE25519}{requesting_device_id}"
+            )
+            ed25519_key = device_info.get("keys", {}).get(
+                f"{PREFIX_ED25519}{requesting_device_id}"
+            )
+
+            if not curve_key:
+                logger.warning(
+                    f"无法获取设备 {sender}/{requesting_device_id} 的 Curve25519 密钥"
+                )
+                return
+
+            # 验证请求设备是否已被信任
+            # 检查方式：1. 通过 SAS 验证存储 2. 通过交叉签名验证
+            device_verified = False
+
+            # 1. 检查 SAS 验证存储
+            if self._verification and ed25519_key:
+                device_store = getattr(self._verification, "device_store", None)
+                if device_store and device_store.is_trusted(
+                    sender, requesting_device_id, ed25519_key
+                ):
+                    device_verified = True
+                    logger.debug(
+                        f"设备 {requesting_device_id} 已通过 SAS 验证"
+                    )
+
+            # 2. 检查交叉签名验证
+            if not device_verified and self._cross_signing and self._cross_signing._self_signing_key:
+                signatures = device_info.get("signatures", {}).get(sender, {})
+                # 检查是否有自签名密钥的签名
+                self_signing_key_id = f"ed25519:{self._cross_signing._self_signing_key[:8]}"
+                if self_signing_key_id in signatures:
+                    device_verified = True
+                    logger.debug(
+                        f"设备 {requesting_device_id} 已通过交叉签名验证"
+                    )
+
+            # 3. 如果启用了 TOFU（首次使用信任），可以放宽验证要求
+            if not device_verified and self.trust_on_first_use:
+                logger.info(
+                    f"设备 {requesting_device_id} 未验证，但 TOFU 已启用，允许转发密钥"
+                )
+                device_verified = True
+
+            if not device_verified:
+                logger.warning(
+                    f"拒绝向未验证的设备 {requesting_device_id} 转发密钥 "
+                    f"(session={session_id[:8]}...)"
+                )
+                return
+
             # 获取请求的 Megolm 会话
             session = self._olm.get_megolm_inbound_session(session_id)
             if not session:
@@ -602,8 +659,8 @@ class E2EEManager:
                 return
 
             # 构造 m.forwarded_room_key 内容
+            # 根据 Matrix 规范，type 不应包含在内容中（它是事件类型）
             forwarded_room_key = {
-                "type": M_FORWARDED_ROOM_KEY,
                 "algorithm": MEGOLM_ALGO,
                 "room_id": room_id,
                 "sender_key": sender_key,
@@ -613,44 +670,26 @@ class E2EEManager:
                 "forwarding_curve25519_key_chain": [],
             }
 
-            # 获取请求者的 Curve25519 密钥
-            try:
-                resp = await self.client.query_keys({sender: []})
-                devices = resp.get("device_keys", {}).get(sender, {})
-                device_info = devices.get(requesting_device_id, {})
-                curve_key = device_info.get("keys", {}).get(
-                    f"{PREFIX_CURVE25519}{requesting_device_id}"
-                )
-                ed25519_key = device_info.get("keys", {}).get(
-                    f"{PREFIX_ED25519}{requesting_device_id}"
-                )
+            # 使用 Olm 加密并包装，指定事件类型为 m.forwarded_room_key
+            encrypted_content = self._olm.encrypt_olm(
+                curve_key,
+                forwarded_room_key,
+                recipient_user_id=sender,
+                event_type=M_FORWARDED_ROOM_KEY,
+            )
 
-                if not curve_key:
-                    logger.warning(
-                        f"无法获取设备 {sender}/{requesting_device_id} 的 Curve25519 密钥"
-                    )
-                    return
+            import secrets
 
-                # 使用 Olm 加密并包装
-                encrypted_content = self._olm.encrypt_olm(
-                    curve_key, forwarded_room_key, recipient_user_id=sender
-                )
+            txn_id = secrets.token_hex(16)
+            await self.client.send_to_device(
+                M_ROOM_ENCRYPTED,
+                {sender: {requesting_device_id: encrypted_content}},
+                txn_id,
+            )
 
-                import secrets
-
-                txn_id = secrets.token_hex(16)
-                await self.client.send_to_device(
-                    M_ROOM_ENCRYPTED,
-                    {sender: {requesting_device_id: encrypted_content}},
-                    txn_id,
-                )
-
-                logger.info(
-                    f"已加密转发密钥：session={session_id[:8]}... -> device={requesting_device_id}"
-                )
-            except Exception as e:
-                logger.warning(f"加密转发密钥失败：{e}")
-                return
+            logger.info(
+                f"已加密转发密钥：session={session_id[:8]}... -> device={requesting_device_id}"
+            )
 
         except Exception as e:
             logger.warning(f"响应密钥请求失败：{e}")

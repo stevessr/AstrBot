@@ -253,6 +253,7 @@ class OlmMachine:
         content: dict,
         session: Session | None = None,
         recipient_user_id: str = "unknown",
+        event_type: str = "m.room_key",
     ) -> dict:
         """
         使用 Olm 加密内容并添加 Matrix 协议外壳
@@ -262,6 +263,7 @@ class OlmMachine:
             content: 要加密的内容 (m.room_key 等)
             session: 可选，已有的 Olm 会话
             recipient_user_id: 接收者用户 ID
+            event_type: 事件类型（默认 m.room_key）
 
         Returns:
             符合 m.room.encrypted (Olm) 格式 a 字典
@@ -277,13 +279,14 @@ class OlmMachine:
                 raise RuntimeError(f"没有可用于 {their_identity_key} 的 Olm 会话")
 
         # 构造 Matrix 协议外壳
+        # 根据 Matrix 规范，type 应放在外层，content 中不应重复
         wrapper = {
             "sender": self.user_id,
             "sender_device": self.device_id,
             "keys": {"ed25519": self.ed25519_key},
             "recipient": recipient_user_id,
             "recipient_keys": {"ed25519": "unknown"},
-            "type": content.get("type", "m.room_key"),
+            "type": event_type,
             "content": content,
         }
 
