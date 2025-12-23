@@ -63,7 +63,7 @@ class ProviderCommands:
             ttss = self.context.get_all_tts_providers()
             stts = self.context.get_all_stt_providers()
 
-            # 构造待检测列表: [(provider, type_label), ...]
+            # 构造待检测列表：[(provider, type_label), ...]
             all_providers = []
             all_providers.extend([(p, "llm") for p in llms])
             all_providers.extend([(p, "tts") for p in ttss])
@@ -118,7 +118,7 @@ class ProviderCommands:
                     mark = " ✅"
                 elif reachable_flag is False:
                     if error_code:
-                        mark = f" ❌(错误码: {error_code})"
+                        mark = f" ❌(错误码：{error_code})"
                     else:
                         mark = " ❌"
                 else:
@@ -245,16 +245,16 @@ class ProviderCommands:
                 err_msg = api_key_pattern.sub("key=***", str(e))
                 message.set_result(
                     MessageEventResult()
-                    .message("获取模型列表失败: " + err_msg)
+                    .message("获取模型列表失败：" + err_msg)
                     .use_t2i(False),
                 )
                 return
-            parts = ["下面列出了此模型提供商可用模型:"]
+            parts = ["下面列出了此模型提供商可用模型："]
             for i, model in enumerate(models, 1):
                 parts.append(f"\n{i}. {model}")
 
             curr_model = prov.get_model() or "无"
-            parts.append(f"\n当前模型: [{curr_model}]")
+            parts.append(f"\n当前模型：[{curr_model}]")
             parts.append(
                 "\nTips: 使用 /model <模型名/编号>，即可实时更换模型。如目标模型不存在于上表，请输入模型名。"
             )
@@ -267,7 +267,7 @@ class ProviderCommands:
                 models = await prov.get_models()
             except BaseException as e:
                 message.set_result(
-                    MessageEventResult().message("获取模型列表失败: " + str(e)),
+                    MessageEventResult().message("获取模型列表失败：" + str(e)),
                 )
                 return
             if idx_or_name > len(models) or idx_or_name < 1:
@@ -278,11 +278,11 @@ class ProviderCommands:
                     prov.set_model(new_model)
                 except BaseException as e:
                     message.set_result(
-                        MessageEventResult().message("切换模型未知错误: " + str(e)),
+                        MessageEventResult().message("切换模型未知错误：" + str(e)),
                     )
                 message.set_result(
                     MessageEventResult().message(
-                        f"切换模型成功。当前提供商: [{prov.meta().id}] 当前模型: [{prov.get_model()}]",
+                        f"切换模型成功。\n 当前提供商：[{prov.meta().id}] \n 当前模型：[{prov.get_model()}]",
                     ),
                 )
         else:
@@ -307,7 +307,7 @@ class ProviderCommands:
                 parts.append(f"\n{i}. {k[:8]}")
 
             parts.append(f"\n当前 Key: {curr_key[:8]}")
-            parts.append("\n当前模型: " + prov.get_model())
+            parts.append("\n当前模型：" + prov.get_model())
             parts.append("\n使用 /key <idx> 切换 Key。")
 
             ret = "".join(parts)
@@ -322,6 +322,6 @@ class ProviderCommands:
                     prov.set_key(new_key)
                 except BaseException as e:
                     message.set_result(
-                        MessageEventResult().message(f"切换 Key 未知错误: {e!s}"),
+                        MessageEventResult().message(f"切换 Key 未知错误：{e!s}"),
                     )
                 message.set_result(MessageEventResult().message("切换 Key 成功。"))
