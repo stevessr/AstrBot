@@ -394,6 +394,7 @@ CONFIG_METADATA_2 = {
                         "matrix_e2ee_key_backup": False,
                         "matrix_e2ee_recovery_key": "",
                         "matrix_e2ee_trust_on_first_use": False,
+                        "matrix_media_cache_dir": "./data/temp/matrix_media",
                     },
                     # "WebChat": {
                     #     "id": "webchat",
@@ -536,6 +537,11 @@ CONFIG_METADATA_2 = {
                         "type": "bool",
                         "hint": "启用后，当收到未知设备的验证请求且模式为 auto_accept 时，将自动接受验证。",
                         "condition": {"matrix_enable_e2ee": True},
+                    },
+                    "matrix_media_cache_dir": {
+                        "description": "媒体文件缓存目录",
+                        "type": "string",
+                        "hint": "Matrix 媒体文件（图片、贴纸等）的本地缓存目录路径。默认为 ./data/temp/matrix_media",
                     },
                     "is_sandbox": {
                         "description": "沙箱模式",

@@ -143,7 +143,7 @@ async def handle_astrbot_config_login(client_manager):
     """使用 AstrBot 配置的 Matrix 账户登录"""
     from astrbot.core.config.astrbot_config import AstrBotConfig
     from astrbot.core.platform.sources.matrix.client import MatrixHTTPClient
-    from astrbot.core.platform.sources.matrix.e2ee_manager import MatrixE2EEManager
+    from astrbot.core.platform.sources.matrix.e2ee import E2EEManager
 
     data = await request.get_json()
     config_id = data.get("config_id")
@@ -251,12 +251,14 @@ async def handle_astrbot_config_login(client_manager):
             )
 
             # 如果启用了 E2EE，初始化 E2EE 管理器
-            if matrix_config.get("matrix_enable_e2ee") and MatrixE2EEManager:
+            if matrix_config.get("matrix_enable_e2ee") and E2EEManager:
                 try:
-                    e2ee_manager = MatrixE2EEManager(
+                    e2ee_manager = E2EEManager(
                         client=client,
                         user_id=user_id,
                         device_id=device_id,
+                        store_path=matrix_config.get("matrix_e2ee_store_path", "./data/matrix_e2ee"),
+                        homeserver=matrix_config.get("matrix_homeserver"),
                     )
 
                     # 初始化 E2EE

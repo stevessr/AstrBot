@@ -27,11 +27,74 @@ class MatrixReceiver:
         mxc_converter: callable = None,
         bot_name: str = None,
         client=None,
+        matrix_config=None,
     ):
         self.user_id = user_id
         self.mxc_converter = mxc_converter
         self.bot_name = bot_name
         self.client = client  # MatrixHTTPClient instance needed for downloading files
+        self.matrix_config = matrix_config  # MatrixConfig instance for media settings
+
+    def _get_media_cache_dir(self) -> Path:
+        """获取媒体文件缓存目录"""
+        if self.matrix_config and hasattr(self.matrix_config, "media_cache_dir"):
+            cache_dir = Path(self.matrix_config.media_cache_dir)
+        else:
+            # 默认缓存目录
+            cache_dir = (
+                Path(astrbot_path.get_astrbot_data_path()) / "temp" / "matrix_media"
+            )
+
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _should_auto_download_media(self, msgtype: str) -> bool:
+        """检查是否应该自动下载该类型的媒体文件"""
+        # 默认自动下载图片和贴纸
+        return msgtype in ["m.image", "m.sticker"]
+
+    async def _download_media_file(
+        self, mxc_url: str, filename: str = None, mimetype: str = None
+    ) -> Path:
+        """下载媒体文件并返回缓存路径"""
+        if not self.client:
+            raise Exception("No client available for downloading media")
+
+        # 创建缓存键
+        cache_key = hashlib.md5(mxc_url.encode()).hexdigest()
+        cache_dir = self._get_media_cache_dir()
+
+        # 确定文件扩展名
+        if filename:
+            ext = Path(filename).suffix
+        elif mimetype:
+            ext_map = {
+                "image/png": ".png",
+                "image/jpeg": ".jpg",
+                "image/gif": ".gif",
+                "image/webp": ".webp",
+            }
+            ext = ext_map.get(mimetype, ".jpg")
+        else:
+            ext = ".jpg"
+
+        cache_path = cache_dir / f"{cache_key}{ext}"
+
+        # 检查缓存
+        if cache_path.exists() and cache_path.stat().st_size > 0:
+            logger.debug(f"Using cached media file: {cache_path}")
+            return cache_path
+
+        # 下载文件
+        try:
+            logger.info(f"Downloading media file: {mxc_url}")
+            media_data = await self.client.download_file(mxc_url)
+            cache_path.write_bytes(media_data)
+            logger.debug(f"Saved media file to cache: {cache_path}")
+            return cache_path
+        except Exception as e:
+            logger.error(f"Failed to download media file {mxc_url}: {e}")
+            raise
 
     async def convert_message(self, room: MatrixRoom, event) -> AstrBotMessage:
         """
@@ -98,41 +161,17 @@ class MatrixReceiver:
                         original_msgtype = original_content.get("msgtype")
 
                         # 如果引用的消息是图片，下载并添加到消息链
-                        if original_msgtype == "m.image":
+                        if (
+                            original_msgtype == "m.image"
+                            and self._should_auto_download_media("m.image")
+                        ):
                             original_mxc_url = original_content.get("url")
                             if original_mxc_url:
                                 try:
-                                    # 使用相同的缓存机制
-                                    cache_key = hashlib.md5(
-                                        original_mxc_url.encode()
-                                    ).hexdigest()
-                                    cache_dir = (
-                                        Path(astrbot_path.get_astrbot_data_path())
-                                        / "temp"
-                                        / "matrix_media"
+                                    cache_path = await self._download_media_file(
+                                        original_mxc_url,
+                                        original_content.get("body", "image.jpg"),
                                     )
-                                    cache_dir.mkdir(parents=True, exist_ok=True)
-
-                                    filename = original_content.get("body", "image.jpg")
-                                    ext = Path(filename).suffix or ".jpg"
-                                    cache_path = cache_dir / f"{cache_key}{ext}"
-
-                                    if (
-                                        cache_path.exists()
-                                        and cache_path.stat().st_size > 0
-                                    ):
-                                        logger.debug(
-                                            f"Using cached quoted image: {cache_path}"
-                                        )
-                                    else:
-                                        logger.info(
-                                            f"Downloading quoted image: {original_mxc_url}"
-                                        )
-                                        image_data = await self.client.download_file(
-                                            original_mxc_url
-                                        )
-                                        cache_path.write_bytes(image_data)
-
                                     chain.chain.append(
                                         Image.fromFileSystem(str(cache_path))
                                     )
@@ -167,81 +206,39 @@ class MatrixReceiver:
 
         elif msgtype == "m.image":
             mxc_url = event.content.get("url")
-            if mxc_url and self.client:
+            if mxc_url and self.client and self._should_auto_download_media("m.image"):
                 try:
-                    # Create a cache key from the MXC URL
-                    cache_key = hashlib.md5(mxc_url.encode()).hexdigest()
-                    cache_dir = (
-                        Path(astrbot_path.get_astrbot_data_path())
-                        / "temp"
-                        / "matrix_media"
+                    cache_path = await self._download_media_file(
+                        mxc_url, event.content.get("body", "image.jpg")
                     )
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Determine file extension from filename or default to .jpg
-                    filename = event.content.get("body", "image.jpg")
-                    ext = Path(filename).suffix or ".jpg"
-
-                    cache_path = cache_dir / f"{cache_key}{ext}"
-
-                    # Check if cached file exists and is valid
-                    if cache_path.exists() and cache_path.stat().st_size > 0:
-                        logger.debug(f"Using cached image: {cache_path}")
-                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
-                    else:
-                        # Download using authenticated client
-                        logger.info(f"Downloading Matrix image: {mxc_url}")
-                        image_data = await self.client.download_file(mxc_url)
-
-                        # Save to cache
-                        cache_path.write_bytes(image_data)
-                        logger.debug(f"Saved Matrix image to cache: {cache_path}")
-
-                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
+                    chain.chain.append(Image.fromFileSystem(str(cache_path)))
                 except Exception as e:
                     logger.error(f"Failed to download Matrix image: {e}")
                     # Fallback to plain text
                     chain.chain.append(Plain(f"[图片下载失败：{event.body}]"))
             elif mxc_url and self.mxc_converter:
-                # Fallback to URL if no client (shouldn't happen)
+                # Fallback to URL if no client or auto-download disabled
                 http_url = self.mxc_converter(mxc_url)
                 chain.chain.append(Image.fromURL(http_url))
+            else:
+                # No download and no converter fallback
+                chain.chain.append(Plain(f"[图片：{event.body}]"))
 
         elif msgtype == "m.sticker":
             # 贴纸处理：与 m.image 类似
             mxc_url = event.content.get("url")
-            if mxc_url and self.client:
+            if (
+                mxc_url
+                and self.client
+                and self._should_auto_download_media("m.sticker")
+            ):
                 try:
-                    # Create a cache key from the MXC URL
-                    cache_key = hashlib.md5(mxc_url.encode()).hexdigest()
-                    cache_dir = (
-                        Path(astrbot_path.get_astrbot_data_path())
-                        / "temp"
-                        / "matrix_media"
-                    )
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Determine file extension from info or default to .png
                     info = event.content.get("info", {})
                     mimetype = info.get("mimetype", "image/png")
-                    ext_map = {
-                        "image/png": ".png",
-                        "image/jpeg": ".jpg",
-                        "image/gif": ".gif",
-                        "image/webp": ".webp",
-                    }
-                    ext = ext_map.get(mimetype, ".png")
-                    cache_path = cache_dir / f"{cache_key}{ext}"
-
-                    if cache_path.exists() and cache_path.stat().st_size > 0:
-                        logger.debug(f"Using cached sticker: {cache_path}")
-                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
-                    else:
-                        logger.info(f"Downloading Matrix sticker: {mxc_url}")
-                        sticker_data = await self.client.download_file(mxc_url)
-                        cache_path.write_bytes(sticker_data)
-                        logger.debug(f"Saved Matrix sticker to cache: {cache_path}")
-                        chain.chain.append(Image.fromFileSystem(str(cache_path)))
+                    cache_path = await self._download_media_file(
+                        mxc_url, event.content.get("body", "sticker.png"), mimetype
+                    )
+                    chain.chain.append(Image.fromFileSystem(str(cache_path)))
                 except Exception as e:
                     logger.error(f"Failed to download Matrix sticker: {e}")
                     chain.chain.append(Plain(f"[贴纸：{event.body}]"))

@@ -25,6 +25,7 @@ from ..constants import (
     PREFIX_ED25519,
     SIGNED_CURVE25519,
 )
+from ..storage_paths import MatrixStoragePaths
 from .crypto_store import CryptoStore
 from .olm_machine import VODOZEMAC_AVAILABLE, OlmMachine
 
@@ -49,6 +50,7 @@ class E2EEManager:
         user_id: str,
         device_id: str,
         store_path: str | Path,
+        homeserver: str,
         auto_verify_mode: Literal[
             "auto_accept", "auto_reject", "manual"
         ] = "auto_accept",
@@ -64,7 +66,8 @@ class E2EEManager:
             client: MatrixHTTPClient 实例
             user_id: 用户 ID
             device_id: 设备 ID
-            store_path: 加密存储路径
+            store_path: 加密存储基础路径
+            homeserver: Matrix 服务器 URL
             auto_verify_mode: 自动验证模式 (auto_accept/auto_reject/manual)
             enable_key_backup: 是否启用密钥备份
             recovery_key: 用户配置的恢复密钥 (base64)
@@ -74,12 +77,16 @@ class E2EEManager:
         self.client = client
         self.user_id = user_id
         self.device_id = device_id
-        self.store_path = Path(store_path) / user_id.replace(":", "_")
+        self.homeserver = homeserver
         self.password = password
 
+        # 使用 MatrixStoragePaths 生成用户存储目录
+        self.store_path = MatrixStoragePaths.get_user_storage_dir(
+            str(store_path), homeserver, user_id
+        )
+
         # Ensure the directory exists
-        if not self.store_path.exists():
-            self.store_path.mkdir(parents=True, exist_ok=True)
+        MatrixStoragePaths.ensure_directory(self.store_path)
 
         self.auto_verify_mode = auto_verify_mode
         self.enable_key_backup = enable_key_backup
@@ -328,13 +335,13 @@ class E2EEManager:
         try:
             # 获取设备密钥
             device_keys = self._olm.get_device_keys()
-            
+
             # Debug: 显示上传的设备密钥内容
             logger.info(f"上传设备密钥：device_id={device_keys.get('device_id')}")
-            algorithms = device_keys.get('algorithms', [])
+            algorithms = device_keys.get("algorithms", [])
             logger.info(f"支持的加密算法：{algorithms}")
             logger.info(f"keys={list(device_keys.get('keys', {}).keys())}")
-            
+
             # 验证算法列表包含必要的加密算法
             required_algos = [OLM_ALGO, MEGOLM_ALGO]
             missing_algos = [algo for algo in required_algos if algo not in algorithms]
@@ -352,7 +359,7 @@ class E2EEManager:
                 device_keys=device_keys,
                 one_time_keys=one_time_keys,
             )
-            
+
             # Debug: 显示完整响应
             logger.info(f"upload_keys 响应：{response}")
 

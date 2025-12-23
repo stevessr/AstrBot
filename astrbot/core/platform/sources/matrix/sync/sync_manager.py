@@ -24,6 +24,9 @@ class MatrixSyncManager:
         sync_timeout: int = DEFAULT_TIMEOUT_MS_30000,
         auto_join_rooms: bool = True,
         sync_store_path: str | None = None,
+        homeserver: str | None = None,
+        user_id: str | None = None,
+        store_path: str | None = None,
     ):
         """
         Initialize sync manager
@@ -32,12 +35,27 @@ class MatrixSyncManager:
             client: Matrix HTTP client
             sync_timeout: Sync timeout in milliseconds
             auto_join_rooms: Whether to auto-join invited rooms
-            sync_store_path: Path to store sync token for resumption
+            sync_store_path: Path to store sync token for resumption (deprecated)
+            homeserver: Matrix homeserver URL
+            user_id: Matrix user ID
+            store_path: Base storage path
         """
         self.client = client
         self.sync_timeout = sync_timeout
         self.auto_join_rooms = auto_join_rooms
-        self.sync_store_path = sync_store_path
+        self.homeserver = homeserver
+        self.user_id = user_id
+        self.store_path = store_path
+
+        # 如果提供了新的路径参数，使用新逻辑生成路径
+        if homeserver and user_id and store_path:
+            from ..storage_paths import MatrixStoragePaths
+            self.sync_store_path = str(MatrixStoragePaths.get_sync_file_path(
+                store_path, homeserver, user_id
+            ))
+        else:
+            # 回退到旧的路径参数
+            self.sync_store_path = sync_store_path
 
         # Event callbacks
         self.on_room_event: Callable | None = None
@@ -77,8 +95,10 @@ class MatrixSyncManager:
             return
 
         try:
-            Path(self.sync_store_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(self.sync_store_path, "w") as f:
+            from ..storage_paths import MatrixStoragePaths
+            sync_path = Path(self.sync_store_path)
+            MatrixStoragePaths.ensure_directory(sync_path)
+            with open(sync_path, "w") as f:
                 json.dump({"next_batch": self._next_batch}, f)
         except Exception as e:
             logger.warning(f"保存同步令牌失败：{e}")

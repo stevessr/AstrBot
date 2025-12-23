@@ -15,7 +15,7 @@ async def handle_initialize_e2ee(matrix_client_manager):
         return jsonify({"success": False, "error": "Invalid session"})
 
     try:
-        from astrbot.core.platform.sources.matrix.e2ee_manager import MatrixE2EEManager
+        from astrbot.core.platform.sources.matrix.e2ee import E2EEManager
 
         client_data = matrix_client_manager.matrix_clients[session_id]
         client = client_data["client"]
@@ -24,18 +24,20 @@ async def handle_initialize_e2ee(matrix_client_manager):
         if client_data.get("e2ee_manager"):
             return jsonify({"success": True, "message": "E2EE already initialized"})
 
-        # 创建E2EE管理器
-        if MatrixE2EEManager:
-            e2ee_manager = MatrixE2EEManager(
+        # 创建 E2EE 管理器
+        if E2EEManager:
+            e2ee_manager = E2EEManager(
                 client=client,
                 user_id=client_data["user_id"],
                 device_id=client_data["device_id"],
+                store_path="./data/matrix_e2ee",  # 使用默认路径
+                homeserver=client_data.get("homeserver"),
             )
 
-            # 初始化E2EE
+            # 初始化 E2EE
             await e2ee_manager.initialize()
 
-            # 保存E2EE管理器
+            # 保存 E2EE 管理器
             client_data["e2ee_manager"] = e2ee_manager
 
             return jsonify(
@@ -54,7 +56,7 @@ async def handle_initialize_e2ee(matrix_client_manager):
 
 
 async def handle_get_e2ee_status(matrix_client_manager):
-    """获取E2EE状态"""
+    """获取 E2EE 状态"""
     session_id = request.args.get("session_id")
     room_id = request.args.get("room_id")
 

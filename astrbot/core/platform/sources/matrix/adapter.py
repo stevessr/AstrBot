@@ -1,6 +1,5 @@
 import asyncio
 import time
-from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
@@ -14,8 +13,6 @@ from .auth.auth import MatrixAuth
 from .client import MatrixHTTPClient
 
 # Import commands to register them
-from .commands import approve_device
-
 # 组件导入 - Updated to new structure
 from .config import MatrixConfig
 from .constants import DEFAULT_TYPING_TIMEOUT_MS, MATRIX_HTML_FORMAT, REL_TYPE_THREAD
@@ -47,22 +44,26 @@ class MatrixPlatformAdapter(Platform):
         # 使用自定义 HTTP 客户端（不依赖 matrix-nio）
         self.client = MatrixHTTPClient(homeserver=self._matrix_config.homeserver)
 
-        # 定义存储目录，使用配置中指定的 store_path
-        sanitized_user = self._matrix_config.user_id.replace(":", "_").replace("@", "")
-        # 如果 self._matrix_config.store_path 是一个文件路径，取其目录；如果是目录，直接使用
-        base_store_dir = self._matrix_config.store_path
-        if base_store_dir.endswith(".json"):
-            base_store_dir = Path(base_store_dir).parent
+        # 使用新的存储路径逻辑
+        from .storage_paths import MatrixStoragePaths
 
-        self.storage_dir = str(Path(base_store_dir) / sanitized_user)
-        storage_path = Path(self.storage_dir)
-        if not storage_path.exists():
-            storage_path.mkdir(parents=True, exist_ok=True)
+        # 获取用户的存储目录
+        user_storage_dir = MatrixStoragePaths.get_user_storage_dir(
+            self._matrix_config.store_path,
+            self._matrix_config.homeserver,
+            self._matrix_config.user_id,
+        )
 
+        # 确保目录存在
+        MatrixStoragePaths.ensure_directory(user_storage_dir)
+
+        self.storage_dir = str(user_storage_dir)
+
+        # 初始化认证（不再需要指定 token_store_path，会自动生成）
         self.auth = MatrixAuth(
             self.client,
             self._matrix_config,
-            token_store_path=str(Path(self.storage_dir) / "auth.json"),
+            token_store_path=None,  # 让 MatrixAuth 自动生成路径
         )
 
         self.sender = MatrixSender(self.client)
@@ -76,18 +77,20 @@ class MatrixPlatformAdapter(Platform):
             lambda mxc: MatrixUtils.mxc_to_http(mxc, self._matrix_config.homeserver),
             bot_name=bot_name,
             client=self.client,  # 传递 client 用于下载图片
+            matrix_config=self._matrix_config,  # 传递配置用于媒体设置
         )
         self.event_handler = MatrixEventHandler(
             self.client, self._matrix_config.auto_join_rooms
         )
 
-        # Initialize sync manager with token persistence
-        sync_store_path = str(Path(self.storage_dir) / "sync.json")
+        # Initialize sync manager with new storage path logic
         self.sync_manager = MatrixSyncManager(
             client=self.client,
             sync_timeout=self._matrix_config.sync_timeout,
             auto_join_rooms=self._matrix_config.auto_join_rooms,
-            sync_store_path=sync_store_path,
+            homeserver=self._matrix_config.homeserver,
+            user_id=self._matrix_config.user_id,
+            store_path=self._matrix_config.store_path,
         )
 
         # Initialize event processor
@@ -105,7 +108,9 @@ class MatrixPlatformAdapter(Platform):
             if VODOZEMAC_AVAILABLE:
                 recovery_key = self._matrix_config.e2ee_recovery_key
                 if recovery_key:
-                    logger.info(f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}")
+                    logger.info(
+                        f"配置的恢复密钥：{recovery_key[:4]}...{recovery_key[-4:]}"
+                    )
                 else:
                     logger.warning("未配置恢复密钥 (matrix_e2ee_recovery_key)")
 
@@ -114,6 +119,7 @@ class MatrixPlatformAdapter(Platform):
                     user_id=self._matrix_config.user_id,
                     device_id=self._matrix_config.device_id,  # 现在通过属性获取
                     store_path=self._matrix_config.e2ee_store_path,
+                    homeserver=self._matrix_config.homeserver,
                     auto_verify_mode=self._matrix_config.e2ee_auto_verify,
                     enable_key_backup=self._matrix_config.e2ee_key_backup,
                     recovery_key=recovery_key,

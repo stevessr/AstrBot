@@ -40,12 +40,24 @@ class MatrixAuth:
     def device_id(self) -> str:
         """获取设备 ID"""
         return self.config.device_id
-    
+
     def _get_token_store_path(self) -> str:
         """Get path for storing auth token"""
         if self.token_store_path:
             return self.token_store_path
 
+        # 使用新的存储路径逻辑
+        from ..storage_paths import MatrixStoragePaths
+
+        if self.user_id and self.config.homeserver:
+            auth_path = MatrixStoragePaths.get_auth_file_path(
+                self.config.store_path, self.config.homeserver, self.user_id
+            )
+            # 确保目录存在
+            MatrixStoragePaths.ensure_directory(auth_path)
+            return str(auth_path)
+
+        # 回退到旧路径（兼容性）
         sanitized_user = (
             self.user_id.replace(":", "_").replace("@", "")
             if self.user_id

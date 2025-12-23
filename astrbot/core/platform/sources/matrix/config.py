@@ -75,6 +75,11 @@ class MatrixConfig:
         # 如果为空，将自动生成新密钥并在日志中输出
         self.e2ee_recovery_key = self.config.get("matrix_e2ee_recovery_key", "")
 
+        # 媒体文件缓存目录，默认为 ./data/temp/matrix_media
+        self.media_cache_dir = self.config.get(
+            "matrix_media_cache_dir", "./data/temp/matrix_media"
+        )
+
         self._validate()
 
     @property

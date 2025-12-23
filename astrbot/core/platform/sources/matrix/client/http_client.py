@@ -1098,7 +1098,7 @@ class MatrixHTTPClient:
             algorithms = device_keys.get("algorithms", [])
             device_id = device_keys.get("device_id", "unknown")
             logger.info(f"上传设备密钥：device_id={device_id}, algorithms={algorithms}")
-            
+
         if one_time_keys:
             otk_count = len(one_time_keys)
             logger.debug(f"上传 {otk_count} 个一次性密钥")

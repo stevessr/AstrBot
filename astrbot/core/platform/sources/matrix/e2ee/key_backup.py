@@ -16,7 +16,6 @@ from astrbot.api import logger
 
 from ..client.http_client import MatrixAPIError
 from ..constants import (
-    AES_BLOCK_SIZE_16,
     AES_GCM_NONCE_LEN,
     BASE58_ALPHABET,
     CRYPTO_KEY_SIZE_32,
@@ -25,7 +24,6 @@ from ..constants import (
     HKDF_MEGOLM_BACKUP_INFO,
     MAC_TRUNCATED_BYTES_8,
     MEGOLM_BACKUP_ALGO,
-    MEGOLM_BACKUP_INFO,
     MSC2697_DEHYDRATED_DEVICE_EVENT,
     RECOVERY_KEY_HDR_BYTE1,
     RECOVERY_KEY_HDR_BYTE2,

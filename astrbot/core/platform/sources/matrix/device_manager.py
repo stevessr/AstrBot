@@ -7,7 +7,6 @@ import hashlib
 import json
 import secrets
 from pathlib import Path
-from typing import Optional
 
 from astrbot.api import logger
 
@@ -33,19 +32,32 @@ class MatrixDeviceManager:
             homeserver: Matrix 服务器地址
             store_path: 存储路径
         """
+
         self.user_id = user_id
+
         self.homeserver = homeserver.rstrip("/")
+
         self.store_path = Path(store_path)
 
-        # 为每个用户创建独立的存储目录
-        sanitized_user = user_id.replace(":", "_").replace("@", "")
-        self.user_store_path = self.store_path / sanitized_user
-        self.user_store_path.mkdir(parents=True, exist_ok=True)
+        # 使用新的存储路径逻辑
+
+        from .storage_paths import MatrixStoragePaths
+
+        # 获取用户的存储目录
+
+        self.user_store_path = MatrixStoragePaths.get_user_storage_dir(
+            store_path, homeserver, user_id
+        )
+
+        # 确保目录存在
+
+        MatrixStoragePaths.ensure_directory(self.user_store_path)
 
         # 设备信息文件路径
+
         self.device_info_path = self.user_store_path / "device_info.json"
 
-        self._device_id: Optional[str] = None
+        self._device_id: str | None = None
 
     def _generate_device_id(self) -> str:
         """
@@ -73,7 +85,7 @@ class MatrixDeviceManager:
 
         return device_id
 
-    def _load_device_info(self) -> Optional[dict]:
+    def _load_device_info(self) -> dict | None:
         """
         从磁盘加载设备信息
 
@@ -84,7 +96,7 @@ class MatrixDeviceManager:
             if not self.device_info_path.exists():
                 return None
 
-            with open(self.device_info_path, "r") as f:
+            with open(self.device_info_path) as f:
                 device_info = json.load(f)
 
             # 验证设备信息是否匹配当前用户和服务器
@@ -174,7 +186,7 @@ class MatrixDeviceManager:
 
         return self._device_id
 
-    def get_device_id(self) -> Optional[str]:
+    def get_device_id(self) -> str | None:
         """
         获取当前设备 ID（不自动生成）
 

@@ -630,7 +630,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                     msg_type="m.room.message",
                     content=content,
                 )
-                logger.info(f"流式消息发送成功")
+                logger.info("流式消息发送成功")
             except Exception as e:
                 logger.error(f"发送消息失败 (streaming): {e}")
 
