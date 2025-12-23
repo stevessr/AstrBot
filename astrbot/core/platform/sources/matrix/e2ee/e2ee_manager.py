@@ -390,8 +390,6 @@ class E2EEManager:
             logger.info(f"keys={list(device_keys.get('keys', {}).keys())}")
 
             # 生成一次性密钥
-            from ..constants import DEFAULT_ONE_TIME_KEYS_COUNT
-
             one_time_keys = self._olm.generate_one_time_keys(
                 DEFAULT_ONE_TIME_KEYS_COUNT
             )
