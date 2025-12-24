@@ -262,10 +262,29 @@ class MatrixAuth:
                             "error",
                             f"Token refresh failed: {refresh_error}",
                         )
-                # No refresh token or refresh failed - panic
+                # No refresh token or refresh failed
+                # Try password re-login if password is available
+                if self.password:
+                    self._log(
+                        "info",
+                        "Access token invalid and refresh failed. Attempting password re-login...",
+                    )
+                    try:
+                        await self._login_via_password()
+                        self._save_token()
+                        self._log("info", "Successfully re-logged in with password")
+                        return
+                    except Exception as password_error:
+                        self._log(
+                            "error",
+                            f"Password re-login also failed: {password_error}",
+                        )
+                        # Fall through to fatal error
+
+                # No password available or password login also failed - panic
                 self._log(
                     "error",
-                    f"FATAL: Access token is invalid or expired and refresh failed. Please update your token. Error: {e}",
+                    f"FATAL: Access token is invalid or expired and all recovery methods failed. Error: {e}",
                 )
                 import sys
 
