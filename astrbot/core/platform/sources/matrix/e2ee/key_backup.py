@@ -1209,27 +1209,66 @@ class CrossSigning:
             server_master = None
             server_self_signing = None
             server_user_signing = None
+            keys_need_regen = False
 
             if master_keys:
                 keys = master_keys.get("keys", {})
                 if keys:
+                    # 获取 key ID 和公钥值
+                    key_id = list(keys.keys())[0]
                     server_master = list(keys.values())[0]
                     self._master_key = server_master
                     logger.info("[E2EE-CrossSign] 发现服务器主密钥")
 
+                    # 检测是否使用了错误的截断格式
+                    # 正确格式：ed25519:<43 字符 base64 公钥>
+                    # 错误格式：ed25519:<8 字符截断>
+                    key_part = key_id.split(":", 1)[-1] if ":" in key_id else key_id
+                    if len(key_part) < 20:  # 截断的 key ID 只有 8 个字符
+                        logger.warning(
+                            f"[E2EE-CrossSign] 检测到旧格式的 key ID (长度={len(key_part)})，需要重新生成"
+                        )
+                        keys_need_regen = True
+
             if self_keys:
                 keys = self_keys.get("keys", {})
                 if keys:
+                    key_id = list(keys.keys())[0]
                     server_self_signing = list(keys.values())[0]
                     self._self_signing_key = server_self_signing
                     logger.info("[E2EE-CrossSign] 发现服务器自签名密钥")
 
+                    key_part = key_id.split(":", 1)[-1] if ":" in key_id else key_id
+                    if len(key_part) < 20:
+                        logger.warning(
+                            "[E2EE-CrossSign] 检测到旧格式的 self-signing key ID，需要重新生成"
+                        )
+                        keys_need_regen = True
+
             if user_keys:
                 keys = user_keys.get("keys", {})
                 if keys:
+                    key_id = list(keys.keys())[0]
                     server_user_signing = list(keys.values())[0]
                     self._user_signing_key = server_user_signing
                     logger.info("[E2EE-CrossSign] 发现服务器用户签名密钥")
+
+                    key_part = key_id.split(":", 1)[-1] if ":" in key_id else key_id
+                    if len(key_part) < 20:
+                        logger.warning(
+                            "[E2EE-CrossSign] 检测到旧格式的 user-signing key ID，需要重新生成"
+                        )
+                        keys_need_regen = True
+
+            # 如果检测到旧格式的 key ID，强制重新生成
+            if keys_need_regen:
+                logger.info("[E2EE-CrossSign] 正在重新生成交叉签名密钥以修复格式问题...")
+                try:
+                    await self._generate_and_upload_keys(force_regen=True)
+                    return
+                except Exception as e:
+                    logger.error(f"[E2EE-CrossSign] 重新生成交叉签名密钥失败：{e}")
+                    logger.warning("[E2EE-CrossSign] 将继续使用现有密钥（交叉签名可能无法正常工作）")
 
             # 如果服务器已有密钥但本地缺少私钥，尝试重新生成并覆盖
             if server_master and not self._master_priv:
@@ -1372,9 +1411,11 @@ class CrossSigning:
         if force_regen or not self._user_signing_priv:
             self._user_signing_priv, self._user_signing_key = self._gen_keypair()
 
-        master_id = f"ed25519:{self._master_key[:8]}"
-        self_id = f"ed25519:{self._self_signing_key[:8]}"
-        user_id = f"ed25519:{self._user_signing_key[:8]}"
+        # Key ID 必须使用完整的公钥（Matrix 规范要求）
+        # 格式：ed25519:<unpadded_base64_public_key>
+        master_id = f"ed25519:{self._master_key}"
+        self_id = f"ed25519:{self._self_signing_key}"
+        user_id = f"ed25519:{self._user_signing_key}"
 
         master_key = {
             "user_id": self.user_id,
@@ -1418,6 +1459,29 @@ class CrossSigning:
             )
             self._save_local_keys()
             logger.info("[E2EE-CrossSign] 已生成并上传交叉签名密钥")
+
+            # 验证上传结果
+            logger.info("[E2EE-CrossSign] 正在验证交叉签名密钥上传结果...")
+            verify_resp = await self.client.query_keys({self.user_id: []})
+
+            # 检查 master key
+            master_on_server = verify_resp.get("master_keys", {}).get(self.user_id, {})
+            if master_on_server:
+                mk_id = list(master_on_server.get("keys", {}).keys())[0] if master_on_server.get("keys") else "N/A"
+                mk_val = list(master_on_server.get("keys", {}).values())[0] if master_on_server.get("keys") else "N/A"
+                logger.info(f"[E2EE-CrossSign] 服务器 master key ID：{mk_id}")
+                logger.info(f"[E2EE-CrossSign] 服务器 master 公钥：{mk_val[:20]}..." if mk_val != "N/A" else "[E2EE-CrossSign] 服务器 master 公钥：N/A")
+
+            # 检查 self-signing key
+            ssk_on_server = verify_resp.get("self_signing_keys", {}).get(self.user_id, {})
+            if ssk_on_server:
+                ssk_id = list(ssk_on_server.get("keys", {}).keys())[0] if ssk_on_server.get("keys") else "N/A"
+                ssk_val = list(ssk_on_server.get("keys", {}).values())[0] if ssk_on_server.get("keys") else "N/A"
+                ssk_sigs = ssk_on_server.get("signatures", {}).get(self.user_id, {})
+                logger.info(f"[E2EE-CrossSign] 服务器 self-signing key ID：{ssk_id}")
+                logger.info(f"[E2EE-CrossSign] self-signing key 的签名：{list(ssk_sigs.keys())}")
+            else:
+                logger.warning("[E2EE-CrossSign] 服务器未返回 self-signing key！")
         except MatrixAPIError as e:
             # Check for UIA (User Interactive Authentication) or 401
             if e.status == 401 and isinstance(e.data, dict):
@@ -1491,55 +1555,156 @@ class CrossSigning:
                 return
 
             device_key = device_keys[device_id]
+            logger.debug(f"[E2EE-CrossSign] 准备签名设备密钥：{list(device_key.get('keys', {}).keys())}")
 
-            # 使用 Olm 账户签名
-            canonical = self._canonical(device_key)
-            signature = self._sign(self._self_signing_priv, device_key)
+            # 构造要签名的对象（不包含 signatures 和 unsigned）
+            # Matrix 规范要求签名的是不包含 signatures 的对象
+            key_to_sign = {
+                "user_id": device_key.get("user_id"),
+                "device_id": device_key.get("device_id"),
+                "algorithms": device_key.get("algorithms"),
+                "keys": device_key.get("keys"),
+            }
 
-            await self.client._request(
+            # 使用 self-signing 私钥签名
+            signature = self._sign(self._self_signing_priv, key_to_sign)
+
+            # 构造签名 key ID - 使用完整的 self-signing 公钥
+            sign_key_id = f"ed25519:{self._self_signing_key}"
+            logger.info(f"[E2EE-CrossSign] 使用 self-signing key 签名：{sign_key_id[:40]}...")
+
+            # 根据 Matrix 规范，上传签名需要包含完整的设备密钥对象
+            # 添加新的签名到现有签名中
+            existing_signatures = device_key.get("signatures", {}).copy()
+            if self.user_id not in existing_signatures:
+                existing_signatures[self.user_id] = {}
+            existing_signatures[self.user_id][sign_key_id] = signature
+
+            # 构造完整的上传对象
+            signed_device_key = {
+                "user_id": device_key.get("user_id"),
+                "device_id": device_key.get("device_id"),
+                "algorithms": device_key.get("algorithms"),
+                "keys": device_key.get("keys"),
+                "signatures": existing_signatures,
+            }
+
+            upload_data = {
+                self.user_id: {
+                    device_id: signed_device_key,
+                }
+            }
+            logger.debug(f"[E2EE-CrossSign] 上传签名数据：用户={self.user_id}, 设备={device_id}")
+            logger.debug(f"[E2EE-CrossSign] 签名列表：{list(existing_signatures.get(self.user_id, {}).keys())}")
+
+            resp = await self.client._request(
                 "POST",
                 "/_matrix/client/v3/keys/signatures/upload",
-                data={
-                    self.user_id: {
-                        device_id: {
-                            f"ed25519:{self._self_signing_key[:8]}": signature,
-                        }
-                    }
-                },
+                data=upload_data,
             )
 
-            logger.info(f"[E2EE-CrossSign] 已签名设备：{device_id}")
+            # 检查响应
+            logger.info(f"[E2EE-CrossSign] 签名上传响应：{resp}")
+
+            # 检查是否有失败
+            failures = resp.get("failures", {})
+            if failures:
+                logger.error(f"[E2EE-CrossSign] 签名上传失败：{failures}")
+            else:
+                logger.info(f"[E2EE-CrossSign] 已成功签名设备：{device_id}")
+
+                # 验证签名是否真的在服务器上
+                verify_resp = await self.client.query_keys({self.user_id: [device_id]})
+                verify_device = verify_resp.get("device_keys", {}).get(self.user_id, {}).get(device_id, {})
+                verify_sigs = verify_device.get("signatures", {}).get(self.user_id, {})
+                logger.info(f"[E2EE-CrossSign] 验证后的签名列表：{list(verify_sigs.keys())}")
+
+                # 检查交叉签名是否存在
+                if sign_key_id in verify_sigs:
+                    logger.info(f"[E2EE-CrossSign] ✅ 交叉签名已成功添加到服务器")
+                else:
+                    logger.error(f"[E2EE-CrossSign] ❌ 交叉签名未出现在服务器上！")
+                    logger.error(f"[E2EE-CrossSign] 期望的签名 key ID：{sign_key_id}")
+                    logger.error(f"[E2EE-CrossSign] 实际的签名列表：{verify_sigs}")
+
+                # 额外验证：查询交叉签名密钥状态
+                logger.info("[E2EE-CrossSign] 正在验证交叉签名密钥状态...")
+                cross_keys = verify_resp.get("self_signing_keys", {}).get(self.user_id, {})
+                if cross_keys:
+                    cross_key_id = list(cross_keys.get("keys", {}).keys())[0] if cross_keys.get("keys") else "N/A"
+                    cross_key_val = list(cross_keys.get("keys", {}).values())[0] if cross_keys.get("keys") else "N/A"
+                    logger.info(f"[E2EE-CrossSign] 服务器上的 self-signing key ID：{cross_key_id}")
+                    logger.info(f"[E2EE-CrossSign] 服务器上的 self-signing 公钥：{cross_key_val}")
+                    logger.info(f"[E2EE-CrossSign] 本地的 self-signing 公钥：{self._self_signing_key}")
+                    if cross_key_val == self._self_signing_key:
+                        logger.info("[E2EE-CrossSign] ✅ self-signing 公钥匹配")
+                    else:
+                        logger.error("[E2EE-CrossSign] ❌ self-signing 公钥不匹配！")
+                else:
+                    logger.warning("[E2EE-CrossSign] 服务器未返回 self-signing key")
 
         except Exception as e:
+            import traceback
             logger.error(f"[E2EE-CrossSign] 签名设备失败：{e}")
+            logger.error(f"[E2EE-CrossSign] 详情：{traceback.format_exc()}")
 
-    async def verify_user(self, user_id: str):
-        """验证其他用户"""
+    async def verify_user(self, target_user_id: str):
+        """验证其他用户（使用 user-signing key 签名其 master key）"""
         if not self._user_signing_key or not self._user_signing_priv:
             logger.warning("[E2EE-CrossSign] 未设置用户签名密钥或私钥")
             return
 
         try:
-            response = await self.client.query_keys({user_id: []})
+            response = await self.client.query_keys({target_user_id: []})
             master_keys = response.get("master_keys", {})
 
-            if user_id not in master_keys:
-                logger.warning(f"[E2EE-CrossSign] 未找到用户主密钥：{user_id}")
+            if target_user_id not in master_keys:
+                logger.warning(f"[E2EE-CrossSign] 未找到用户主密钥：{target_user_id}")
                 return
 
-            master_key = master_keys[user_id]
+            master_key = master_keys[target_user_id]
             key_id = list(master_key.get("keys", {}).keys())[0]
 
-            _canonical = self._canonical(master_key)
-            signature = self._sign(self._user_signing_priv, master_key)
+            # 构造要签名的对象（不包含 signatures）
+            key_to_sign = {
+                "user_id": master_key.get("user_id"),
+                "usage": master_key.get("usage"),
+                "keys": master_key.get("keys"),
+            }
+
+            signature = self._sign(self._user_signing_priv, key_to_sign)
+            # 使用完整的 user-signing 公钥作为 key ID
+            sign_key_id = f"ed25519:{self._user_signing_key}"
+
+            # 构造完整的上传对象（包含签名的 master key）
+            existing_signatures = master_key.get("signatures", {}).copy()
+            if self.user_id not in existing_signatures:
+                existing_signatures[self.user_id] = {}
+            existing_signatures[self.user_id][sign_key_id] = signature
+
+            signed_master_key = {
+                "user_id": master_key.get("user_id"),
+                "usage": master_key.get("usage"),
+                "keys": master_key.get("keys"),
+                "signatures": existing_signatures,
+            }
+
+            # Matrix spec: /keys/signatures/upload 格式为 {user_id: {key_id: signed_object}}
+            upload_data = {
+                target_user_id: {
+                    key_id.split(":")[-1]: signed_master_key,  # key_id 去掉 ed25519: 前缀
+                }
+            }
 
             await self.client._request(
                 "POST",
                 "/_matrix/client/v3/keys/signatures/upload",
-                data={key_id: {f"ed25519:{self._user_signing_key[:8]}": signature}},
+                data=upload_data,
             )
 
-            logger.info(f"[E2EE-CrossSign] 已验证用户：{user_id}")
+            logger.info(f"[E2EE-CrossSign] 已验证用户：{target_user_id}")
 
         except Exception as e:
+            import traceback
             logger.error(f"[E2EE-CrossSign] 验证用户失败：{e}")
+            logger.error(f"[E2EE-CrossSign] 详情：{traceback.format_exc()}")

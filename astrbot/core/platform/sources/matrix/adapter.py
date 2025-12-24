@@ -356,6 +356,14 @@ class MatrixPlatformAdapter(Platform):
             # 初始化 E2EE
             if self.e2ee_manager:
                 try:
+                    # 登录后更新 E2EE Manager 的 device_id
+                    # 因为服务器可能返回了不同的 device_id
+                    actual_device_id = self.client.device_id or self._matrix_config.device_id
+                    if actual_device_id != self.e2ee_manager.device_id:
+                        logger.info(
+                            f"更新 E2EE device_id：{self.e2ee_manager.device_id} -> {actual_device_id}"
+                        )
+                        self.e2ee_manager.device_id = actual_device_id
                     await self.e2ee_manager.initialize()
                 except Exception as e:
                     logger.error(f"E2EE 初始化失败：{e}")

@@ -263,10 +263,19 @@ class MatrixEventProcessor:
         # Ignore events from self, UNLESS it's from a different device (verification request)
         if sender == self.user_id:
             from_device = content.get("from_device")
-            # If from_device is missing, or matches our device_id, ignore it (it's an echo)
-            if not from_device or (
-                self.e2ee_manager and from_device == self.e2ee_manager.device_id
-            ):
+            # For events that don't have from_device (like cancel, done, mac, key),
+            # we need to check if we have a matching session where we're the responder
+            if not from_device:
+                # For cancel/done events from self without from_device, it's likely our own echo
+                # Only ignore if we don't have an active session as a responder
+                if event_type in (
+                    "m.key.verification.cancel",
+                    "m.key.verification.done",
+                ):
+                    logger.debug(f"忽略来自自身的验证事件：{event_type} (可能是回声)")
+                    return
+            elif self.e2ee_manager and from_device == self.e2ee_manager.device_id:
+                # from_device matches our device_id, definitely our own echo
                 return
             # If from_device is different, proceed (it's from another session of the same user)
 

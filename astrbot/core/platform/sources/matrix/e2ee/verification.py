@@ -7,6 +7,7 @@ SAS Verification - Matrix 设备验证流程
 所有模式都会打印详细的验证日志。
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -222,6 +223,12 @@ class SASVerification:
         relates_to = content.get("m.relates_to", {})
         msgtype = content.get("msgtype", "")
 
+        # Debug: log the content structure
+        logger.debug(
+            f"[E2EE-Verify] 房间内事件内容：type={event_type}, "
+            f"relates_to={relates_to}, msgtype={msgtype}"
+        )
+
         # For m.key.verification.request events (either as event_type OR msgtype),
         # use event_id as transaction_id
         is_verification_request = (
@@ -233,10 +240,42 @@ class SASVerification:
             transaction_id = event_id
         else:
             # For other events, get transaction_id from m.relates_to
+            # Matrix spec: in-room verification events use m.reference relationship
             transaction_id = relates_to.get("event_id") or content.get("transaction_id")
 
+            # 如果 relates_to 中没有 event_id，尝试查找已有的验证会话
+            if not transaction_id:
+                # 尝试根据发送者和房间查找活跃的验证会话
+                # 可能是：1. sender 是会话发起者 2. sender 是我们发起验证的目标设备的用户
+                for txn_id, session in self._sessions.items():
+                    if session.get("state") in ("done", "cancelled"):
+                        continue
+                    session_room = session.get("room_id")
+                    session_sender = session.get("sender")
+                    # 匹配条件：同一房间，且 sender 与会话相关（是发起者或是我们作为发起者时的目标）
+                    if session_room == room_id and (
+                        session_sender == sender  # sender 是会话发起者
+                        or sender == self.user_id  # 或者是我们自己的其他设备发送的
+                    ):
+                        transaction_id = txn_id
+                        logger.info(
+                            f"[E2EE-Verify] 从活跃会话推断 transaction_id: {txn_id[:16]}..."
+                        )
+                        break
+
         if not transaction_id:
-            logger.warning("[E2EE-Verify] 房间内验证事件缺少 transaction_id")
+            # 调试：列出所有活跃会话
+            active_sessions_info = [
+                f"txn={txn[:8]}...,room={s.get('room_id', 'N/A')[:8] if s.get('room_id') else 'N/A'},sender={s.get('sender', 'N/A')},state={s.get('state', 'N/A')}"
+                for txn, s in self._sessions.items()
+                if s.get("state") not in ("done", "cancelled")
+            ]
+            logger.warning(
+                f"[E2EE-Verify] 房间内验证事件缺少 transaction_id, "
+                f"event_type={event_type}, sender={sender}, room={room_id[:16]}..., "
+                f"relates_to={relates_to}, content_keys={list(content.keys())}, "
+                f"active_sessions=[{', '.join(active_sessions_info) if active_sessions_info else 'none'}]"
+            )
             return False
 
         logger.info(
@@ -323,14 +362,18 @@ class SASVerification:
             # Key format: "ed25519:<device_id>"
             fingerprint = keys.get(f"{PREFIX_ED25519}{from_device}")
         except Exception as e:
-            logger.warning(f"[E2EE-Verify] Failed to query keys for {sender}|{from_device}: {e}")
+            logger.warning(
+                f"[E2EE-Verify] Failed to query keys for {sender}|{from_device}: {e}"
+            )
 
         if fingerprint:
             session["fingerprint"] = fingerprint
             if self.device_store.is_trusted(sender, from_device, fingerprint):
                 logger.info(f"[E2EE-Verify] Trusted device {sender}|{from_device}")
             else:
-                logger.info(f"[E2EE-Verify] Untrusted device {sender}|{from_device} (fingerprint: {fingerprint[:8]}...)")
+                logger.info(
+                    f"[E2EE-Verify] Untrusted device {sender}|{from_device} (fingerprint: {fingerprint[:8]}...)"
+                )
 
                 # Notify user
                 await self._notify_user_for_approval(
@@ -339,19 +382,27 @@ class SASVerification:
 
                 if self.auto_verify_mode == "auto_accept":
                     if self.trust_on_first_use:
-                        logger.info("[E2EE-Verify] TOFU enabled: proceeding with auto-accept")
+                        logger.info(
+                            "[E2EE-Verify] TOFU enabled: proceeding with auto-accept"
+                        )
                     else:
-                        logger.info("[E2EE-Verify] TOFU disabled: auto-accept disabled for untrusted device")
+                        logger.info(
+                            "[E2EE-Verify] TOFU disabled: auto-accept disabled for untrusted device"
+                        )
                         return
         else:
-            logger.warning(f"[E2EE-Verify] Could not find Ed25519 key for {sender}|{from_device}")
+            logger.warning(
+                f"[E2EE-Verify] Could not find Ed25519 key for {sender}|{from_device}"
+            )
             # If we can't find the key, we can't verify it properly.
             # But if TOFU is enabled, maybe we should proceed?
             # No, without a key we can't verify signatures anyway.
             # But the verification process itself exchanges keys.
             # Let's proceed but warn.
             if self.auto_verify_mode == "auto_accept" and not self.trust_on_first_use:
-                logger.info("[E2EE-Verify] Key not found and TOFU disabled: aborting auto-accept")
+                logger.info(
+                    "[E2EE-Verify] Key not found and TOFU disabled: aborting auto-accept"
+                )
                 return
 
         if self.auto_verify_mode == "auto_reject":
@@ -368,6 +419,17 @@ class SASVerification:
         # auto_accept: 发送 ready
         if "m.sas.v1" in methods:
             logger.info("[E2EE-Verify] 自动接受房间内验证请求 (mode=auto_accept)")
+            # 触发一次自身设备密钥查询，帮助服务器同步我们的设备信息
+            # 这有助于确保对方客户端能获取到我们的设备密钥
+            try:
+                await self.client.query_keys({self.user_id: []})
+                logger.debug("[E2EE-Verify] 已触发自身设备密钥查询")
+            except Exception as e:
+                logger.debug(f"[E2EE-Verify] 自身密钥查询失败（非关键）：{e}")
+
+            # 等待一小段时间，让设备密钥有时间在服务器间传播
+            # 这有助于避免 "unknown_device" 错误
+            await asyncio.sleep(1.0)
             await self._send_in_room_ready(session["room_id"], transaction_id)
         else:
             logger.warning(f"[E2EE-Verify] 不支持的验证方法：{methods}")
@@ -471,7 +533,9 @@ class SASVerification:
                 if is_in_room and room_id:
                     await self._send_in_room_accept(room_id, transaction_id, content)
                 else:
-                    await self._send_accept(sender, from_device, transaction_id, content)
+                    await self._send_accept(
+                        sender, from_device, transaction_id, content
+                    )
 
     async def _handle_accept(self, sender: str, content: dict, transaction_id: str):
         """处理验证接受"""
@@ -664,12 +728,15 @@ class SASVerification:
         if from_device and fingerprint:
             try:
                 self.device_store.add_device(sender, from_device, fingerprint)
-                logger.info(f"[E2EE-Verify] Device verified and saved: {sender}|{from_device}")
+                logger.info(
+                    f"[E2EE-Verify] Device verified and saved: {sender}|{from_device}"
+                )
             except Exception as e:
                 logger.error(f"[E2EE-Verify] Failed to save verified device: {e}")
         else:
-             logger.warning(f"[E2EE-Verify] Cannot save device: missing info (device={from_device}, fingerprint={fingerprint})")
-
+            logger.warning(
+                f"[E2EE-Verify] Cannot save device: missing info (device={from_device}, fingerprint={fingerprint})"
+            )
 
     async def _handle_cancel(self, sender: str, content: dict, transaction_id: str):
         """处理验证取消"""
@@ -737,9 +804,11 @@ class SASVerification:
         # 计算 commitment = UnpaddedBase64(SHA256(public_key || canonical_json(start_content)))
         # 根据 Matrix 规范，public_key 使用 unpadded base64 编码
         commitment_data = our_public_key + _canonical_json(start_content)
-        commitment = base64.b64encode(
-            hashlib.sha256(commitment_data.encode()).digest()
-        ).decode().rstrip("=")
+        commitment = (
+            base64.b64encode(hashlib.sha256(commitment_data.encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
 
         content = {
             "transaction_id": transaction_id,
@@ -903,8 +972,10 @@ class SASVerification:
             if hasattr(self, "e2ee_manager") and self.e2ee_manager:
                 try:
                     # Check if room has encryption enabled by looking for existing outbound session
-                    if (self.e2ee_manager._store and
-                        self.e2ee_manager._store.get_megolm_outbound(room_id)):
+                    if (
+                        self.e2ee_manager._store
+                        and self.e2ee_manager._store.get_megolm_outbound(room_id)
+                    ):
                         should_encrypt = True
 
                     if should_encrypt:
@@ -917,7 +988,9 @@ class SASVerification:
                     # Fall back to unencrypted if encryption fails
 
             if encrypted_content:
-                await self.client.send_room_event(room_id, M_ROOM_ENCRYPTED, encrypted_content)
+                await self.client.send_room_event(
+                    room_id, M_ROOM_ENCRYPTED, encrypted_content
+                )
                 logger.info(f"[E2EE-Verify] 已发送加密的房间内事件：{event_type}")
             else:
                 await self.client.send_room_event(room_id, event_type, content)
@@ -977,9 +1050,11 @@ class SASVerification:
 
         # 计算 commitment = UnpaddedBase64(SHA256(public_key || canonical_json(start_content)))
         commitment_data = our_public_key + _canonical_json(start_content)
-        commitment = base64.b64encode(
-            hashlib.sha256(commitment_data.encode()).digest()
-        ).decode().rstrip("=")
+        commitment = (
+            base64.b64encode(hashlib.sha256(commitment_data.encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
 
         content = {
             "method": "m.sas.v1",
@@ -993,7 +1068,9 @@ class SASVerification:
         await self._send_in_room_event(
             room_id, M_KEY_VERIFICATION_ACCEPT, content, transaction_id
         )
-        logger.info(f"[E2EE-Verify] 已发送房间内 accept (commitment: {commitment[:16]}...)")
+        logger.info(
+            f"[E2EE-Verify] 已发送房间内 accept (commitment: {commitment[:16]}...)"
+        )
 
     async def _send_in_room_key(self, room_id: str, transaction_id: str):
         """发送房间内公钥"""
@@ -1111,7 +1188,9 @@ class SASVerification:
 
     # ========== SAS 计算 ==========
 
-    async def _notify_user_for_approval(self, sender: str, device_id: str, room_id: str | None = None):
+    async def _notify_user_for_approval(
+        self, sender: str, device_id: str, room_id: str | None = None
+    ):
         """ "Notify user for verification approval"""
         if not room_id:
             room_id = await self.client.get_user_room(sender)

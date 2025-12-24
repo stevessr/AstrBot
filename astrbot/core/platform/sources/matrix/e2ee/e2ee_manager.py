@@ -326,6 +326,7 @@ class E2EEManager:
     async def _upload_device_keys(self):
         """上传设备密钥到服务器"""
         if not self._olm:
+            logger.warning("OlmMachine 未初始化，跳过设备密钥上传")
             return
 
         try:
@@ -333,10 +334,15 @@ class E2EEManager:
             device_keys = self._olm.get_device_keys()
 
             # Debug: 显示上传的设备密钥内容
-            logger.info(f"上传设备密钥：device_id={device_keys.get('device_id')}")
+            logger.info(f"准备上传设备密钥：device_id={device_keys.get('device_id')}")
             algorithms = device_keys.get("algorithms", [])
             logger.info(f"支持的加密算法：{algorithms}")
-            logger.info(f"keys={list(device_keys.get('keys', {}).keys())}")
+            keys_info = list(device_keys.get("keys", {}).keys())
+            logger.info(f"密钥列表：{keys_info}")
+
+            # 显示签名信息
+            signatures = device_keys.get("signatures", {})
+            logger.info(f"签名用户：{list(signatures.keys())}")
 
             # 验证算法列表包含必要的加密算法
             required_algos = [OLM_ALGO, MEGOLM_ALGO]
@@ -352,8 +358,10 @@ class E2EEManager:
             one_time_keys = self._olm.generate_one_time_keys(
                 DEFAULT_ONE_TIME_KEYS_COUNT
             )
+            logger.info(f"生成了 {len(one_time_keys)} 个一次性密钥")
 
             # 上传到服务器
+            logger.info("正在上传设备密钥到服务器...")
             response = await self.client.upload_keys(
                 device_keys=device_keys,
                 one_time_keys=one_time_keys,
@@ -362,14 +370,40 @@ class E2EEManager:
             # Debug: 显示完整响应
             logger.info(f"upload_keys 响应：{response}")
 
+            # 检查是否有错误
+            if "error" in response or "errcode" in response:
+                logger.error(f"设备密钥上传失败：{response}")
+                return
+
             # 标记密钥为已发布
             self._olm.mark_keys_as_published()
 
             counts = response.get("one_time_key_counts", {})
-            logger.info(f"设备密钥已上传，一次性密钥数量：{counts}")
+            logger.info(f"设备密钥已成功上传，一次性密钥数量：{counts}")
+
+            # 验证上传：查询自己的设备密钥确认服务器收到
+            try:
+                verify_response = await self.client.query_keys({self.user_id: []})
+                my_devices = verify_response.get("device_keys", {}).get(self.user_id, {})
+                if self.device_id in my_devices:
+                    my_device_info = my_devices[self.device_id]
+                    my_keys = my_device_info.get("keys", {})
+                    logger.info(f"✅ 验证成功：服务器已确认设备 {self.device_id} 的密钥")
+                    logger.info(f"服务器上的密钥：{list(my_keys.keys())}")
+                    # 检查签名
+                    signatures = my_device_info.get("signatures", {})
+                    logger.info(f"服务器上的签名：{signatures}")
+                else:
+                    logger.error(f"❌ 验证失败：服务器没有设备 {self.device_id} 的密钥！")
+                    logger.error(f"服务器上的设备列表：{list(my_devices.keys())}")
+            except Exception as verify_e:
+                logger.warning(f"验证设备密钥失败：{verify_e}")
 
         except Exception as e:
+            import traceback
+
             logger.error(f"上传设备密钥失败：{e}")
+            logger.error(f"异常详情：{traceback.format_exc()}")
 
     async def decrypt_event(
         self, event_content: dict, sender: str, room_id: str
@@ -612,20 +646,22 @@ class E2EEManager:
                     sender, requesting_device_id, ed25519_key
                 ):
                     device_verified = True
-                    logger.debug(
-                        f"设备 {requesting_device_id} 已通过 SAS 验证"
-                    )
+                    logger.debug(f"设备 {requesting_device_id} 已通过 SAS 验证")
 
             # 2. 检查交叉签名验证
-            if not device_verified and self._cross_signing and self._cross_signing._self_signing_key:
+            if (
+                not device_verified
+                and self._cross_signing
+                and self._cross_signing._self_signing_key
+            ):
                 signatures = device_info.get("signatures", {}).get(sender, {})
-                # 检查是否有自签名密钥的签名
-                self_signing_key_id = f"ed25519:{self._cross_signing._self_signing_key[:8]}"
+                # 检查是否有自签名密钥的签名（使用完整公钥作为 key ID）
+                self_signing_key_id = (
+                    f"ed25519:{self._cross_signing._self_signing_key}"
+                )
                 if self_signing_key_id in signatures:
                     device_verified = True
-                    logger.debug(
-                        f"设备 {requesting_device_id} 已通过交叉签名验证"
-                    )
+                    logger.debug(f"设备 {requesting_device_id} 已通过交叉签名验证")
 
             # 3. 如果启用了 TOFU（首次使用信任），可以放宽验证要求
             if not device_verified and self.trust_on_first_use:
