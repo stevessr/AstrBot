@@ -450,16 +450,23 @@ class MatrixPlatformEvent(AstrMessageEvent):
         return await super().send(message_chain)
 
     async def send_streaming(self, generator, use_fallback: bool = False):
-        """Matrix 流式发送 - 直接消费上游流式输出，累积后整块发送
+        """Matrix 流式发送 - 使用消息编辑实现实时流式更新
 
-        注意：Matrix 平台支持真正的流式发送，因此忽略 use_fallback 参数，
-        始终使用累积后一次性发送的方式，避免消息被不必要的分割。
+        通过先发送初始消息，然后不断编辑该消息来实现流式输出效果。
+        类似于 Telegram/Discord 机器人的实时打字效果。
         """
-        logger.info(f"Matrix send_streaming 开始，use_fallback={use_fallback}")
+        import time
+
+        logger.info(f"Matrix send_streaming 开始 (编辑模式)，use_fallback={use_fallback}")
         room_id = self.session_id
         accumulated_text = ""  # 累积的文本内容
         non_text_components = []  # 非文本组件列表
-        typing_timeout = 30000  # 输入指示超时时间 (毫秒)
+
+        # 流式编辑控制参数
+        edit_interval = 0.5  # 编辑间隔（秒），避免过于频繁的编辑导致 rate limit
+        last_edit_time = 0.0
+        message_event_id = None  # 已发送消息的 event_id，用于后续编辑
+        initial_message_sent = False
 
         # 嘟文串相关变量
         reply_to = None
@@ -470,17 +477,60 @@ class MatrixPlatformEvent(AstrMessageEvent):
         # 检查第一个消息链是否包含回复信息
         first_chain_processed = False
 
-        # 开启输入指示
-        try:
-            await self.client.set_typing(room_id, typing=True, timeout=typing_timeout)
-        except Exception as e:
-            logger.debug(f"发送输入指示失败：{e}")
+        async def build_content(text: str, is_streaming: bool = True) -> dict[str, Any]:
+            """构建消息内容"""
+            # 生成 formatted_body
+            try:
+                display_text = text + ("..." if is_streaming else "")
+                formatted_body = markdown_to_html(display_text)
+            except Exception as e:
+                logger.warning(f"Failed to render markdown: {e}")
+                display_text = text + ("..." if is_streaming else "")
+                formatted_body = display_text.replace("\n", "<br>")
+
+            content: dict[str, Any] = {
+                "msgtype": "m.text",
+                "body": display_text,
+                "format": "org.matrix.custom.html",
+                "formatted_body": formatted_body,
+            }
+
+            # 如果有回复引用信息，添加 fallback（仅初始消息需要）
+            if not initial_message_sent and original_message_info and reply_to:
+                orig_sender = original_message_info.get("sender", "")
+                orig_body = original_message_info.get("body", "")
+                if len(orig_body) > TEXT_TRUNCATE_LENGTH_50:
+                    orig_body = orig_body[:TEXT_TRUNCATE_LENGTH_50] + "..."
+                fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
+                content["body"] = fallback_text + content["body"]
+
+                from .utils.utils import MatrixUtils
+
+                fallback_html = MatrixUtils.create_reply_fallback(
+                    original_body=original_message_info.get("body", ""),
+                    original_sender=original_message_info.get("sender", ""),
+                    original_event_id=reply_to,
+                    room_id=room_id,
+                )
+                content["formatted_body"] = fallback_html + content["formatted_body"]
+
+            # 添加嘟文串支持（仅初始消息需要）
+            if not initial_message_sent:
+                if use_thread and thread_root:
+                    content["m.relates_to"] = {
+                        "rel_type": "m.thread",
+                        "event_id": thread_root,
+                        "m.in_reply_to": {"event_id": reply_to} if reply_to else None,
+                    }
+                elif reply_to:
+                    content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+
+            return content
 
         chain_count = 0
         try:
             async for chain in generator:
                 chain_count += 1
-                logger.info(f"处理第 {chain_count} 个消息链")
                 if isinstance(chain, MessageChain):
                     # 只在第一个消息链中检查回复信息
                     if not first_chain_processed:
@@ -494,8 +544,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         except Exception:
                             pass
 
-                        # 如果没有找到回复对象，但消息链中包含 Reply 组件（表示开启了回复模式）
-                        # 则尝试获取自己最近发送的消息作为回复对象
+                        # 如果没有找到回复对象，但消息链中包含 Reply 组件
                         if not reply_to:
                             try:
                                 from astrbot.api.message_components import (
@@ -507,52 +556,37 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                 )
 
                                 if has_reply_component:
-                                    # 获取房间当前状态以找到自己的用户 ID
                                     try:
-                                        # 尝试通过客户端获取自己的用户 ID
                                         whoami = await self.client.whoami()
                                         my_user_id = whoami.get("user_id")
 
                                         if my_user_id:
-                                            # 获取房间最近的消息
                                             messages_resp = await self.client.room_messages(
                                                 room_id=room_id,
-                                                direction="b",  # 向后获取（最新的消息）
-                                                limit=50,  # 获取最近 50 条消息
+                                                direction="b",
+                                                limit=50,
                                             )
 
-                                            # 查找自己最近发送的消息
                                             chunk = messages_resp.get("chunk", [])
                                             for event in chunk:
                                                 if (
-                                                    event.get("type")
-                                                    == "m.room.message"
-                                                    and event.get("sender")
-                                                    == my_user_id
-                                                    and event.get("content", {}).get(
-                                                        "msgtype"
-                                                    )
-                                                    == "m.text"
+                                                    event.get("type") == "m.room.message"
+                                                    and event.get("sender") == my_user_id
+                                                    and event.get("content", {}).get("msgtype") == "m.text"
                                                 ):
                                                     reply_to = event.get("event_id")
-                                                    logger.debug(
-                                                        f"找到自己最近的消息作为回复对象：{reply_to}"
-                                                    )
+                                                    logger.debug(f"找到自己最近的消息作为回复对象：{reply_to}")
                                                     break
                                     except Exception as e:
                                         logger.debug(f"获取自己最近消息失败：{e}")
                             except Exception as e:
                                 logger.debug(f"处理回复模式时出错：{e}")
 
-                        # 如果 message chain 中没有 Reply，则使用原始消息 ID 作为回复目标
-                        if (
-                            not reply_to
-                            and self.message_obj
-                            and self.message_obj.message_id
-                        ):
+                        # 使用原始消息 ID 作为回复目标
+                        if not reply_to and self.message_obj and self.message_obj.message_id:
                             reply_to = str(self.message_obj.message_id)
 
-                        # 如果有回复，检查是否需要使用嘟文串模式
+                        # 检查是否需要使用嘟文串模式
                         if reply_to:
                             try:
                                 resp = await self.client.get_event(room_id, reply_to)
@@ -562,9 +596,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                         "body": resp.get("content", {}).get("body", ""),
                                     }
                                     if resp and "content" in resp:
-                                        relates_to = resp["content"].get(
-                                            "m.relates_to", {}
-                                        )
+                                        relates_to = resp["content"].get("m.relates_to", {})
                                         if relates_to.get("rel_type") == "m.thread":
                                             thread_root = relates_to.get("event_id")
                                             use_thread = True
@@ -575,9 +607,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
                                             use_thread = False
                                             thread_root = None
                             except Exception as e:
-                                logger.warning(
-                                    f"Failed to get event for threading: {e}"
-                                )
+                                logger.warning(f"Failed to get event for threading: {e}")
 
                         first_chain_processed = True
 
@@ -586,78 +616,90 @@ class MatrixPlatformEvent(AstrMessageEvent):
                         if isinstance(component, Plain):
                             accumulated_text += component.text
                         elif not isinstance(component, Reply):
-                            # 非文本、非 Reply 组件收集起来
                             non_text_components.append(component)
 
+                    # 流式编辑逻辑
+                    current_time = time.time()
+                    if accumulated_text:
+                        if not initial_message_sent:
+                            # 发送初始消息
+                            try:
+                                content = await build_content(accumulated_text, is_streaming=True)
+                                result = await self.client.send_message(
+                                    room_id=room_id,
+                                    msg_type="m.room.message",
+                                    content=content,
+                                )
+                                message_event_id = result.get("event_id")
+                                initial_message_sent = True
+                                last_edit_time = current_time
+                                logger.debug(f"流式消息初始发送成功：{message_event_id}")
+                            except Exception as e:
+                                logger.error(f"发送初始流式消息失败：{e}")
+                        elif message_event_id and (current_time - last_edit_time) >= edit_interval:
+                            # 编辑已发送的消息
+                            try:
+                                new_content = {
+                                    "body": accumulated_text + "...",
+                                    "format": "org.matrix.custom.html",
+                                    "formatted_body": markdown_to_html(accumulated_text + "..."),
+                                }
+                                await self.client.edit_message(
+                                    room_id=room_id,
+                                    original_event_id=message_event_id,
+                                    new_content=new_content,
+                                )
+                                last_edit_time = current_time
+                                logger.debug(f"流式消息编辑成功，当前长度：{len(accumulated_text)}")
+                            except Exception as e:
+                                logger.debug(f"编辑流式消息失败（将继续累积）：{e}")
+
+        except Exception as e:
+            logger.error(f"流式处理过程中出错：{e}")
+
         finally:
-            # 关闭输入指示
-            try:
-                await self.client.set_typing(room_id, typing=False)
-            except Exception as e:
-                logger.debug(f"停止输入指示失败：{e}")
             logger.info(
                 f"流式处理完成，共处理 {chain_count} 个消息链，累积文本长度：{len(accumulated_text)}"
             )
 
-        # 发送累积的文本内容
+        # 发送或编辑最终的完整文本内容
         if accumulated_text:
             try:
-                # 生成 formatted_body
+                # 生成最终的 formatted_body（不带省略号）
                 try:
                     formatted_body = markdown_to_html(accumulated_text)
                 except Exception as e:
                     logger.warning(f"Failed to render markdown: {e}")
                     formatted_body = accumulated_text.replace("\n", "<br>")
 
-                content: dict[str, Any] = {
-                    "msgtype": "m.text",
+                final_content = {
                     "body": accumulated_text,
                     "format": "org.matrix.custom.html",
                     "formatted_body": formatted_body,
                 }
 
-                # 如果有回复引用信息，添加 fallback
-                if original_message_info and reply_to:
-                    orig_sender = original_message_info.get("sender", "")
-                    orig_body = original_message_info.get("body", "")
-                    if len(orig_body) > TEXT_TRUNCATE_LENGTH_50:
-                        orig_body = orig_body[:TEXT_TRUNCATE_LENGTH_50] + "..."
-                    fallback_text = f"> <{orig_sender}> {orig_body}\n\n"
-                    content["body"] = fallback_text + content["body"]
-
-                    from .utils.utils import MatrixUtils
-
-                    fallback_html = MatrixUtils.create_reply_fallback(
-                        original_body=original_message_info.get("body", ""),
-                        original_sender=original_message_info.get("sender", ""),
-                        original_event_id=reply_to,
+                if initial_message_sent and message_event_id:
+                    # 最终编辑，去掉省略号
+                    try:
+                        await self.client.edit_message(
+                            room_id=room_id,
+                            original_event_id=message_event_id,
+                            new_content=final_content,
+                        )
+                        logger.info("流式消息最终编辑完成")
+                    except Exception as e:
+                        logger.error(f"最终编辑失败：{e}")
+                else:
+                    # 如果从未发送过消息（可能累积太快），直接发送完整内容
+                    content = await build_content(accumulated_text, is_streaming=False)
+                    await self.client.send_message(
                         room_id=room_id,
+                        msg_type="m.room.message",
+                        content=content,
                     )
-                    content["formatted_body"] = (
-                        fallback_html + content["formatted_body"]
-                    )
-
-                # 添加嘟文串支持
-                if use_thread and thread_root:
-                    content["m.relates_to"] = {
-                        "rel_type": "m.thread",
-                        "event_id": thread_root,
-                        "m.in_reply_to": {"event_id": reply_to} if reply_to else None,
-                    }
-                elif reply_to:
-                    content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
-
-                logger.info(
-                    f"发送流式消息，长度：{len(accumulated_text)}，回复对象：{reply_to}"
-                )
-                await self.client.send_message(
-                    room_id=room_id,
-                    msg_type="m.room.message",
-                    content=content,
-                )
-                logger.info("流式消息发送成功")
+                    logger.info("流式消息一次性发送成功")
             except Exception as e:
-                logger.error(f"发送消息失败 (streaming): {e}")
+                logger.error(f"发送最终消息失败 (streaming): {e}")
 
         # 发送非文本组件（图片、文件等）
         for component in non_text_components:
