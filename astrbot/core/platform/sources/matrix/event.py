@@ -7,12 +7,13 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import File, Image, Plain, Reply
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 
-from .constants import TEXT_TRUNCATE_LENGTH_50
+from .constants import DEFAULT_MAX_UPLOAD_SIZE_BYTES, TEXT_TRUNCATE_LENGTH_50
 
 # Update import: markdown_utils is now in utils.markdown_utils
 from .utils.markdown_utils import (
     markdown_to_html,
 )
+from .utils.utils import compress_image_if_needed
 
 
 class MatrixPlatformEvent(AstrMessageEvent):
@@ -43,6 +44,7 @@ class MatrixPlatformEvent(AstrMessageEvent):
         use_thread: bool = False,
         original_message_info: dict | None = None,
         e2ee_manager=None,
+        max_upload_size: int | None = None,
     ) -> int:
         """使用提供的 client 将指定消息链发送到指定房间。
 
@@ -55,10 +57,14 @@ class MatrixPlatformEvent(AstrMessageEvent):
             use_thread: 是否使用嘟文串模式回复
             original_message_info: 可选，原始消息信息（用于回复）
             e2ee_manager: 可选，E2EEManager 实例（用于加密消息）
+            max_upload_size: 可选，最大上传文件大小（字节），超过此大小将压缩
 
         Returns:
             已发送的消息段数量
         """
+        # 使用传入的值或默认值
+        upload_size_limit = max_upload_size or DEFAULT_MAX_UPLOAD_SIZE_BYTES
+
         sent_count = 0
 
         # 检查房间是否需要加密
@@ -213,6 +219,25 @@ class MatrixPlatformEvent(AstrMessageEvent):
 
                     # 猜测内容类型，默认使用 image/png
                     content_type = mimetypes.guess_type(filename)[0] or "image/png"
+
+                    # 如果图片过大，尝试压缩
+                    image_data, content_type, was_compressed = compress_image_if_needed(
+                        image_data, content_type, max_size=upload_size_limit
+                    )
+                    if was_compressed:
+                        # 更新文件名扩展名为 .jpg
+                        filename = Path(filename).stem + ".jpg"
+                        # 重新获取压缩后的图片尺寸
+                        try:
+                            import io
+
+                            from PIL import Image as PILImage
+
+                            with PILImage.open(io.BytesIO(image_data)) as img:
+                                width, height = img.size
+                        except Exception as e:
+                            logger.debug(f"无法获取压缩后图片尺寸：{e}")
+
                     upload_resp = await client.upload_file(
                         data=image_data, content_type=content_type, filename=filename
                     )

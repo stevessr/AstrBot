@@ -22,6 +22,7 @@ from ..constants import (
 
 class MatrixAPIError(Exception):
     """Matrix API Error"""
+
     def __init__(self, status: int, data: dict | str, message: str):
         self.status = status
         self.data = data
@@ -118,7 +119,9 @@ class MatrixHTTPClient:
                         error_msg = response_data.get("error", "Unknown error")
                         error_detail = f"Matrix API error: {error_code} - {error_msg} (status: {response.status})"
                         # Raise structured error
-                        raise MatrixAPIError(response.status, response_data, error_detail)
+                        raise MatrixAPIError(
+                            response.status, response_data, error_detail
+                        )
                     except MatrixAPIError:
                         raise
                     except Exception:
@@ -126,7 +129,9 @@ class MatrixHTTPClient:
                         content_type = response.headers.get("content-type", "").lower()
                         if "text/html" in content_type:
                             error_detail = f"Matrix API error: HTML error page returned (status: {response.status})"
-                            raise MatrixAPIError(response.status, "HTML error page", error_detail)
+                            raise MatrixAPIError(
+                                response.status, "HTML error page", error_detail
+                            )
                         else:
                             text = await response.text()
                             error_detail = f"Matrix API error: Non-JSON response (status: {response.status}): {text[:ERROR_TRUNCATE_LENGTH_200]}"
@@ -396,6 +401,44 @@ class MatrixHTTPClient:
 
             return response_data
 
+    async def get_media_config(self) -> dict[str, Any]:
+        """
+        获取 Matrix 媒体服务器配置
+
+        返回服务器的媒体配置，包括最大上传文件大小。
+        参考：https://spec.matrix.org/latest/client-server-api/#get_matrixmediav3config
+
+        Returns:
+            包含 m.upload.size 等配置的字典
+        """
+        await self._ensure_session()
+
+        # 尝试多个 API 端点
+        endpoints = [
+            "/_matrix/client/v1/media/config",  # 新的认证媒体 API
+            "/_matrix/media/v3/config",
+            "/_matrix/media/r0/config",
+        ]
+
+        for endpoint in endpoints:
+            try:
+                url = f"{self.homeserver}{endpoint}"
+                headers = {
+                    "Authorization": f"Bearer {self.access_token}",
+                    "User-Agent": "AstrBot Matrix Client/1.0",
+                }
+
+                async with self.session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+            except Exception as e:
+                logger.debug(f"获取媒体配置失败 ({endpoint}): {e}")
+                continue
+
+        # 如果所有端点都失败，返回空字典
+        logger.warning("无法获取 Matrix 媒体服务器配置，将使用默认值")
+        return {}
+
     async def download_file(self, mxc_url: str) -> bytes:
         """
         Download a file from the Matrix media repository
@@ -456,7 +499,11 @@ class MatrixHTTPClient:
             f"https://{server_name}/_matrix/media/v1/download/{server_name}/{media_id}?allow_redirect=true",
         ]
 
-        all_endpoints = [(url, True) for url in proxy_endpoints] + [(url, False) for url in direct_endpoints] + [(url, False) for url in public_endpoints]
+        all_endpoints = (
+            [(url, True) for url in proxy_endpoints]
+            + [(url, False) for url in direct_endpoints]
+            + [(url, False) for url in public_endpoints]
+        )
 
         last_error = None
         last_status = None
@@ -467,7 +514,7 @@ class MatrixHTTPClient:
                 if use_auth:
                     url = f"{self.homeserver}{endpoint}"
                 else:
-                    url = endpoint  # 直接使用完整的URL
+                    url = endpoint  # 直接使用完整的 URL
             else:
                 # 兼容旧格式
                 endpoint = endpoint_info
@@ -480,11 +527,15 @@ class MatrixHTTPClient:
                 headers["Authorization"] = f"Bearer {self.access_token}"
 
             # 添加调试日志
-            auth_status = "with auth" if use_auth and self.access_token else "without auth"
+            auth_status = (
+                "with auth" if use_auth and self.access_token else "without auth"
+            )
             logger.debug(f"Downloading from {url} {auth_status}")
 
             # 记录详细的下载策略
-            logger.info(f"🎯 Attempting download from {url} {auth_status} (strategy: {'proxy' if use_auth else 'direct'})")
+            logger.info(
+                f"🎯 Attempting download from {url} {auth_status} (strategy: {'proxy' if use_auth else 'direct'})"
+            )
 
             try:
                 logger.debug(f"Downloading media from: {url}")
@@ -577,8 +628,6 @@ class MatrixHTTPClient:
         """
         endpoint = f"/_matrix/client/v3/rooms/{room_id}/leave"
         return await self._request("POST", endpoint, data={})
-
-
 
     async def get_global_account_data(self, type: str) -> dict[str, Any]:
         """
@@ -912,9 +961,7 @@ class MatrixHTTPClient:
             Response data
         """
         return await self.send_message(
-            room_id,
-            "m.room.message",
-            {"msgtype": "m.text", "body": message}
+            room_id, "m.room.message", {"msgtype": "m.text", "body": message}
         )
 
     async def send_to_device(

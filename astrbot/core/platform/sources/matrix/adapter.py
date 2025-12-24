@@ -15,7 +15,12 @@ from .client import MatrixHTTPClient
 # Import commands to register them
 # 组件导入 - Updated to new structure
 from .config import MatrixConfig
-from .constants import DEFAULT_TYPING_TIMEOUT_MS, MATRIX_HTML_FORMAT, REL_TYPE_THREAD
+from .constants import (
+    DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    DEFAULT_TYPING_TIMEOUT_MS,
+    MATRIX_HTML_FORMAT,
+    REL_TYPE_THREAD,
+)
 from .event import MatrixPlatformEvent
 from .processors.event_handler import MatrixEventHandler
 from .processors.event_processor import MatrixEventProcessor
@@ -117,7 +122,8 @@ class MatrixPlatformAdapter(Platform):
                 self.e2ee_manager = E2EEManager(
                     client=self.client,
                     user_id=self._matrix_config.user_id,
-                    device_id=self.client.device_id or self._matrix_config.device_id,  # 优先使用服务器返回的device_id
+                    device_id=self.client.device_id
+                    or self._matrix_config.device_id,  # 优先使用服务器返回的 device_id
                     store_path=self._matrix_config.e2ee_store_path,
                     homeserver=self._matrix_config.homeserver,
                     auto_verify_mode=self._matrix_config.e2ee_auto_verify,
@@ -144,6 +150,9 @@ class MatrixPlatformAdapter(Platform):
             self.event_handler.invite_callback
         )  # Fixed: using event_handler method
         self.event_processor.set_message_callback(self.message_callback)
+
+        # 最大上传文件大小（将在 run 时从服务器获取）
+        self.max_upload_size: int = DEFAULT_MAX_UPLOAD_SIZE_BYTES
 
         logger.info("Matrix Adapter 初始化完成")
 
@@ -271,6 +280,7 @@ class MatrixPlatformAdapter(Platform):
                     use_thread=use_thread,
                     original_message_info=original_message_info,
                     e2ee_manager=self.e2ee_manager,
+                    max_upload_size=self.max_upload_size,
                 )
 
             await super().send_by_session(session, message_chain)
@@ -336,6 +346,7 @@ class MatrixPlatformAdapter(Platform):
             use_thread=use_thread,
             original_message_info=original_message_info,
             e2ee_manager=self.e2ee_manager,
+            max_upload_size=self.max_upload_size,
         )
 
     def meta(self) -> PlatformMetadata:
@@ -345,6 +356,22 @@ class MatrixPlatformAdapter(Platform):
     async def run(self):
         try:
             await self.auth.login()
+
+            # 获取媒体服务器配置（最大上传大小）
+            try:
+                media_config = await self.client.get_media_config()
+                server_max_size = media_config.get("m.upload.size")
+                if server_max_size and isinstance(server_max_size, int):
+                    self.max_upload_size = server_max_size
+                    logger.info(
+                        f"Matrix 媒体服务器最大上传大小：{self.max_upload_size / 1024 / 1024:.1f}MB"
+                    )
+                else:
+                    logger.info(
+                        f"使用默认最大上传大小：{self.max_upload_size / 1024 / 1024:.1f}MB"
+                    )
+            except Exception as e:
+                logger.debug(f"获取媒体配置失败，使用默认值：{e}")
 
             # 设置在线状态
             try:
@@ -358,7 +385,9 @@ class MatrixPlatformAdapter(Platform):
                 try:
                     # 登录后更新 E2EE Manager 的 device_id
                     # 因为服务器可能返回了不同的 device_id
-                    actual_device_id = self.client.device_id or self._matrix_config.device_id
+                    actual_device_id = (
+                        self.client.device_id or self._matrix_config.device_id
+                    )
                     if actual_device_id != self.e2ee_manager.device_id:
                         logger.info(
                             f"更新 E2EE device_id：{self.e2ee_manager.device_id} -> {actual_device_id}"
