@@ -80,6 +80,30 @@ class RespondStage(Stage):
             word_count = len([c for c in text if c.isalnum()])
         return word_count
 
+    def _summarize_chain(self, chain: MessageChain) -> str:
+        parts = []
+        for comp in chain.chain or []:
+            ctype = getattr(comp, "type", "unknown")
+            if ctype == ComponentType.Plain:
+                text = getattr(comp, "text", "")
+                snippet = (text[:80] + "…") if text and len(text) > 80 else text
+                parts.append(f"Plain({snippet})")
+            elif ctype == ComponentType.Image:
+                url = getattr(comp, "url", "") or getattr(comp, "file", "")
+                if isinstance(url, str) and url.startswith("base64://"):
+                    parts.append("Image(base64:omitted)")
+                else:
+                    parts.append(f"Image({url})")
+            elif ctype == ComponentType.File:
+                path = getattr(comp, "file_", "") or getattr(comp, "url", "")
+                parts.append(f"File({path})")
+            elif ctype == ComponentType.Reply:
+                rid = getattr(comp, "id", "")
+                parts.append(f"Reply({rid})")
+            else:
+                parts.append(str(ctype))
+        return "[" + ", ".join(parts) + "]"
+
     async def _calc_comp_interval(self, comp: BaseMessageComponent) -> float:
         """分段回复 计算间隔时间"""
         if self.interval_method == "log":
@@ -104,10 +128,12 @@ class RespondStage(Stage):
         for comp in chain:
             comp_type = type(comp)
 
-            # 检查组件类型是否在字典中
-            if comp_type in self._component_validators:
-                if self._component_validators[comp_type](comp):
-                    return False
+            if comp_type not in self._component_validators:
+                # 未知组件默认视为有内容
+                return False
+
+            if self._component_validators[comp_type](comp):
+                return False
 
         # 如果所有组件都为空
         return True
@@ -237,7 +263,9 @@ class RespondStage(Stage):
                             header_comps.clear()
                     except Exception as e:
                         logger.error(
-                            f"发送消息链失败: chain = {MessageChain([comp])}, error = {e}",
+                            "发送消息链失败: chain = %s, error = %s",
+                            self._summarize_chain(MessageChain([comp])),
+                            e,
                             exc_info=True,
                         )
             else:
@@ -261,16 +289,22 @@ class RespondStage(Stage):
                         await event.send(chain)
                     except Exception as e:
                         logger.error(
-                            f"发送消息链失败: chain = {chain}, error = {e}",
+                            "发送消息链失败: chain = %s, error = %s",
+                            self._summarize_chain(chain),
+                            e,
                             exc_info=True,
                         )
                 chain = MessageChain(result.chain)
+                if hasattr(result, "buttons"):
+                    chain.buttons = getattr(result, "buttons", None)
                 if result.chain and len(result.chain) > 0:
                     try:
                         await event.send(chain)
                     except Exception as e:
                         logger.error(
-                            f"发送消息链失败: chain = {chain}, error = {e}",
+                            "发送消息链失败: chain = %s, error = %s",
+                            self._summarize_chain(chain),
+                            e,
                             exc_info=True,
                         )
 

@@ -4,7 +4,12 @@ import re
 from typing import Any, cast
 
 import telegramify_markdown
-from telegram import ReactionTypeCustomEmoji, ReactionTypeEmoji
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReactionTypeCustomEmoji,
+    ReactionTypeEmoji,
+)
 from telegram.ext import ExtBot
 
 from astrbot import logger
@@ -75,6 +80,15 @@ class TelegramPlatformEvent(AstrMessageEvent):
         user_name: str,
     ):
         image_path = None
+        buttons = getattr(message, "buttons", None)
+        reply_markup = None
+        if buttons:
+            keyboard = [
+                [InlineKeyboardButton(text=label, callback_data=data)]
+                for label, data in buttons
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        buttons_used = False
 
         has_reply = False
         reply_message_id = None
@@ -111,19 +125,34 @@ class TelegramPlatformEvent(AstrMessageEvent):
                             chunk,
                             normalize_whitespace=False,
                         )
+                        payload_local = dict(payload)
+                        if reply_markup and not buttons_used:
+                            payload_local["reply_markup"] = reply_markup
+                            buttons_used = True
                         await client.send_message(
                             text=md_text,
                             parse_mode="MarkdownV2",
-                            **cast(Any, payload),
+                            **cast(Any, payload_local),
                         )
                     except Exception as e:
                         logger.warning(
                             f"MarkdownV2 send failed: {e}. Using plain text instead.",
                         )
-                        await client.send_message(text=chunk, **cast(Any, payload))
+                        payload_local = dict(payload)
+                        if reply_markup and not buttons_used:
+                            payload_local["reply_markup"] = reply_markup
+                            buttons_used = True
+                        await client.send_message(
+                            text=chunk,
+                            **cast(Any, payload_local),
+                        )
             elif isinstance(i, Image):
                 image_path = await i.convert_to_file_path()
-                await client.send_photo(photo=image_path, **cast(Any, payload))
+                payload_local = dict(payload)
+                if reply_markup and not buttons_used:
+                    payload_local["reply_markup"] = reply_markup
+                    buttons_used = True
+                await client.send_photo(photo=image_path, **cast(Any, payload_local))
             elif isinstance(i, File):
                 path = await i.get_file()
                 name = i.name or os.path.basename(path)
