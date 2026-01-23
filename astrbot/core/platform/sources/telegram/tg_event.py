@@ -4,7 +4,12 @@ import re
 from typing import Any, cast
 
 import telegramify_markdown
-from telegram import ReactionTypeCustomEmoji, ReactionTypeEmoji
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReactionTypeCustomEmoji,
+    ReactionTypeEmoji,
+)
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import ExtBot
@@ -94,7 +99,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 payload["message_thread_id"] = message_thread_id
             await client.send_chat_action(**payload)
         except Exception as e:
-            logger.warning(f"[Telegram] 发送 chat action 失败: {e}")
+            logger.warning(f"[Telegram] 发送 chat action 失败：{e}")
 
     @classmethod
     def _get_chat_action_for_chain(cls, chain: list[Any]) -> ChatAction | str:
@@ -223,6 +228,15 @@ class TelegramPlatformEvent(AstrMessageEvent):
         user_name: str,
     ) -> None:
         image_path = None
+        buttons = getattr(message, "buttons", None)
+        reply_markup = None
+        if buttons:
+            keyboard = [
+                [InlineKeyboardButton(text=label, callback_data=data)]
+                for label, data in buttons
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        buttons_used = False
 
         has_reply = False
         reply_message_id = None
@@ -264,19 +278,34 @@ class TelegramPlatformEvent(AstrMessageEvent):
                             chunk,
                             normalize_whitespace=False,
                         )
+                        payload_local = dict(payload)
+                        if reply_markup and not buttons_used:
+                            payload_local["reply_markup"] = reply_markup
+                            buttons_used = True
                         await client.send_message(
                             text=md_text,
                             parse_mode="MarkdownV2",
-                            **cast(Any, payload),
+                            **cast(Any, payload_local),
                         )
                     except Exception as e:
                         logger.warning(
                             f"MarkdownV2 send failed: {e}. Using plain text instead.",
                         )
-                        await client.send_message(text=chunk, **cast(Any, payload))
+                        payload_local = dict(payload)
+                        if reply_markup and not buttons_used:
+                            payload_local["reply_markup"] = reply_markup
+                            buttons_used = True
+                        await client.send_message(
+                            text=chunk,
+                            **cast(Any, payload_local),
+                        )
             elif isinstance(i, Image):
                 image_path = await i.convert_to_file_path()
-                await client.send_photo(photo=image_path, **cast(Any, payload))
+                payload_local = dict(payload)
+                if reply_markup and not buttons_used:
+                    payload_local["reply_markup"] = reply_markup
+                    buttons_used = True
+                await client.send_photo(photo=image_path, **cast(Any, payload_local))
             elif isinstance(i, File):
                 path = await i.get_file()
                 name = i.name or os.path.basename(path)
@@ -337,7 +366,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 is_big=big,  # 可选：大动画
             )
         except Exception as e:
-            logger.error(f"[Telegram] 添加反应失败: {e}")
+            logger.error(f"[Telegram] 添加反应失败：{e}")
 
     async def send_streaming(self, generator, use_fallback: bool = False):
         message_thread_id = None
@@ -380,7 +409,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                                 message_id=message_id,
                             )
                         except Exception as e:
-                            logger.warning(f"编辑消息失败(streaming-break): {e!s}")
+                            logger.warning(f"编辑消息失败 (streaming-break): {e!s}")
                     message_id = None  # 重置消息 ID
                     delta = ""  # 重置 delta
                     continue
@@ -437,7 +466,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                         )
                         continue
                     else:
-                        logger.warning(f"不支持的消息类型: {type(i)}")
+                        logger.warning(f"不支持的消息类型：{type(i)}")
                         continue
 
                 # Plain
@@ -461,7 +490,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                             )
                             current_content = delta
                         except Exception as e:
-                            logger.warning(f"编辑消息失败(streaming): {e!s}")
+                            logger.warning(f"编辑消息失败 (streaming): {e!s}")
                         last_edit_time = (
                             asyncio.get_event_loop().time()
                         )  # 更新上次编辑的时间
@@ -478,7 +507,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                         )
                         current_content = delta
                     except Exception as e:
-                        logger.warning(f"发送消息失败(streaming): {e!s}")
+                        logger.warning(f"发送消息失败 (streaming): {e!s}")
                     message_id = msg.message_id
                     last_edit_time = (
                         asyncio.get_event_loop().time()
@@ -498,13 +527,13 @@ class TelegramPlatformEvent(AstrMessageEvent):
                         parse_mode="MarkdownV2",
                     )
                 except Exception as e:
-                    logger.warning(f"Markdown转换失败，使用普通文本: {e!s}")
+                    logger.warning(f"Markdown 转换失败，使用普通文本：{e!s}")
                     await self.client.edit_message_text(
                         text=delta,
                         chat_id=payload["chat_id"],
                         message_id=message_id,
                     )
         except Exception as e:
-            logger.warning(f"编辑消息失败(streaming): {e!s}")
+            logger.warning(f"编辑消息失败 (streaming): {e!s}")
 
         return await super().send_streaming(generator, use_fallback)

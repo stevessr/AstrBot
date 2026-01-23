@@ -8,7 +8,13 @@ from typing import cast
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import BotCommand, Update
 from telegram.constants import ChatType
-from telegram.ext import ApplicationBuilder, ContextTypes, ExtBot, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    ContextTypes,
+    ExtBot,
+    filters,
+)
 from telegram.ext import MessageHandler as TelegramMessageHandler
 
 import astrbot.api.message_components as Comp
@@ -89,6 +95,7 @@ class TelegramPlatformAdapter(Platform):
             callback=self.message_handler,
         )
         self.application.add_handler(message_handler)
+        self.application.add_handler(CallbackQueryHandler(self.callback_handler))
         self.client = self.application.bot
         logger.debug(f"Telegram base url: {self.client.base_url}")
 
@@ -263,6 +270,72 @@ class TelegramPlatformAdapter(Platform):
         abm = await self.convert_message(update, context)
         if abm:
             await self.handle_msg(abm)
+
+    async def callback_handler(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        if not update.callback_query:
+            return
+        data = update.callback_query.data or ""
+        if not data.startswith("cmd:"):
+            return
+
+        command_text = data.removeprefix("cmd:").strip()
+        if not command_text:
+            return
+
+        try:
+            await update.callback_query.answer(text="已处理")
+        except Exception:
+            pass
+
+        message = AstrBotMessage()
+        message.session_id = (
+            str(update.callback_query.message.chat.id)
+            if update.callback_query.message
+            else str(update.effective_chat.id)
+            if update.effective_chat
+            else ""
+        )
+
+        chat = (
+            update.callback_query.message.chat
+            if update.callback_query.message
+            else None
+        )
+        if chat and chat.type == ChatType.PRIVATE:
+            message.type = MessageType.FRIEND_MESSAGE
+        else:
+            message.type = MessageType.GROUP_MESSAGE
+            if chat:
+                message.group_id = str(chat.id)
+                if (
+                    update.callback_query.message
+                    and update.callback_query.message.message_thread_id
+                ):
+                    message.group_id += "#" + str(
+                        update.callback_query.message.message_thread_id
+                    )
+                    message.session_id = message.group_id
+
+        message.message_id = (
+            str(update.callback_query.message.message_id)
+            if update.callback_query.message
+            else ""
+        )
+        _from_user = update.callback_query.from_user
+        if not _from_user:
+            return
+        message.sender = MessageMember(
+            str(_from_user.id),
+            _from_user.username or "Unknown",
+        )
+        message.self_id = str(context.bot.username)
+        message.raw_message = update
+        message.message = [Comp.Plain(command_text)]
+        message.message_str = command_text
+
+        await self.handle_msg(message)
 
     async def convert_message(
         self,
