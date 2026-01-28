@@ -33,6 +33,8 @@ class ProcessStage(Stage):
         activated_handlers: list[StarHandlerMetadata] = event.get_extra(
             "activated_handlers",
         )
+        wake_prefix_used = event.get_extra("wake_prefix_used", None)
+        command_matched = event.get_extra("command_matched", False)
         # 有插件 Handler 被激活
         if activated_handlers:
             async for resp in self.star_request_sub_stage.process(event):
@@ -58,6 +60,9 @@ class ProcessStage(Stage):
             and event.is_at_or_wake_command
             and not event.call_llm
         ):
+            # If a wake prefix was used but no command matched, skip default LLM.
+            if wake_prefix_used and not command_matched:
+                return
             # 是否有过发送操作 and 是否是被 @ 或者通过唤醒前缀
             if (
                 event.get_result() and not event.is_stopped()

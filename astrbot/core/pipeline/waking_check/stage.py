@@ -5,6 +5,7 @@ from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.message_type import MessageType
+from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 from astrbot.core.star.filter.permission import PermissionTypeFilter
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
@@ -146,6 +147,7 @@ class WakingCheckStage(Stage):
         # 检查插件的 handler filter
         activated_handlers = []
         handlers_parsed_params = {}  # 注册了指令的 handler
+        command_matched = False
 
         # 将 plugins_name 设置到 event 中
         enabled_plugins_name = self.ctx.astrbot_config.get("plugin_set", ["*"])
@@ -180,9 +182,13 @@ class WakingCheckStage(Stage):
                         if not filter.filter(event, self.ctx.astrbot_config):
                             permission_not_pass = True
                             permission_filter_raise_error = filter.raise_error
-                    elif not filter.filter(event, self.ctx.astrbot_config):
-                        passed = False
-                        break
+                    else:
+                        filter_passed = filter.filter(event, self.ctx.astrbot_config)
+                        if isinstance(filter, CommandFilter) and filter_passed:
+                            command_matched = True
+                        if not filter_passed:
+                            passed = False
+                            break
                 except Exception as e:
                     await event.send(
                         MessageEventResult().message(
@@ -232,6 +238,7 @@ class WakingCheckStage(Stage):
 
         event.set_extra("activated_handlers", activated_handlers)
         event.set_extra("handlers_parsed_params", handlers_parsed_params)
+        event.set_extra("command_matched", command_matched)
 
         if not is_wake:
             event.stop_event()
