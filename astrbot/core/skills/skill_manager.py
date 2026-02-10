@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from astrbot.core import logger
 from astrbot.core.utils.astrbot_path import (
     get_astrbot_data_path,
     get_astrbot_skills_path,
@@ -355,6 +356,7 @@ class SkillManager:
         config.setdefault("skills", {})
         config["skills"][name] = {"active": bool(active)}
         self._save_config(config)
+        logger.info(f"Skill {'activated' if active else 'deactivated'}: {name}")
 
     def _remove_skill_from_sandbox_cache(self, name: str) -> None:
         cache = self._load_sandbox_skills_cache()
@@ -382,6 +384,7 @@ class SkillManager:
 
         skill_dir = Path(self.skills_root) / name
         if skill_dir.exists():
+            logger.info(f"Removing skill directory: {name}")
             shutil.rmtree(skill_dir)
 
         # Ensure UI consistency even when there is no active sandbox session
@@ -392,6 +395,7 @@ class SkillManager:
         if name in config.get("skills", {}):
             config["skills"].pop(name, None)
             self._save_config(config)
+            logger.info(f"Skill removed from config: {name}")
 
     def install_skill_from_zip(self, zip_path: str, *, overwrite: bool = True) -> str:
         zip_path_obj = Path(zip_path)
@@ -409,12 +413,15 @@ class SkillManager:
             top_dirs = {
                 PurePosixPath(name).parts[0] for name in file_names if name.strip()
             }
-
             if len(top_dirs) != 1:
                 raise ValueError("Zip archive must contain a single top-level folder.")
             skill_name = next(iter(top_dirs))
             if skill_name in {".", "..", ""} or not _SKILL_NAME_RE.match(skill_name):
                 raise ValueError("Invalid skill folder name.")
+
+            logger.info(
+                f"Installing skill from zip: {skill_name} (overwrite={overwrite})"
+            )
 
             for name in names:
                 if not name:
@@ -444,8 +451,10 @@ class SkillManager:
                 if dest_dir.exists():
                     if not overwrite:
                         raise FileExistsError("Skill already exists.")
+                    logger.info(f"Removing existing skill: {skill_name}")
                     shutil.rmtree(dest_dir)
                 shutil.move(str(src_dir), str(dest_dir))
 
         self.set_skill_active(skill_name, True)
+        logger.info(f"Skill installed successfully: {skill_name}")
         return skill_name
