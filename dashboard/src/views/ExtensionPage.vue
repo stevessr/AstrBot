@@ -279,12 +279,13 @@ const filteredPlugins = computed(() => {
 
 // 过滤后的插件市场数据（带搜索）
 const filteredMarketPlugins = computed(() => {
+  const data = Array.isArray(pluginMarketData.value) ? pluginMarketData.value : [];
   if (!debouncedMarketSearch.value) {
-    return pluginMarketData.value;
+    return data;
   }
 
   const search = debouncedMarketSearch.value.toLowerCase();
-  return pluginMarketData.value.filter((plugin) => {
+  return data.filter((plugin) => {
     // 使用自定义过滤器
     return (
       marketCustomFilter(plugin.name, search, plugin) ||
@@ -963,6 +964,7 @@ const saveCustomSource = () => {
 
 // 插件市场显示完整插件名称
 const trimExtensionName = () => {
+  if (!Array.isArray(pluginMarketData.value)) return;
   pluginMarketData.value.forEach((plugin) => {
     if (plugin.name) {
       let name = plugin.name.trim().toLowerCase();
@@ -977,6 +979,8 @@ const trimExtensionName = () => {
 
 const checkAlreadyInstalled = () => {
   const data = Array.isArray(extension_data?.data) ? extension_data.data : [];
+  if (!Array.isArray(pluginMarketData.value)) return;
+
   const installedRepos = new Set(data.map((ext) => ext.repo?.toLowerCase()));
   const installedNames = new Set(data.map((ext) => ext.name));
   const installedByRepo = new Map(
