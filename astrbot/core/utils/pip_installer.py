@@ -18,13 +18,85 @@ logger = logging.getLogger("astrbot")
 
 _DISTLIB_FINDER_PATCH_ATTEMPTED = False
 _SITE_PACKAGES_IMPORT_LOCK = threading.RLock()
+_UV_AVAILABLE = None
 
 
 def _canonicalize_distribution_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).strip("-").lower()
 
 
+def _is_uv_available() -> bool:
+    """检测环境变量中是否配置了 uv 包管理器。"""
+    global _UV_AVAILABLE
+    if _UV_AVAILABLE is not None:
+        return _UV_AVAILABLE
+
+    # 检查环境变量 ASTRBOT_USE_UV
+    if os.environ.get("ASTRBOT_USE_UV", "").lower() in ("1", "true", "yes"):
+        _UV_AVAILABLE = True
+        logger.info("使用 uv 包管理器（通过环境变量 ASTRBOT_USE_UV）")
+        return True
+
+    # 检查环境变量 PATH 中是否有 uv
+    path_env = os.environ.get("PATH", "")
+    if not path_env:
+        _UV_AVAILABLE = False
+        return False
+
+    # 检查 PATH 中是否有 uv 可执行文件
+    for path_dir in path_env.split(os.pathsep):
+        if not path_dir:
+            continue
+        uv_path = os.path.join(path_dir, "uv")
+        if os.path.isfile(uv_path) and os.access(uv_path, os.X_OK):
+            _UV_AVAILABLE = True
+            logger.info(f"检测到 uv 包管理器: {uv_path}")
+            return True
+
+    # Windows 下检查 uv.exe
+    if sys.platform == "win32":
+        for path_dir in path_env.split(os.pathsep):
+            if not path_dir:
+                continue
+            uv_path = os.path.join(path_dir, "uv.exe")
+            if os.path.isfile(uv_path) and os.access(uv_path, os.X_OK):
+                _UV_AVAILABLE = True
+                logger.info(f"检测到 uv 包管理器: {uv_path}")
+                return True
+
+    _UV_AVAILABLE = False
+    return False
+
+
+def _get_uv_pip_main():
+    """获取 uv pip 的主函数。"""
+    try:
+        from uv import pip as uv_pip
+
+        # uv pip 的 main 函数通常在 uv.pip.cli 中
+        if hasattr(uv_pip, "main"):
+            return uv_pip.main
+        # 尝试从 uv.pip.cli.main 导入
+        if hasattr(uv_pip, "cli"):
+            cli_module = getattr(uv_pip, "cli", None)
+            if cli_module and hasattr(cli_module, "main"):
+                return cli_module.main
+        # 回退：使用 uv subprocess
+        return None
+    except ImportError as exc:
+        logger.debug(f"uv pip module not available: {exc}")
+        return None
+
+
 def _get_pip_main():
+    """获取 pip 或 uv pip 的主函数，优先使用 uv。"""
+    if _is_uv_available():
+        uv_main = _get_uv_pip_main()
+        if uv_main:
+            logger.info("使用 uv pip 作为包管理器")
+            return uv_main
+        logger.info("uv 可用但 uv pip 模块未找到，回退到 pip")
+
     try:
         from pip._internal.cli.main import main as pip_main
     except ImportError:
@@ -46,6 +118,29 @@ def _run_pip_main_with_output(pip_main, args: list[str]) -> tuple[int, str]:
     with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
         result_code = pip_main(args)
     return result_code, stream.getvalue()
+
+
+def _run_uv_pip_subprocess(args: list[str]) -> tuple[int, str]:
+    """通过 subprocess 运行 uv pip 命令。"""
+    import subprocess
+
+    uv_cmd = ["uv", "pip"] + args
+    logger.info(f"执行 uv pip 命令: {' '.join(uv_cmd)}")
+
+    try:
+        result = subprocess.run(
+            uv_cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode, result.stdout + result.stderr
+    except FileNotFoundError:
+        logger.error("uv 命令未找到，请确保 uv 已安装并在 PATH 中")
+        raise RuntimeError("uv command not found") from None
+    except Exception as e:
+        logger.error(f"执行 uv pip 命令失败: {e}")
+        raise
 
 
 def _cleanup_added_root_handlers(original_handlers: list[logging.Handler]) -> None:
@@ -566,7 +661,8 @@ class PipInstaller:
         if self.pip_install_arg:
             args.extend(self.pip_install_arg.split())
 
-        logger.info(f"Pip 包管理器: pip {' '.join(args)}")
+        package_manager = "uv pip" if _is_uv_available() else "pip"
+        logger.info(f"包管理器: {package_manager} {' '.join(args)}")
         result_code = await self._run_pip_in_process(args)
 
         if result_code != 0:
@@ -601,10 +697,24 @@ class PipInstaller:
         importlib.invalidate_caches()
 
     async def _run_pip_in_process(self, args: list[str]) -> int:
-        pip_main = _get_pip_main()
+        """运行 pip 或 uv pip 命令。"""
         _patch_distlib_finder_for_frozen_runtime()
 
         original_handlers = list(logging.getLogger().handlers)
+
+        if _is_uv_available() and _get_uv_pip_main() is None:
+            # 使用 uv subprocess 模式
+            result_code, output = await asyncio.to_thread(_run_uv_pip_subprocess, args)
+            for line in output.splitlines():
+                line = line.strip()
+                if line:
+                    logger.info(line)
+
+            _cleanup_added_root_handlers(original_handlers)
+            return result_code
+
+        # 使用 pip 或 uv pip Python API 模式
+        pip_main = _get_pip_main()
         result_code, output = await asyncio.to_thread(
             _run_pip_main_with_output, pip_main, args
         )
