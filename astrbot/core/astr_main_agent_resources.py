@@ -190,7 +190,7 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                                 "type": "string",
                                 "description": (
                                     "Component type. One of: "
-                                    "plain, image, record, file, mention_user"
+                                    "plain, image, record, file, mention_user, poll"
                                 ),
                             },
                             "text": {
@@ -208,6 +208,19 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                             "mention_user_id": {
                                 "type": "string",
                                 "description": "User ID to mention for `mention_user` type.",
+                            },
+                            "question": {
+                                "type": "string",
+                                "description": "Poll question/title for `poll` type.",
+                            },
+                            "answers": {
+                                "type": "array",
+                                "description": "Poll answer choices for `poll` type.",
+                                "items": {"type": "string"},
+                            },
+                            "max_selections": {
+                                "type": "integer",
+                                "description": "Maximum number of selections allowed for `poll` type. Set > 1 for multiple choice.",
                             },
                         },
                         "required": ["type"],
@@ -332,6 +345,33 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
                     components.append(
                         Comp.At(
                             qq=mention_user_id,
+                        ),
+                    )
+                elif msg_type == "poll":
+                    answers = msg.get("answers")
+                    question = msg.get("question")
+
+                    # 向后兼容旧参数名
+                    if answers is None:
+                        answers = msg.get("choices")
+                    if question is None:
+                        question = msg.get("title")
+
+                    if not answers or not isinstance(answers, list):
+                        return f"error: messages[{idx}].answers is required and must be an array for poll component."
+
+                    max_selections = msg.get("max_selections", 1)
+                    multiple = msg.get("multiple", False)
+
+                    # 如果指定了 multiple 且 max_selections 为默认值 1，则自动调整
+                    if multiple and max_selections == 1:
+                        max_selections = len(answers)
+
+                    components.append(
+                        Comp.Poll(
+                            question=question,
+                            answers=answers,
+                            max_selections=max_selections,
                         ),
                     )
                 else:
