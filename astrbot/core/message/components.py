@@ -63,6 +63,7 @@ class ComponentType(str, Enum):
     Location = "Location"  # TODO
     Music = "Music"
     Json = "Json"
+    Poll = "Poll"  # poll/vote message
     Unknown = "Unknown"
     WechatEmoji = "WechatEmoji"  # Wechat 下的 emoji 表情包
 
@@ -646,6 +647,43 @@ class Json(BaseMessageComponent):
         super().__init__(data=data, **_)
 
 
+class Poll(BaseMessageComponent):
+    """投票消息段
+
+    支持多个选项的投票消息，适用于 Matrix、Misskey 等平台。
+    """
+
+    type = ComponentType.Poll
+    question: str | None = None  # 投票问题/标题
+    answers: list[str]  # 投票选项列表
+    max_selections: int = 1  # 最大选择数量（允许多选时 > 1）
+
+    def __init__(
+        self,
+        question: str | None = None,
+        answers: list[str] | None = None,
+        max_selections: int = 1,
+        choices: list[str] | None = None,
+        multiple: bool = False,
+        title: str | None = None,
+        **_,
+    ) -> None:
+        # 兼容旧参数名：choices -> answers, title -> question, multiple -> max_selections
+        if answers is None:
+            answers = choices or []
+        if question is None:
+            question = title
+        if multiple and max_selections == 1:
+            max_selections = len(answers) if answers else 1
+
+        super().__init__(
+            question=question,
+            answers=answers,
+            max_selections=max_selections,
+            **_,
+        )
+
+
 class Unknown(BaseMessageComponent):
     type: ComponentType = ComponentType.Unknown
     text: str
@@ -847,6 +885,7 @@ ComponentTypes = {
     "node": Node,
     "nodes": Nodes,
     "json": Json,
+    "poll": Poll,
     "unknown": Unknown,
     "WechatEmoji": WechatEmoji,
 }
