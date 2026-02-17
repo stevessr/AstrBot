@@ -109,6 +109,13 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 return action
         return ChatAction.TYPING
 
+    @staticmethod
+    def _is_gif_file(path: str) -> bool:
+        if not path:
+            return False
+        normalized = path.split("?", 1)[0].split("#", 1)[0].lower()
+        return normalized.endswith(".gif")
+
     @classmethod
     async def _send_media_with_action(
         cls,
@@ -305,7 +312,14 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 if reply_markup and not buttons_used:
                     payload_local["reply_markup"] = reply_markup
                     buttons_used = True
-                await client.send_photo(photo=image_path, **cast(Any, payload_local))
+                if cls._is_gif_file(image_path):
+                    await client.send_animation(
+                        animation=image_path, **cast(Any, payload_local)
+                    )
+                else:
+                    await client.send_photo(
+                        photo=image_path, **cast(Any, payload_local)
+                    )
             elif isinstance(i, File):
                 path = await i.get_file()
                 name = i.name or os.path.basename(path)
@@ -420,14 +434,26 @@ class TelegramPlatformEvent(AstrMessageEvent):
                         delta += i.text
                     elif isinstance(i, Image):
                         image_path = await i.convert_to_file_path()
-                        await self._send_media_with_action(
-                            self.client,
-                            ChatAction.UPLOAD_PHOTO,
-                            self.client.send_photo,
-                            user_name=user_name,
-                            photo=image_path,
-                            **cast(Any, payload),
-                        )
+                        if self._is_gif_file(image_path):
+                            await self._send_media_with_action(
+                                self.client,
+                                ChatAction.UPLOAD_VIDEO,
+                                self.client.send_animation,
+                                user_name=user_name,
+                                message_thread_id=message_thread_id,
+                                animation=image_path,
+                                **cast(Any, payload),
+                            )
+                        else:
+                            await self._send_media_with_action(
+                                self.client,
+                                ChatAction.UPLOAD_PHOTO,
+                                self.client.send_photo,
+                                user_name=user_name,
+                                message_thread_id=message_thread_id,
+                                photo=image_path,
+                                **cast(Any, payload),
+                            )
                         continue
                     elif isinstance(i, File):
                         path = await i.get_file()
