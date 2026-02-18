@@ -579,7 +579,6 @@ class PluginManager:
 
         """
         inactivated_plugins = await sp.global_get("inactivated_plugins", [])
-        inactivated_llm_tools = await sp.global_get("inactivated_llm_tools", [])
         alter_cmd = await sp.global_get("alter_cmd", {})
 
         plugin_modules = self._get_plugin_modules()
@@ -754,6 +753,13 @@ class PluginManager:
                             metadata.star_cls,  # type: ignore
                         )
                     # 绑定 llm_tool handler
+                    # NOTE:
+                    # `inactivated_llm_tools` may be changed during plugin __init__/terminate
+                    # (e.g. plugin runtime mode toggles tools on reload). Read the latest value
+                    # here to avoid applying a stale snapshot loaded before plugin instantiation.
+                    inactivated_llm_tool_names = set(
+                        await sp.global_get("inactivated_llm_tools", [])
+                    )
                     for func_tool in llm_tools.func_list:
                         if isinstance(func_tool, HandoffTool):
                             need_apply = []
@@ -775,7 +781,7 @@ class PluginManager:
                                     ft.handler,
                                     metadata.star_cls,  # type: ignore
                                 )
-                            if ft.name in inactivated_llm_tools:
+                            if ft.name in inactivated_llm_tool_names:
                                 ft.active = False
 
                 else:
