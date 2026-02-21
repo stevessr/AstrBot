@@ -122,6 +122,7 @@ class TelegramPlatformAdapter(Platform):
             self.client,
             message_chain,
             from_username,
+            adapter_id=self.meta().id,
         )
         await super().send_by_session(session, message_chain)
 

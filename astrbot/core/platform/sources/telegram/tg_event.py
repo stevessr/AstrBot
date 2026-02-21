@@ -26,6 +26,7 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.api.platform import AstrBotMessage, MessageType, PlatformMetadata
+from astrbot.core import sp
 
 
 class TelegramPlatformEvent(AstrMessageEvent):
@@ -126,11 +127,12 @@ class TelegramPlatformEvent(AstrMessageEvent):
         user_name: str,
         message_thread_id: str | None = None,
         **payload: Any,
-    ) -> None:
+    ) -> Any:
         """发送媒体时显示 upload action，发送完成后恢复 typing"""
         effective_thread_id = message_thread_id or cast(
             str | None, payload.get("message_thread_id")
         )
+        result = await send_coro(**payload)
         await cls._send_chat_action(
             client, user_name, upload_action, effective_thread_id
         )
@@ -141,6 +143,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
         await cls._send_chat_action(
             client, user_name, ChatAction.TYPING, effective_thread_id
         )
+        return result
 
     @classmethod
     async def _send_voice_with_fallback(
@@ -153,7 +156,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
         user_name: str = "",
         message_thread_id: str | None = None,
         use_media_action: bool = False,
-    ) -> None:
+    ) -> Any:
         """Send a voice message, falling back to a document if the user's
         privacy settings forbid voice messages (``BadRequest`` with
         ``Voice_messages_forbidden``).
@@ -174,8 +177,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                     voice=path,
                     **cast(Any, media_payload),
                 )
-            else:
-                await client.send_voice(voice=path, **cast(Any, payload))
+            return await client.send_voice(voice=path, **cast(Any, payload))
         except BadRequest as e:
             # python-telegram-bot raises BadRequest for Voice_messages_forbidden;
             # distinguish the voice-privacy case via the API error message.
@@ -198,12 +200,161 @@ class TelegramPlatformEvent(AstrMessageEvent):
                     caption=caption,
                     **cast(Any, media_payload),
                 )
-            else:
-                await client.send_document(
-                    document=path,
-                    caption=caption,
-                    **cast(Any, payload),
+            return await client.send_document(
+                document=path,
+                caption=caption,
+                **cast(Any, payload),
+            )
+
+    @staticmethod
+    def _build_file_id_cache_key(file_unique: str) -> str:
+        return f"telegram_file_id_cache::{file_unique}"
+
+    @staticmethod
+    def _normalize_cached_media_value(cache_value: Any) -> dict[str, str] | None:
+        if not isinstance(cache_value, dict):
+            return None
+        file_id = str(cache_value.get("file_id", "") or "").strip()
+        media_type = str(cache_value.get("media_type", "") or "").strip().lower()
+        if not file_id or media_type not in {"photo", "animation"}:
+            return None
+        return {"file_id": file_id, "media_type": media_type}
+
+    @classmethod
+    async def _get_cached_file_id(
+        cls,
+        adapter_id: str,
+        file_unique: str,
+    ) -> dict[str, str] | None:
+        cache_key = cls._build_file_id_cache_key(file_unique)
+        cache_value = await sp.get_async(
+            scope="platform",
+            scope_id=adapter_id,
+            key=cache_key,
+            default=None,
+        )
+        return cls._normalize_cached_media_value(cache_value)
+
+    @classmethod
+    async def _set_cached_file_id(
+        cls,
+        adapter_id: str,
+        file_unique: str,
+        file_id: str,
+        media_type: str,
+    ) -> None:
+        normalized_file_id = str(file_id or "").strip()
+        normalized_media_type = str(media_type or "").strip().lower()
+        if not normalized_file_id or normalized_media_type not in {
+            "photo",
+            "animation",
+        }:
+            return
+        cache_key = cls._build_file_id_cache_key(file_unique)
+        await sp.put_async(
+            scope="platform",
+            scope_id=adapter_id,
+            key=cache_key,
+            value={
+                "file_id": normalized_file_id,
+                "media_type": normalized_media_type,
+            },
+        )
+
+    @classmethod
+    async def _remove_cached_file_id(
+        cls,
+        adapter_id: str,
+        file_unique: str,
+    ) -> None:
+        cache_key = cls._build_file_id_cache_key(file_unique)
+        await sp.remove_async(scope="platform", scope_id=adapter_id, key=cache_key)
+
+    @staticmethod
+    def _extract_sent_message_file_id(sent_message: Any, media_type: str) -> str | None:
+        normalized_media_type = str(media_type or "").strip().lower()
+        if normalized_media_type == "photo":
+            photos = getattr(sent_message, "photo", None) or []
+            if photos:
+                return str(getattr(photos[-1], "file_id", "") or "").strip() or None
+            return None
+        if normalized_media_type == "animation":
+            animation = getattr(sent_message, "animation", None)
+            if animation is None:
+                return None
+            return str(getattr(animation, "file_id", "") or "").strip() or None
+        return None
+
+    @staticmethod
+    def _get_media_send_meta(media_type: str) -> tuple[str, ChatAction | str, Any]:
+        normalized_media_type = str(media_type or "").strip().lower()
+        if normalized_media_type == "animation":
+            return "animation", ChatAction.UPLOAD_VIDEO, "animation"
+        return "photo", ChatAction.UPLOAD_PHOTO, "photo"
+
+    @classmethod
+    async def _send_image_with_file_id_cache(
+        cls,
+        client: ExtBot,
+        image: Image,
+        payload: dict[str, Any],
+        *,
+        adapter_id: str,
+        user_name: str = "",
+        message_thread_id: str | None = None,
+        use_media_action: bool = False,
+    ) -> Any:
+        file_unique = str(getattr(image, "file_unique", "") or "").strip()
+
+        async def _send_media(media_value: str, media_type: str) -> Any:
+            media_arg, upload_action, send_method_name = cls._get_media_send_meta(media_type)
+            send_coro = getattr(client, f"send_{send_method_name}")
+            media_payload = dict(payload)
+            media_payload[media_arg] = media_value
+            if use_media_action:
+                return await cls._send_media_with_action(
+                    client,
+                    upload_action,
+                    send_coro,
+                    user_name=user_name,
+                    message_thread_id=message_thread_id,
+                    **cast(Any, media_payload),
                 )
+            return await send_coro(**cast(Any, media_payload))
+
+        if file_unique:
+            cached_value = await cls._get_cached_file_id(adapter_id, file_unique)
+            if cached_value:
+                cached_file_id = str(cached_value.get("file_id", "") or "").strip()
+                cached_media_type = str(cached_value.get("media_type", "") or "").strip().lower()
+                if cached_file_id and cached_media_type in {"photo", "animation"}:
+                    try:
+                        return await _send_media(cached_file_id, cached_media_type)
+                    except BadRequest as e:
+                        logger.debug(
+                            f"[Telegram] Cached file_id invalid for {file_unique}: {e}"
+                        )
+                        await cls._remove_cached_file_id(adapter_id, file_unique)
+                    except Exception as e:
+                        logger.debug(
+                            f"[Telegram] Cached file_id send failed for {file_unique}: {e}"
+                        )
+
+        image_path = await image.convert_to_file_path()
+        media_type = "animation" if cls._is_gif_file(image_path) else "photo"
+        sent_message = await _send_media(image_path, media_type)
+
+        if file_unique:
+            sent_file_id = cls._extract_sent_message_file_id(sent_message, media_type)
+            if sent_file_id:
+                await cls._set_cached_file_id(
+                    adapter_id,
+                    file_unique,
+                    sent_file_id,
+                    media_type,
+                )
+
+        return sent_message
 
     async def _ensure_typing(
         self,
@@ -233,8 +384,8 @@ class TelegramPlatformEvent(AstrMessageEvent):
         client: ExtBot,
         message: MessageChain,
         user_name: str,
+        adapter_id: str = "telegram",
     ) -> None:
-        image_path = None
         buttons = getattr(message, "buttons", None)
         reply_markup = None
         if buttons:
@@ -307,19 +458,19 @@ class TelegramPlatformEvent(AstrMessageEvent):
                             **cast(Any, payload_local),
                         )
             elif isinstance(i, Image):
-                image_path = await i.convert_to_file_path()
                 payload_local = dict(payload)
                 if reply_markup and not buttons_used:
                     payload_local["reply_markup"] = reply_markup
                     buttons_used = True
-                if cls._is_gif_file(image_path):
-                    await client.send_animation(
-                        animation=image_path, **cast(Any, payload_local)
-                    )
-                else:
-                    await client.send_photo(
-                        photo=image_path, **cast(Any, payload_local)
-                    )
+                await cls._send_image_with_file_id_cache(
+                    client,
+                    i,
+                    payload_local,
+                    adapter_id=adapter_id,
+                    user_name=user_name,
+                    message_thread_id=message_thread_id,
+                    use_media_action=False,
+                )
             elif isinstance(i, File):
                 path = await i.get_file()
                 name = i.name or os.path.basename(path)
@@ -344,10 +495,21 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 )
 
     async def send(self, message: MessageChain) -> None:
+        adapter_id = str(getattr(self.platform_meta, "id", "telegram") or "telegram")
         if self.get_message_type() == MessageType.GROUP_MESSAGE:
-            await self.send_with_client(self.client, message, self.message_obj.group_id)
+            await self.send_with_client(
+                self.client,
+                message,
+                self.message_obj.group_id,
+                adapter_id=adapter_id,
+            )
         else:
-            await self.send_with_client(self.client, message, self.get_sender_id())
+            await self.send_with_client(
+                self.client,
+                message,
+                self.get_sender_id(),
+                adapter_id=adapter_id,
+            )
         await super().send(message)
 
     async def react(self, emoji: str | None, big: bool = False) -> None:
@@ -383,6 +545,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
             logger.error(f"[Telegram] 添加反应失败：{e}")
 
     async def send_streaming(self, generator, use_fallback: bool = False):
+        adapter_id = str(getattr(self.platform_meta, "id", "telegram") or "telegram")
         message_thread_id = None
 
         if self.get_message_type() == MessageType.GROUP_MESSAGE:
@@ -433,27 +596,15 @@ class TelegramPlatformEvent(AstrMessageEvent):
                     if isinstance(i, Plain):
                         delta += i.text
                     elif isinstance(i, Image):
-                        image_path = await i.convert_to_file_path()
-                        if self._is_gif_file(image_path):
-                            await self._send_media_with_action(
-                                self.client,
-                                ChatAction.UPLOAD_VIDEO,
-                                self.client.send_animation,
-                                user_name=user_name,
-                                message_thread_id=message_thread_id,
-                                animation=image_path,
-                                **cast(Any, payload),
-                            )
-                        else:
-                            await self._send_media_with_action(
-                                self.client,
-                                ChatAction.UPLOAD_PHOTO,
-                                self.client.send_photo,
-                                user_name=user_name,
-                                message_thread_id=message_thread_id,
-                                photo=image_path,
-                                **cast(Any, payload),
-                            )
+                        await self._send_image_with_file_id_cache(
+                            self.client,
+                            i,
+                            payload,
+                            adapter_id=adapter_id,
+                            user_name=user_name,
+                            message_thread_id=message_thread_id,
+                            use_media_action=True,
+                        )
                         continue
                     elif isinstance(i, File):
                         path = await i.get_file()
