@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
 import pytest
+from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
 
@@ -29,6 +31,34 @@ def _make_provider(overrides: dict | None = None) -> ProviderOpenAIOfficial:
     return ProviderOpenAIOfficial(
         provider_config=provider_config,
         provider_settings={},
+    )
+
+
+def _make_chat_completion(content: str = "legacy result") -> ChatCompletion:
+    return ChatCompletion.model_construct(
+        id="chatcmpl_1",
+        choices=[
+            Choice.model_construct(
+                finish_reason="stop",
+                index=0,
+                logprobs=None,
+                message=ChatCompletionMessage.model_construct(
+                    content=content,
+                    refusal=None,
+                    role="assistant",
+                    annotations=None,
+                    audio=None,
+                    function_call=None,
+                    tool_calls=None,
+                ),
+            )
+        ],
+        created=0,
+        model="gpt-4o-mini",
+        object="chat.completion",
+        service_tier=None,
+        system_fingerprint=None,
+        usage=None,
     )
 
 
@@ -378,5 +408,52 @@ async def test_handle_api_error_unknown_image_error_raises():
                 retry_cnt=0,
                 max_retries=10,
             )
+    finally:
+        await provider.terminate()
+
+
+@pytest.mark.asyncio
+async def test_query_openai_chat_completion_keeps_chat_path(monkeypatch):
+    provider = _make_provider()
+    try:
+        called = {"chat": 0}
+
+        async def fake_chat(payloads, tools):
+            called["chat"] += 1
+            return "chat"
+
+        monkeypatch.setattr(provider, "_query_chat", fake_chat)
+
+        resp = await provider._query({"model": "gpt-4o-mini", "messages": []}, None)
+
+        assert resp == "chat"
+        assert called == {"chat": 1}
+    finally:
+        await provider.terminate()
+
+
+@pytest.mark.asyncio
+async def test_query_chat_path_still_parses_chat_completion(monkeypatch):
+    provider = _make_provider()
+    try:
+
+        async def fake_chat_create(**kwargs):
+            assert kwargs["stream"] is False
+            return _make_chat_completion("legacy result")
+
+        monkeypatch.setattr(
+            provider.client.chat.completions, "create", fake_chat_create
+        )
+
+        llm_resp = await provider._query_chat(
+            payloads={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            tools=None,
+        )
+
+        assert llm_resp.completion_text == "legacy result"
+        assert llm_resp.role == "assistant"
     finally:
         await provider.terminate()

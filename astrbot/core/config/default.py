@@ -957,6 +957,18 @@ CONFIG_METADATA_2 = {
                         "proxy": "",
                         "custom_headers": {},
                     },
+                    "OpenAI Responses": {
+                        "id": "openai_responses",
+                        "provider": "openai",
+                        "type": "openai_responses",
+                        "provider_type": "chat_completion",
+                        "enable": False,
+                        "key": [],
+                        "api_base": "https://api.openai.com/v1",
+                        "timeout": 120,
+                        "proxy": "",
+                        "custom_headers": {},
+                    },
                     "Google Gemini": {
                         "id": "google_gemini",
                         "provider": "google",
