@@ -222,11 +222,11 @@ class ProviderOpenAIOfficial(Provider):
         except NotFoundError as e:
             raise Exception(f"获取模型列表失败：{e}")
 
-    async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
+    async def _query_chat(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
-            tool_list = tools.get_func_desc_openai_style(
+            tool_list = tools.openai_schema(
                 omit_empty_parameter_field=omit_empty_param_field,
             )
             if tool_list:
@@ -247,8 +247,6 @@ class ProviderOpenAIOfficial(Provider):
         if isinstance(custom_extra_body, dict):
             extra_body.update(custom_extra_body)
 
-        model = payloads.get("model", "").lower()
-
         completion = await self.client.chat.completions.create(
             **payloads,
             stream=False,
@@ -266,7 +264,10 @@ class ProviderOpenAIOfficial(Provider):
 
         return llm_response
 
-    async def _query_stream(
+    async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
+        return await self._query_chat(payloads, tools)
+
+    async def _query_stream_chat(
         self,
         payloads: dict,
         tools: ToolSet | None,
@@ -275,7 +276,7 @@ class ProviderOpenAIOfficial(Provider):
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
-            tool_list = tools.get_func_desc_openai_style(
+            tool_list = tools.openai_schema(
                 omit_empty_parameter_field=omit_empty_param_field,
             )
             if tool_list:
@@ -339,6 +340,14 @@ class ProviderOpenAIOfficial(Provider):
         llm_response = await self._parse_openai_completion(final_completion, tools)
 
         yield llm_response
+
+    async def _query_stream(
+        self,
+        payloads: dict,
+        tools: ToolSet | None,
+    ) -> AsyncGenerator[LLMResponse, None]:
+        async for item in self._query_stream_chat(payloads, tools):
+            yield item
 
     def _extract_reasoning_content(
         self,
