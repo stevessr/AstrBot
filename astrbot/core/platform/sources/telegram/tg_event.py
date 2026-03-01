@@ -307,7 +307,9 @@ class TelegramPlatformEvent(AstrMessageEvent):
         file_unique = str(getattr(image, "file_unique", "") or "").strip()
 
         async def _send_media(media_value: str, media_type: str) -> Any:
-            media_arg, upload_action, send_method_name = cls._get_media_send_meta(media_type)
+            media_arg, upload_action, send_method_name = cls._get_media_send_meta(
+                media_type
+            )
             send_coro = getattr(client, f"send_{send_method_name}")
             media_payload = dict(payload)
             media_payload[media_arg] = media_value
@@ -326,7 +328,9 @@ class TelegramPlatformEvent(AstrMessageEvent):
             cached_value = await cls._get_cached_file_id(adapter_id, file_unique)
             if cached_value:
                 cached_file_id = str(cached_value.get("file_id", "") or "").strip()
-                cached_media_type = str(cached_value.get("media_type", "") or "").strip().lower()
+                cached_media_type = (
+                    str(cached_value.get("media_type", "") or "").strip().lower()
+                )
                 if cached_file_id and cached_media_type in {"photo", "animation"}:
                     try:
                         return await _send_media(cached_file_id, cached_media_type)
