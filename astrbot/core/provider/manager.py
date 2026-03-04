@@ -63,7 +63,7 @@ class ProviderManager:
             str,
             Providers,
         ] = {}
-        """Provider 实例映射. key: provider_id, value: Provider 实例"""
+        """Provider 实例映射。key: provider_id, value: Provider 实例"""
         self.llm_tools = llm_tools
 
         self.curr_provider_inst: Provider | None = None
@@ -107,7 +107,7 @@ class ProviderManager:
                 self._provider_change_callback(provider_id, provider_type, umo)
             except Exception as e:
                 logger.warning(
-                    "调用 provider 变更回调失败: provider_id=%s, type=%s, err=%s",
+                    "调用 provider 变更回调失败：provider_id=%s, type=%s, err=%s",
                     provider_id,
                     provider_type,
                     safe_error("", e),
@@ -119,7 +119,7 @@ class ProviderManager:
                 hook(provider_id, provider_type, umo)
             except Exception as e:
                 logger.warning(
-                    "调用 provider 变更钩子失败: provider_id=%s, type=%s, err=%s",
+                    "调用 provider 变更钩子失败：provider_id=%s, type=%s, err=%s",
                     provider_id,
                     provider_type,
                     safe_error("", e),
@@ -270,7 +270,11 @@ class ProviderManager:
 
         return provider
 
-    async def initialize(self) -> None:
+    async def initialize(
+        self,
+        *,
+        init_timeout: float | int | str | None = None,
+    ) -> None:
         # 逐个初始化提供商
         for provider_config in self.providers_config:
             try:
@@ -331,16 +335,25 @@ class ProviderManager:
         if not self.curr_tts_provider_inst and self.tts_provider_insts:
             self.curr_tts_provider_inst = self.tts_provider_insts[0]
 
-        async def _init_mcp_clients_bg() -> None:
-            try:
-                await self.llm_tools.init_mcp_clients()
-            except Exception:
-                logger.error("MCP init background task failed", exc_info=True)
-
-        if self._mcp_init_task is None or self._mcp_init_task.done():
-            self._mcp_init_task = asyncio.create_task(
-                _init_mcp_clients_bg(),
-                name="provider-manager:mcp-init",
+        # 初始化 MCP Client 连接（等待完成以确保工具可用）
+        strict_mcp_init = os.getenv("ASTRBOT_MCP_INIT_STRICT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        mcp_init_summary = await self.llm_tools.init_mcp_clients(
+            raise_on_all_failed=strict_mcp_init,
+            init_timeout=init_timeout,
+        )
+        if (
+            mcp_init_summary.total > 0
+            and mcp_init_summary.success == 0
+            and not strict_mcp_init
+        ):
+            logger.warning(
+                "MCP 服务全部初始化失败，系统将继续启动（可设置 "
+                "ASTRBOT_MCP_INIT_STRICT=1 以在此场景下中止启动）。"
             )
 
     def dynamic_import_provider(self, type: str) -> None:
@@ -652,7 +665,7 @@ class ProviderManager:
                         await inst.initialize()
                     self.rerank_provider_insts.append(inst)
                 case _:
-                    # 未知供应商抛出异常，确保inst初始化
+                    # 未知供应商抛出异常，确保 inst 初始化
                     # Should be unreachable
                     raise Exception(
                         f"未知的提供商类型：{provider_metadata.provider_type}"
@@ -716,7 +729,7 @@ class ProviderManager:
     async def terminate_provider(self, provider_id: str) -> None:
         if provider_id in self.inst_map:
             logger.info(
-                f"终止 {provider_id} 提供商适配器({len(self.provider_insts)}, {len(self.stt_provider_insts)}, {len(self.tts_provider_insts)}) ...",
+                f"终止 {provider_id} 提供商适配器 ({len(self.provider_insts)}, {len(self.stt_provider_insts)}, {len(self.tts_provider_insts)}) ...",
             )
 
             if self.inst_map[provider_id] in self.provider_insts:
@@ -743,7 +756,7 @@ class ProviderManager:
                 await self.inst_map[provider_id].terminate()  # type: ignore
 
             logger.info(
-                f"{provider_id} 提供商适配器已终止({len(self.provider_insts)}, {len(self.stt_provider_insts)}, {len(self.tts_provider_insts)})",
+                f"{provider_id} 提供商适配器已终止 ({len(self.provider_insts)}, {len(self.stt_provider_insts)}, {len(self.tts_provider_insts)})",
             )
             del self.inst_map[provider_id]
 
