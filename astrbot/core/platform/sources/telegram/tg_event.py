@@ -5,7 +5,12 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import telegramify_markdown
-from telegram import ReactionTypeCustomEmoji, ReactionTypeEmoji
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReactionTypeCustomEmoji,
+    ReactionTypeEmoji,
+)
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import ExtBot
@@ -110,7 +115,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 payload["message_thread_id"] = message_thread_id
             await client.send_chat_action(**payload)
         except Exception as e:
-            logger.warning(f"[Telegram] 发送 chat action 失败: {e}")
+            logger.warning(f"[Telegram] 发送 chat action 失败：{e}")
 
     @classmethod
     def _get_chat_action_for_chain(cls, chain: list[Any]) -> ChatAction | str:
@@ -239,6 +244,15 @@ class TelegramPlatformEvent(AstrMessageEvent):
         user_name: str,
     ) -> None:
         image_path = None
+        buttons = getattr(message, "buttons", None)
+        reply_markup = None
+        if buttons:
+            keyboard = [
+                [InlineKeyboardButton(text=label, callback_data=data)]
+                for label, data in buttons
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        buttons_used = False
 
         has_reply = False
         reply_message_id = None
@@ -280,19 +294,34 @@ class TelegramPlatformEvent(AstrMessageEvent):
                             chunk,
                             normalize_whitespace=False,
                         )
+                        payload_local = dict(payload)
+                        if reply_markup and not buttons_used:
+                            payload_local["reply_markup"] = reply_markup
+                            buttons_used = True
                         await client.send_message(
                             text=md_text,
                             parse_mode="MarkdownV2",
-                            **cast(Any, payload),
+                            **cast(Any, payload_local),
                         )
                     except Exception as e:
                         logger.warning(
                             f"MarkdownV2 send failed: {e}. Using plain text instead.",
                         )
-                        await client.send_message(text=chunk, **cast(Any, payload))
+                        payload_local = dict(payload)
+                        if reply_markup and not buttons_used:
+                            payload_local["reply_markup"] = reply_markup
+                            buttons_used = True
+                        await client.send_message(
+                            text=chunk,
+                            **cast(Any, payload_local),
+                        )
             elif isinstance(i, Image):
                 image_path = await i.convert_to_file_path()
-                await client.send_photo(photo=image_path, **cast(Any, payload))
+                payload_local = dict(payload)
+                if reply_markup and not buttons_used:
+                    payload_local["reply_markup"] = reply_markup
+                    buttons_used = True
+                await client.send_photo(photo=image_path, **cast(Any, payload_local))
             elif isinstance(i, File):
                 path = await i.get_file()
                 name = i.name or os.path.basename(path)
@@ -353,7 +382,7 @@ class TelegramPlatformEvent(AstrMessageEvent):
                 is_big=big,  # 可选：大动画
             )
         except Exception as e:
-            logger.error(f"[Telegram] 添加反应失败: {e}")
+            logger.error(f"[Telegram] 添加反应失败：{e}")
 
     async def _send_message_draft(
         self,
@@ -633,8 +662,21 @@ class TelegramPlatformEvent(AstrMessageEvent):
             delta += t
 
         async for chain in generator:
-            if not isinstance(chain, MessageChain):
-                continue
+            if isinstance(chain, MessageChain):
+                if chain.type == "break":
+                    # 分割符
+                    if message_id:
+                        try:
+                            await self.client.edit_message_text(
+                                text=delta,
+                                chat_id=payload["chat_id"],
+                                message_id=message_id,
+                            )
+                        except Exception as e:
+                            logger.warning(f"编辑消息失败 (streaming-break): {e!s}")
+                    message_id = None  # 重置消息 ID
+                    delta = ""  # 重置 delta
+                    continue
 
             if chain.type == "break":
                 # 分割符
@@ -645,22 +687,74 @@ class TelegramPlatformEvent(AstrMessageEvent):
                             chat_id=payload["chat_id"],
                             message_id=message_id,
                         )
-                    except Exception as e:
-                        logger.warning(f"编辑消息失败(streaming-break): {e!s}")
-                message_id = None
-                delta = ""
-                continue
+                        continue
+                    elif isinstance(i, File):
+                        path = await i.get_file()
+                        name = i.name or os.path.basename(path)
+                        await self._send_media_with_action(
+                            self.client,
+                            ChatAction.UPLOAD_DOCUMENT,
+                            self.client.send_document,
+                            user_name=user_name,
+                            document=path,
+                            filename=name,
+                            **cast(Any, payload),
+                        )
+                        continue
+                    elif isinstance(i, Record):
+                        path = await i.convert_to_file_path()
+                        await self._send_voice_with_fallback(
+                            self.client,
+                            path,
+                            payload,
+                            caption=i.text or delta or None,
+                            user_name=user_name,
+                            message_thread_id=message_thread_id,
+                            use_media_action=True,
+                        )
+                        continue
+                    elif isinstance(i, Video):
+                        path = await i.convert_to_file_path()
+                        await self._send_media_with_action(
+                            self.client,
+                            ChatAction.UPLOAD_VIDEO,
+                            self.client.send_video,
+                            user_name=user_name,
+                            video=path,
+                            **cast(Any, payload),
+                        )
+                        continue
+                    else:
+                        logger.warning(f"不支持的消息类型：{type(i)}")
+                        continue
 
             await self._process_chain_items(
                 chain, payload, user_name, message_thread_id, _append_text
             )
 
-            # 编辑或发送消息
-            if message_id and len(delta) <= self.MAX_MESSAGE_LENGTH:
-                current_time = asyncio.get_event_loop().time()
-                time_since_last_edit = current_time - last_edit_time
-
-                if time_since_last_edit >= throttle_interval:
+                    # 如果距离上次编辑的时间 >= 设定的间隔，等待一段时间
+                    if time_since_last_edit >= throttle_interval:
+                        # 发送 typing 状态（带节流）
+                        current_time = asyncio.get_event_loop().time()
+                        if current_time - last_chat_action_time >= chat_action_interval:
+                            await self._ensure_typing(user_name, message_thread_id)
+                            last_chat_action_time = current_time
+                        # 编辑消息
+                        try:
+                            await self.client.edit_message_text(
+                                text=delta,
+                                chat_id=payload["chat_id"],
+                                message_id=message_id,
+                            )
+                            current_content = delta
+                        except Exception as e:
+                            logger.warning(f"编辑消息失败 (streaming): {e!s}")
+                        last_edit_time = (
+                            asyncio.get_event_loop().time()
+                        )  # 更新上次编辑的时间
+                else:
+                    # delta 长度一般不会大于 4096，因此这里直接发送
+                    # 发送 typing 状态（带节流）
                     current_time = asyncio.get_event_loop().time()
                     if current_time - last_chat_action_time >= chat_action_interval:
                         await self._ensure_typing(user_name, message_thread_id)
@@ -673,22 +767,11 @@ class TelegramPlatformEvent(AstrMessageEvent):
                         )
                         current_content = delta
                     except Exception as e:
-                        logger.warning(f"编辑消息失败(streaming): {e!s}")
-                    last_edit_time = asyncio.get_event_loop().time()
-            else:
-                current_time = asyncio.get_event_loop().time()
-                if current_time - last_chat_action_time >= chat_action_interval:
-                    await self._ensure_typing(user_name, message_thread_id)
-                    last_chat_action_time = current_time
-                try:
-                    msg = await self.client.send_message(
-                        text=delta, **cast(Any, payload)
-                    )
-                    current_content = delta
-                except Exception as e:
-                    logger.warning(f"发送消息失败(streaming): {e!s}")
-                message_id = msg.message_id
-                last_edit_time = asyncio.get_event_loop().time()
+                        logger.warning(f"发送消息失败 (streaming): {e!s}")
+                    message_id = msg.message_id
+                    last_edit_time = (
+                        asyncio.get_event_loop().time()
+                    )  # 记录初始消息发送时间
 
         try:
             if delta and current_content != delta:
@@ -704,11 +787,13 @@ class TelegramPlatformEvent(AstrMessageEvent):
                         parse_mode="MarkdownV2",
                     )
                 except Exception as e:
-                    logger.warning(f"Markdown转换失败，使用普通文本: {e!s}")
+                    logger.warning(f"Markdown 转换失败，使用普通文本：{e!s}")
                     await self.client.edit_message_text(
                         text=delta,
                         chat_id=payload["chat_id"],
                         message_id=message_id,
                     )
         except Exception as e:
-            logger.warning(f"编辑消息失败(streaming): {e!s}")
+            logger.warning(f"编辑消息失败 (streaming): {e!s}")
+
+        return await super().send_streaming(generator, use_fallback)
