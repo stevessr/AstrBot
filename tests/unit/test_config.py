@@ -6,8 +6,9 @@ import os
 import pytest
 
 from astrbot.core.config.astrbot_config import AstrBotConfig, RateLimitStrategy
-from astrbot.core.config.default import DEFAULT_VALUE_MAP
+from astrbot.core.config.default import DEFAULT_CONFIG, DEFAULT_VALUE_MAP
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
+from astrbot.dashboard.routes.config import save_config
 
 
 @pytest.fixture
@@ -344,6 +345,30 @@ class TestConfigHotReload:
         )
 
         assert config2.platform_settings["unique_session"] is True
+
+    def test_save_config_rejects_line_without_unified_webhook_mode(
+        self,
+        temp_config_path,
+    ):
+        """Test save_config rejects invalid LINE webhook mode in core config."""
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=DEFAULT_CONFIG
+        )
+        post_config = json.loads(json.dumps(config))
+        post_config["platform"] = [
+            {
+                "id": "line-test",
+                "type": "line",
+                "enable": True,
+                "channel_access_token": "token",
+                "channel_secret": "secret",
+                "unified_webhook_mode": False,
+                "webhook_uuid": "abc123",
+            }
+        ]
+
+        with pytest.raises(ValueError, match="LINE 仅支持统一 Webhook 模式"):
+            save_config(post_config, config, is_core=True)
 
 
 class TestConfigSchemaToDefault:

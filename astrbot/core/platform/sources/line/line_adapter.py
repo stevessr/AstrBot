@@ -76,7 +76,10 @@ class LinePlatformAdapter(Platform):
         event_queue: asyncio.Queue,
     ) -> None:
         super().__init__(platform_config, event_queue)
-        self.config["unified_webhook_mode"] = True
+        if platform_config.get("unified_webhook_mode") is False:
+            raise ValueError(
+                "LINE 仅支持统一 Webhook 模式，请将 unified_webhook_mode 设为 true。",
+            )
         self.destination = "unknown"
         self.settings = platform_settings
         self._event_id_timestamps: dict[str, float] = {}

@@ -299,6 +299,20 @@ async def _validate_neo_connectivity(
     return None
 
 
+def _validate_line_platform_constraints(post_config: dict) -> list[str]:
+    errors: list[str] = []
+    for idx, platform in enumerate(post_config.get("platform", [])):
+        if not isinstance(platform, dict):
+            continue
+        if platform.get("type") != "line":
+            continue
+        if platform.get("unified_webhook_mode") is False:
+            errors.append(
+                f"platform[{idx}].unified_webhook_mode: LINE 仅支持统一 Webhook 模式"
+            )
+    return errors
+
+
 def save_config(
     post_config: dict, config: AstrBotConfig, is_core: bool = False
 ) -> None:
@@ -327,6 +341,11 @@ def save_config(
         raise ValueError(f"验证配置时出现异常: {e}")
     if errors:
         raise ValueError(f"格式校验未通过: {errors}")
+
+    if is_core:
+        line_errors = _validate_line_platform_constraints(post_config)
+        if line_errors:
+            raise ValueError(f"格式校验未通过: {line_errors}")
 
     config.save_config(post_config)
 
