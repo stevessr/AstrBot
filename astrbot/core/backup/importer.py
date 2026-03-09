@@ -555,6 +555,10 @@ class AstrBotImporter:
 
         self.kb_manager.kb_insts.clear()
 
+    async def import_main_database(self, data: dict[str, list[dict]]) -> dict[str, int]:
+        """导入主数据库数据。"""
+        return await self._import_main_database(data)
+
     async def _import_main_database(
         self, data: dict[str, list[dict]]
     ) -> dict[str, int]:

@@ -205,6 +205,10 @@ class AstrBotExporter:
                 os.remove(zip_path)
             raise
 
+    async def export_main_database(self) -> dict[str, list[dict]]:
+        """导出主数据库所有表。"""
+        return await self._export_main_database()
+
     async def _export_main_database(self) -> dict[str, list[dict]]:
         """导出主数据库所有表"""
         export_data: dict[str, list[dict]] = {}

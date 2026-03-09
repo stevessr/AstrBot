@@ -42,6 +42,20 @@
       "title": "Backup & Restore",
       "subtitle": "Export or import all AstrBot data for easy migration to a new server",
       "button": "Backup Manager"
+    },
+    "database": {
+      "title": "Main Database",
+      "subtitle": "Configure the core main database backend, test Postgres connectivity, and migrate the existing SQLite main database to Postgres. The knowledge base will continue using SQLite.",
+      "openConfig": "Open System Config",
+      "testConnection": "Test Connection",
+      "migrate": "Migrate to Postgres",
+      "messages": {
+        "loadFailed": "Failed to load system config",
+        "testSuccess": "Database connection succeeded",
+        "testFailed": "Database connection failed",
+        "migrateSuccess": "Database migration succeeded. Please restart AstrBot to apply the change",
+        "migrateFailed": "Database migration failed"
+      }
     }
   },
   "sidebar": {

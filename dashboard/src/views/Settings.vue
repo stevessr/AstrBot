@@ -63,6 +63,21 @@
                 <v-btn style="margin-top: 16px;" color="error" @click="restartAstrBot">{{ tm('system.restart.button') }}</v-btn>
             </v-list-item>
 
+            <v-list-item :subtitle="tm('system.database.subtitle')" :title="tm('system.database.title')">
+                <v-btn style="margin-top: 16px; margin-right: 12px;" color="primary" @click="openDatabaseConfig">
+                    <v-icon class="mr-2">mdi-database-cog</v-icon>
+                    {{ tm('system.database.openConfig') }}
+                </v-btn>
+                <v-btn style="margin-top: 16px; margin-right: 12px;" color="secondary" variant="tonal" :loading="databaseTesting" @click="testDatabaseConnection">
+                    <v-icon class="mr-2">mdi-database-check</v-icon>
+                    {{ tm('system.database.testConnection') }}
+                </v-btn>
+                <v-btn style="margin-top: 16px;" color="warning" variant="tonal" :loading="databaseMigrating" @click="migrateDatabaseToPostgres">
+                    <v-icon class="mr-2">mdi-database-export</v-icon>
+                    {{ tm('system.database.migrate') }}
+                </v-btn>
+            </v-list-item>
+
             <v-list-subheader>{{ tm('apiKey.title') }}</v-list-subheader>
 
             <v-list-item :subtitle="tm('apiKey.subtitle')">
@@ -284,6 +299,8 @@ watch(secondaryColor, (value) => {
 const wfr = ref(null);
 const migrationDialog = ref(null);
 const backupDialog = ref(null);
+const databaseTesting = ref(false);
+const databaseMigrating = ref(false);
 const apiKeys = ref([]);
 const apiKeyCreating = ref(false);
 const newApiKeyName = ref('');
@@ -471,6 +488,58 @@ const startMigration = async () => {
 const openBackupDialog = () => {
     if (backupDialog.value) {
         backupDialog.value.open();
+    }
+}
+
+const openDatabaseConfig = () => {
+    window.location.assign(`${window.location.origin}${window.location.pathname}#/system`);
+}
+
+const fetchSystemConfig = async () => {
+    const response = await axios.get('/api/config/abconf', {
+        params: {
+            system_config: '1'
+        }
+    });
+    if (response.data.status !== 'ok') {
+        throw new Error(response.data.message || tm('system.database.messages.loadFailed'));
+    }
+    return response.data.data.config || {};
+}
+
+const testDatabaseConnection = async () => {
+    databaseTesting.value = true;
+    try {
+        const config = await fetchSystemConfig();
+        const response = await axios.post('/api/config/database/test', {
+            database: config.database || {}
+        });
+        if (response.data.status !== 'ok') {
+            throw new Error(response.data.message || tm('system.database.messages.testFailed'));
+        }
+        showToast(response.data.message || tm('system.database.messages.testSuccess'), 'success');
+    } catch (error) {
+        showToast(error?.response?.data?.message || error?.message || tm('system.database.messages.testFailed'), 'error');
+    } finally {
+        databaseTesting.value = false;
+    }
+}
+
+const migrateDatabaseToPostgres = async () => {
+    databaseMigrating.value = true;
+    try {
+        const config = await fetchSystemConfig();
+        const response = await axios.post('/api/config/database/migrate', {
+            database: config.database || {}
+        });
+        if (response.data.status !== 'ok') {
+            throw new Error(response.data.message || tm('system.database.messages.migrateFailed'));
+        }
+        showToast(response.data.message || tm('system.database.messages.migrateSuccess'), 'success');
+    } catch (error) {
+        showToast(error?.response?.data?.message || error?.message || tm('system.database.messages.migrateFailed'), 'error');
+    } finally {
+        databaseMigrating.value = false;
     }
 }
 

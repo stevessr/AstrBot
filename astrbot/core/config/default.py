@@ -210,6 +210,18 @@ DEFAULT_CONFIG = {
             "ca_certs": "",
         },
     },
+    "database": {
+        "backend": "sqlite",
+        "sqlite_path": DB_PATH,
+        "url": "",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "user": "",
+        "password": "",
+        "database": "",
+        "schema": "",
+        "ssl_mode": "prefer",
+    },
     "platform": [],
     "platform_specific": {
         # 平台特异配置：按平台分类，平台下按功能分组
@@ -2730,6 +2742,47 @@ CONFIG_METADATA_2 = {
             "pypi_index_url": {
                 "type": "string",
             },
+            "database.backend": {
+                "type": "string",
+                "options": ["sqlite", "postgres"],
+            },
+            "database.sqlite_path": {
+                "type": "string",
+                "condition": {"database.backend": "sqlite"},
+            },
+            "database.url": {
+                "type": "string",
+            },
+            "database.host": {
+                "type": "string",
+                "condition": {"database.backend": "postgres"},
+            },
+            "database.port": {
+                "type": "int",
+                "condition": {"database.backend": "postgres"},
+            },
+            "database.user": {
+                "type": "string",
+                "condition": {"database.backend": "postgres"},
+            },
+            "database.password": {
+                "type": "string",
+                "secret": True,
+                "condition": {"database.backend": "postgres"},
+            },
+            "database.database": {
+                "type": "string",
+                "condition": {"database.backend": "postgres"},
+            },
+            "database.schema": {
+                "type": "string",
+                "condition": {"database.backend": "postgres"},
+            },
+            "database.ssl_mode": {
+                "type": "string",
+                "options": ["prefer", "disable", "require", "verify-ca", "verify-full"],
+                "condition": {"database.backend": "postgres"},
+            },
             "default_kb_collection": {
                 "type": "string",
             },
@@ -3865,6 +3918,68 @@ CONFIG_METADATA_3_SYSTEM = {
                         "description": "对外可达的回调接口地址",
                         "type": "string",
                         "hint": "外部服务可能会通过 AstrBot 生成的回调链接（如文件下载链接）访问 AstrBot 后端。由于 AstrBot 无法自动判断部署环境中对外可达的主机地址（host），因此需要通过此配置项显式指定 “外部服务如何访问 AstrBot” 的地址。如 http://localhost:6185，https://example.com 等。",
+                    },
+                    "database.backend": {
+                        "description": "主数据库后端",
+                        "type": "string",
+                        "options": ["sqlite", "postgres"],
+                        "hint": "仅影响 AstrBot 核心主库；知识库仍继续使用独立 SQLite。",
+                    },
+                    "database.sqlite_path": {
+                        "description": "SQLite 主库路径",
+                        "type": "string",
+                        "hint": "使用 SQLite 时的主数据库文件路径。相对路径以当前工作目录为基准。",
+                        "condition": {"database.backend": "sqlite"},
+                    },
+                    "database.url": {
+                        "description": "数据库连接 URL",
+                        "type": "string",
+                        "hint": "可选。填写后优先于下方 host/port/user/password/database 组合。Postgres 示例：postgresql+asyncpg://user:password@127.0.0.1:5432/astrbot",
+                    },
+                    "database.host": {
+                        "description": "Postgres 主机",
+                        "type": "string",
+                        "condition": {"database.backend": "postgres"},
+                    },
+                    "database.port": {
+                        "description": "Postgres 端口",
+                        "type": "int",
+                        "condition": {"database.backend": "postgres"},
+                    },
+                    "database.user": {
+                        "description": "Postgres 用户名",
+                        "type": "string",
+                        "condition": {"database.backend": "postgres"},
+                    },
+                    "database.password": {
+                        "description": "Postgres 密码",
+                        "type": "string",
+                        "secret": True,
+                        "condition": {"database.backend": "postgres"},
+                    },
+                    "database.database": {
+                        "description": "Postgres 数据库名",
+                        "type": "string",
+                        "condition": {"database.backend": "postgres"},
+                    },
+                    "database.schema": {
+                        "description": "Postgres Schema",
+                        "type": "string",
+                        "hint": "可选。留空时使用默认 schema（通常为 public）。",
+                        "condition": {"database.backend": "postgres"},
+                    },
+                    "database.ssl_mode": {
+                        "description": "Postgres SSL 模式",
+                        "type": "string",
+                        "options": [
+                            "prefer",
+                            "disable",
+                            "require",
+                            "verify-ca",
+                            "verify-full",
+                        ],
+                        "hint": "控制与 Postgres 建立连接时的 SSL 行为。",
+                        "condition": {"database.backend": "postgres"},
                     },
                     "timezone": {
                         "description": "时区",

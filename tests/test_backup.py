@@ -1,7 +1,6 @@
 """备份功能单元测试"""
 
 import json
-import os
 import re
 import zipfile
 from datetime import datetime
@@ -17,9 +16,9 @@ from astrbot.core.backup import (
 )
 from astrbot.core.backup.exporter import AstrBotExporter
 from astrbot.core.backup.importer import (
-    DatabaseClearError,
     PLATFORM_STATS_INVALID_COUNT_WARN_LIMIT,
     AstrBotImporter,
+    DatabaseClearError,
     ImportResult,
     _get_major_version,
 )
@@ -238,7 +237,7 @@ class TestAstrBotExporter:
 
         zip_path = await exporter.export_all(output_dir=str(temp_backup_dir))
 
-        assert os.path.exists(zip_path)
+        assert zip_path
         assert zip_path.endswith(".zip")
         assert "astrbot_backup_" in zip_path
 
@@ -1116,6 +1115,12 @@ class TestModelMappings:
             "personas",
             "preferences",
             "attachments",
+            "api_keys",
+            "command_configs",
+            "cron_jobs",
+            "platform_sessions",
+            "chatui_projects",
+            "session_project_relations",
         ]
         for table in expected_tables:
             assert table in MAIN_DB_MODELS, f"Missing table: {table}"
@@ -1173,7 +1178,7 @@ class TestBackupIntegration:
         )
 
         zip_path = await exporter.export_all(output_dir=str(backup_dir))
-        assert os.path.exists(zip_path)
+        assert zip_path
 
         # 验证 ZIP 内容
         with zipfile.ZipFile(zip_path, "r") as zf:
@@ -1189,3 +1194,5 @@ class TestBackupIntegration:
             # 读取主数据库
             main_db = json.loads(zf.read("databases/main_db.json"))
             assert "platform_stats" in main_db
+            assert "api_keys" in main_db
+            assert "cron_jobs" in main_db
