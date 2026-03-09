@@ -609,7 +609,7 @@ class ProviderOpenAIOfficial(Provider):
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
-            tool_list = tools.get_func_desc_openai_style(
+            tool_list = tools.openai_schema(
                 omit_empty_parameter_field=omit_empty_param_field,
             )
             if tool_list:
@@ -653,16 +653,19 @@ class ProviderOpenAIOfficial(Provider):
 
         return llm_response
 
-    async def _query_stream(
+    async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
+        return await self._query_chat(payloads, tools)
+
+    async def _query_stream_chat(
         self,
         payloads: dict,
         tools: ToolSet | None,
     ) -> AsyncGenerator[LLMResponse, None]:
-        """流式查询API，逐步返回结果"""
+        """流式查询 API，逐步返回结果"""
         if tools:
             model = payloads.get("model", "").lower()
             omit_empty_param_field = "gemini" in model
-            tool_list = tools.get_func_desc_openai_style(
+            tool_list = tools.openai_schema(
                 omit_empty_parameter_field=omit_empty_param_field,
             )
             if tool_list:
@@ -758,6 +761,14 @@ class ProviderOpenAIOfficial(Provider):
             # 流式内容已通过 yield 发出，记录错误后正常结束即可
             return
 
+    async def _query_stream(
+        self,
+        payloads: dict,
+        tools: ToolSet | None,
+    ) -> AsyncGenerator[LLMResponse, None]:
+        async for item in self._query_stream_chat(payloads, tools):
+            yield item
+
     def _extract_reasoning_content(
         self,
         completion: ChatCompletion | ChatCompletionChunk,
@@ -789,7 +800,7 @@ class ProviderOpenAIOfficial(Provider):
         cached = getattr(ptd, "cached_tokens", 0) if ptd else 0
         cached = (
             cached if isinstance(cached, int) else 0
-        )  # ptd.cached_tokens 可能为None
+        )  # ptd.cached_tokens 可能为 None
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0  # 安全
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         cached = cached or 0
@@ -974,7 +985,7 @@ class ProviderOpenAIOfficial(Provider):
         # specially handle finish reason
         if choice.finish_reason == "content_filter":
             raise Exception(
-                "API 返回的 completion 由于内容安全过滤被拒绝(非 AstrBot)。",
+                "API 返回的 completion 由于内容安全过滤被拒绝 (非 AstrBot)。",
             )
         has_text_output = bool((llm_response.completion_text or "").strip())
         has_reasoning_output = bool((llm_response.reasoning_content or "").strip())
@@ -1129,7 +1140,7 @@ class ProviderOpenAIOfficial(Provider):
         max_retries: int,
         image_fallback_used: bool = False,
     ) -> tuple:
-        """处理API错误并尝试恢复"""
+        """处理 API 错误并尝试恢复"""
         if "429" in str(e):
             logger.warning(
                 f"API 调用过于频繁，尝试使用其他 Key 重试。当前 Key: {chosen_key[:12]}",
@@ -1153,7 +1164,7 @@ class ProviderOpenAIOfficial(Provider):
             raise e
         if "maximum context length" in str(e) or "context length" in str(e).lower():
             logger.warning(
-                f"上下文长度超过限制。尝试弹出最早的记录然后重试。当前记录条数: {len(context_query)}",
+                f"上下文长度超过限制。尝试弹出最早的记录然后重试。当前记录条数：{len(context_query)}",
             )
             await self.pop_record(context_query)
             payloads["messages"] = context_query
@@ -1223,7 +1234,7 @@ class ProviderOpenAIOfficial(Provider):
                 None,
                 image_fallback_used,
             )
-        # logger.error(f"发生了错误。Provider 配置如下: {self.provider_config}")
+        # logger.error(f"发生了错误。Provider 配置如下：{self.provider_config}")
 
         if is_connection_error(e):
             proxy = self.provider_config.get("proxy", "")
@@ -1443,7 +1454,7 @@ class ProviderOpenAIOfficial(Provider):
                     if audio_part:
                         content_blocks.append(audio_part)
                 else:
-                    raise ValueError(f"不支持的额外内容块类型: {type(part)}")
+                    raise ValueError(f"不支持的额外内容块类型：{type(part)}")
 
         # 3. 图片内容
         if image_urls:
