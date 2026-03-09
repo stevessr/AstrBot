@@ -14,6 +14,7 @@ import botpy
 import botpy.message
 from botpy import Client
 from botpy.gateway import BotWebSocket
+from botpy.types.message import MarkdownPayload
 
 from astrbot import logger
 from astrbot.api.event import MessageChain
@@ -190,6 +191,8 @@ class QQOfficialPlatformAdapter(Platform):
         self._session_scene: dict[str, str] = {}
 
         self.test_mode = os.environ.get("TEST_MODE", "off") == "on"
+        self._session_last_message_id: dict[str, str] = {}
+        self._session_scene: dict[str, str] = {}
 
     async def send_by_session(
         self,
@@ -294,7 +297,7 @@ class QQOfficialPlatformAdapter(Platform):
 
         elif session.message_type == MessageType.FRIEND_MESSAGE:
             # 参考 https://bot.q.qq.com/wiki/develop/pythonsdk/api/message/post_message.html
-            # msg_id 缺失时认为是主动推送，而似乎至少在私聊上主动推送是没有被限制的，这里直接移除 msg_id 可以避免越权或 msg_id 不可用的bug
+            # msg_id 缺失时认为是主动推送，而似乎至少在私聊上主动推送是没有被限制的，这里直接移除 msg_id 可以避免越权或 msg_id 不可用的 bug
             payload.pop("msg_id", None)
             payload["msg_seq"] = random.randint(1, 10000)
             if image_base64:
