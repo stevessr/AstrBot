@@ -11,6 +11,7 @@ from typing import Any, cast
 import botpy
 import botpy.message
 from botpy import Client
+from botpy.types.message import MarkdownPayload
 
 from astrbot import logger
 from astrbot.api.event import MessageChain
@@ -135,6 +136,8 @@ class QQOfficialPlatformAdapter(Platform):
         self._session_scene: dict[str, str] = {}
 
         self.test_mode = os.environ.get("TEST_MODE", "off") == "on"
+        self._session_last_message_id: dict[str, str] = {}
+        self._session_scene: dict[str, str] = {}
 
     async def send_by_session(
         self,

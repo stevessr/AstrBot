@@ -3,6 +3,7 @@ import base64
 import os
 import random
 import uuid
+from dataclasses import dataclass
 from typing import cast
 
 import aiofiles
@@ -43,6 +44,41 @@ def _patch_qq_botpy_formdata() -> None:
 
 
 _patch_qq_botpy_formdata()
+
+
+@dataclass
+class QQOfficialMediaPayload:
+    plain_text: str = ""
+    image_base64: str | None = None
+    image_file_path: str | None = None
+    record_file_path: str | None = None
+    video_file_path: str | None = None
+    file_file_path: str | None = None
+    experimental_file: bool = False
+
+    @property
+    def has_content(self) -> bool:
+        return any(
+            [
+                self.plain_text,
+                self.image_base64,
+                self.image_file_path,
+                self.record_file_path,
+                self.video_file_path,
+                self.file_file_path,
+            ]
+        )
+
+    @property
+    def has_media(self) -> bool:
+        return any(
+            [
+                self.image_base64,
+                self.record_file_path,
+                self.video_file_path,
+                self.file_file_path,
+            ]
+        )
 
 
 class QQOfficialMessageEvent(AstrMessageEvent):
@@ -172,7 +208,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             | botpy.message.DirectMessage
             | botpy.message.C2CMessage,
         ):
-            logger.warning(f"[QQOfficial] 不支持的消息源类型: {type(source)}")
+            logger.warning(f"[QQOfficial] 不支持的消息源类型：{type(source)}")
             return None
 
         (
@@ -212,8 +248,12 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             plain_text = plain_text + "\n"
 
         payload: dict = {
-            # "content": plain_text,
-            "markdown": MarkdownPayload(content=plain_text) if plain_text else None,
+            # "content": parsed.plain_text,
+            "markdown": (
+                MarkdownPayload(content=parsed.plain_text)
+                if parsed.plain_text
+                else None
+            ),
             "msg_type": 2,
             "msg_id": self.message_obj.message_id,
         }
@@ -352,8 +392,8 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 logger.debug(f"Message sent to C2C: {ret}")
 
             case botpy.message.Message():
-                if image_path:
-                    payload["file_image"] = image_path
+                if parsed.image_file_path:
+                    payload["file_image"] = parsed.image_file_path
                 # Guild text-channel send API (/channels/{channel_id}/messages) does not use v2 msg_type.
                 payload.pop("msg_type", None)
                 ret = await self._send_with_markdown_fallback(
@@ -367,8 +407,8 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 )
 
             case botpy.message.DirectMessage():
-                if image_path:
-                    payload["file_image"] = image_path
+                if parsed.image_file_path:
+                    payload["file_image"] = parsed.image_file_path
                 # Guild DM send API (/dms/{guild_id}/messages) does not use v2 msg_type.
                 payload.pop("msg_type", None)
                 ret = await self._send_with_markdown_fallback(
@@ -389,6 +429,50 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         self.send_buffer = None
 
         return ret
+
+    async def _prepare_group_or_c2c_payload(
+        self,
+        payload: dict,
+        parsed: QQOfficialMediaPayload,
+        **kwargs,
+    ) -> dict | None:
+        media_specs = [
+            (parsed.image_base64, 1, "图片"),
+            (parsed.record_file_path, 3, "语音"),
+            (parsed.video_file_path, 2, "视频"),
+            (parsed.file_file_path, 4, "文件"),
+        ]
+        media_source = None
+        file_type = 0
+        media_label = ""
+        for source, current_file_type, label in media_specs:
+            if source:
+                media_source = source
+                file_type = current_file_type
+                media_label = label
+                break
+
+        if not media_source:
+            return payload
+
+        media = await QQOfficialMessageEvent.upload_group_and_c2c_media(
+            self,
+            media_source,
+            file_type,
+            **kwargs,
+        )
+        if not media:
+            if file_type == 4:
+                logger.warning("[QQOfficial] 实验性文件发送失败，可能受官方接口限制。")
+            else:
+                logger.error("[QQOfficial] %s上传失败，取消本次发送。", media_label)
+            return None
+
+        payload["media"] = media
+        payload["msg_type"] = 7
+        payload.pop("markdown", None)
+        payload["content"] = parsed.plain_text or None
+        return payload
 
     async def _send_with_markdown_fallback(
         self,
@@ -446,38 +530,12 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         image_base64: str,
         file_type: int,
         **kwargs,
-    ) -> botpy.types.message.Media:
-        payload = {
-            "file_data": image_base64,
-            "file_type": file_type,
-            "srv_send_msg": False,
-        }
-
-        result = None
-        if "openid" in kwargs:
-            payload["openid"] = kwargs["openid"]
-            route = Route("POST", "/v2/users/{openid}/files", openid=kwargs["openid"])
-            result = await self.bot.api._http.request(route, json=payload)
-        elif "group_openid" in kwargs:
-            payload["group_openid"] = kwargs["group_openid"]
-            route = Route(
-                "POST",
-                "/v2/groups/{group_openid}/files",
-                group_openid=kwargs["group_openid"],
-            )
-            result = await self.bot.api._http.request(route, json=payload)
-        else:
-            raise ValueError("Invalid upload parameters")
-
-        if not isinstance(result, dict):
-            raise RuntimeError(
-                f"Failed to upload image, response is not dict: {result}"
-            )
-
-        return Media(
-            file_uuid=result["file_uuid"],
-            file_info=result["file_info"],
-            ttl=result.get("ttl", 0),
+    ) -> botpy.types.message.Media | None:
+        return await self.upload_group_and_c2c_media(
+            image_base64,
+            file_type,
+            is_base64=True,
+            **kwargs,
         )
 
     async def upload_group_and_c2c_media(
@@ -489,23 +547,34 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         **kwargs,
     ) -> Media | None:
         """上传媒体文件"""
-        # 构建基础payload
+        return await self.upload_group_and_c2c_media(
+            file_source,
+            file_type,
+            srv_send_msg=srv_send_msg,
+            **kwargs,
+        )
+
+    async def upload_group_and_c2c_media(
+        self,
+        file_source: str,
+        file_type: int,
+        srv_send_msg: bool = False,
+        is_base64: bool = False,
+        **kwargs,
+    ) -> Media | None:
         payload = {"file_type": file_type, "srv_send_msg": srv_send_msg}
         if file_name:
             payload["file_name"] = file_name
 
-        # 处理文件数据
-        if await asyncio.to_thread(os.path.exists, file_source):
-            # 读取本地文件
+        if is_base64:
+            payload["file_data"] = file_source
+        elif await asyncio.to_thread(os.path.exists, file_source):
             async with aiofiles.open(file_source, "rb") as f:
                 file_content = await f.read()
-                # use base64 encode
                 payload["file_data"] = base64.b64encode(file_content).decode("utf-8")
         else:
-            # 使用URL
             payload["url"] = file_source
 
-        # 添加接收者信息和确定路由
         if "openid" in kwargs:
             payload["openid"] = kwargs["openid"]
             route = Route("POST", "/v2/users/{openid}/files", openid=kwargs["openid"])
@@ -517,26 +586,45 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 group_openid=kwargs["group_openid"],
             )
         else:
+            raise ValueError("Invalid upload parameters")
+
+        try:
+            result = await self.bot.api._http.request(route, json=payload)
+        except Exception as e:
+            if file_type == 4:
+                logger.warning(
+                    "[QQOfficial] 实验性文件上传失败，可能受官方接口限制：%s",
+                    e,
+                )
+            else:
+                logger.error(f"上传请求错误：{e}")
+            return None
+
+        if not isinstance(result, dict):
+            if file_type == 4:
+                logger.warning(
+                    "[QQOfficial] 实验性文件上传响应异常，可能受官方接口限制：%s",
+                    result,
+                )
+            else:
+                logger.error(f"上传文件响应格式错误：{result}")
             return None
 
         try:
-            # 使用底层HTTP请求
-            result = await self.bot.api._http.request(route, json=payload)
-
-            if result:
-                if not isinstance(result, dict):
-                    logger.error(f"上传文件响应格式错误: {result}")
-                    return None
-
-                return Media(
-                    file_uuid=result["file_uuid"],
-                    file_info=result["file_info"],
-                    ttl=result.get("ttl", 0),
+            return Media(
+                file_uuid=result["file_uuid"],
+                file_info=result["file_info"],
+                ttl=result.get("ttl", 0),
+            )
+        except KeyError:
+            if file_type == 4:
+                logger.warning(
+                    "[QQOfficial] 实验性文件上传缺少必要字段，可能受官方接口限制：%s",
+                    result,
                 )
-        except Exception as e:
-            logger.error(f"上传请求错误: {e}")
-
-        return None
+            else:
+                logger.error(f"上传文件响应缺少必要字段：{result}")
+            return None
 
     async def post_c2c_message(
         self,
@@ -585,24 +673,25 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         file_name = None
         for i in message.chain:
             if isinstance(i, Plain):
-                plain_text += i.text
-            elif isinstance(i, Image) and not image_base64:
+                parsed.plain_text += i.text
+            elif isinstance(i, Image) and not parsed.image_base64:
                 if i.file and i.file.startswith("file:///"):
-                    image_base64 = await file_to_base64(i.file[8:])
-                    image_file_path = i.file[8:]
+                    parsed.image_base64 = await file_to_base64(i.file[8:])
+                    parsed.image_file_path = i.file[8:]
                 elif i.file and i.file.startswith("http"):
-                    image_file_path = await download_image_by_url(i.file)
-                    image_base64 = await file_to_base64(image_file_path)
+                    parsed.image_file_path = await download_image_by_url(i.file)
+                    parsed.image_base64 = await file_to_base64(parsed.image_file_path)
                 elif i.file and i.file.startswith("base64://"):
-                    image_base64 = i.file
+                    parsed.image_base64 = i.file
                 elif i.file:
-                    image_base64 = await file_to_base64(i.file)
+                    parsed.image_base64 = await file_to_base64(i.file)
+                    parsed.image_file_path = i.file
                 else:
                     raise ValueError("Unsupported image file format")
-                image_base64 = image_base64.removeprefix("base64://")
-            elif isinstance(i, Record):
+                parsed.image_base64 = parsed.image_base64.removeprefix("base64://")
+            elif isinstance(i, Record) and not parsed.record_file_path:
                 if i.file:
-                    record_wav_path = await i.convert_to_file_path()  # wav 路径
+                    record_wav_path = await i.convert_to_file_path()
                     temp_dir = get_astrbot_temp_path()
                     record_tecent_silk_path = os.path.join(
                         temp_dir,
@@ -614,12 +703,11 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                             record_tecent_silk_path,
                         )
                         if duration > 0:
-                            record_file_path = record_tecent_silk_path
+                            parsed.record_file_path = record_tecent_silk_path
                         else:
-                            record_file_path = None
-                            logger.error("转换音频格式时出错：音频时长不大于0")
+                            logger.error("转换音频格式时出错：音频时长不大于 0")
                     except Exception as e:
-                        logger.error(f"处理语音时出错: {e}")
+                        logger.error(f"处理语音时出错：{e}")
                         record_file_path = None
             elif isinstance(i, Video) and not video_file_source:
                 if i.file.startswith("file:///"):

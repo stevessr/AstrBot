@@ -86,7 +86,7 @@ class botClient(Client):
         )
 
 
-@register_platform_adapter("qq_official_webhook", "QQ 机器人官方 API 适配器(Webhook)")
+@register_platform_adapter("qq_official_webhook", "QQ 机器人官方 API 适配器 (Webhook)")
 class QQOfficialWebhookPlatformAdapter(Platform):
     def __init__(
         self,
