@@ -6,16 +6,20 @@
 from sqlmodel import SQLModel
 
 from astrbot.core.db.po import (
+    ApiKey,
     Attachment,
+    ChatUIProject,
     CommandConfig,
     CommandConflict,
     ConversationV2,
+    CronJob,
     Persona,
     PersonaFolder,
     PlatformMessageHistory,
     PlatformSession,
     PlatformStat,
     Preference,
+    SessionProjectRelation,
 )
 from astrbot.core.knowledge_base.models import (
     KBDocument,
@@ -45,8 +49,12 @@ MAIN_DB_MODELS: dict[str, type[SQLModel]] = {
     "platform_message_history": PlatformMessageHistory,
     "platform_sessions": PlatformSession,
     "attachments": Attachment,
+    "api_keys": ApiKey,
+    "chatui_projects": ChatUIProject,
+    "session_project_relations": SessionProjectRelation,
     "command_configs": CommandConfig,
     "command_conflicts": CommandConflict,
+    "cron_jobs": CronJob,
 }
 
 # 知识库元数据模型类映射

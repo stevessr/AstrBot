@@ -774,7 +774,92 @@ async def test_do_update(
     assert response.status_code == 200
     data = await response.get_json()
     assert data["status"] == "ok"
-    assert os.path.exists(release_path)
+    assert release_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_database_test_connection_route(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+):
+    test_client = app.test_client()
+
+    async def mock_test_connection(self, config):
+        _ = self, config
+        return "postgresql+asyncpg://astrbot:***@127.0.0.1:5432/astrbot"
+
+    monkeypatch.setattr(
+        "astrbot.dashboard.routes.config.SQLiteToPostgresMigrationService.test_connection",
+        mock_test_connection,
+    )
+
+    response = await test_client.post(
+        "/api/config/database/test",
+        headers=authenticated_header,
+        json={
+            "database": {
+                "backend": "postgres",
+                "host": "127.0.0.1",
+                "port": 5432,
+                "user": "astrbot",
+                "password": "secret",
+                "database": "astrbot",
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["data"]["backend"] == "postgres"
+    assert "***" in data["data"]["database_url"]
+
+
+@pytest.mark.asyncio
+async def test_database_migrate_route(
+    app: Quart,
+    authenticated_header: dict,
+    monkeypatch,
+):
+    test_client = app.test_client()
+
+    async def mock_migrate(self, config):
+        _ = self, config
+        return {
+            "backup_zip": "/tmp/backup.zip",
+            "database_url": "postgresql+asyncpg://astrbot:***@127.0.0.1:5432/astrbot",
+            "imported_tables": {"conversations": 1},
+            "validation": {
+                "conversations": {"source": 1, "target": 1, "matched": True}
+            },
+            "restart_required": True,
+        }
+
+    monkeypatch.setattr(
+        "astrbot.dashboard.routes.config.SQLiteToPostgresMigrationService.migrate",
+        mock_migrate,
+    )
+
+    response = await test_client.post(
+        "/api/config/database/migrate",
+        headers=authenticated_header,
+        json={
+            "database": {
+                "backend": "postgres",
+                "host": "127.0.0.1",
+                "port": 5432,
+                "user": "astrbot",
+                "password": "secret",
+                "database": "astrbot",
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["data"]["restart_required"] is True
+    assert data["data"]["imported_tables"]["conversations"] == 1
 
 
 @pytest.mark.asyncio

@@ -9,14 +9,10 @@ import os
 import sys
 from asyncio import Queue
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
-
-# 使用 tests/fixtures/helpers.py 中的共享工具函数，避免重复定义
-from tests.fixtures.helpers import create_mock_llm_response, create_mock_message_component
 
 # 将项目根目录添加到 sys.path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -272,9 +268,17 @@ def main_agent_build_config():
 # ============================================================
 
 
+@pytest.fixture
+def temp_db_backend() -> str:
+    return "sqlite"
+
+
 @pytest_asyncio.fixture
-async def temp_db(temp_db_file: Path):
+async def temp_db(temp_db_file: Path, temp_db_backend: str):
     """创建临时数据库实例。"""
+    if temp_db_backend == "postgres":
+        pytest.skip("Postgres test backend is not configured in this test environment")
+
     from astrbot.core.db.sqlite import SQLiteDatabase
 
     db = SQLiteDatabase(str(temp_db_file))
@@ -282,8 +286,6 @@ async def temp_db(temp_db_file: Path):
         yield db
     finally:
         await db.engine.dispose()
-        if temp_db_file.exists():
-            temp_db_file.unlink()
 
 
 # ============================================================
