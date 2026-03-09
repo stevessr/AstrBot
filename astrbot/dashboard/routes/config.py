@@ -2,6 +2,7 @@ import asyncio
 import copy
 import inspect
 import os
+import re
 import traceback
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,14 @@ from astrbot.core.config.default import (
 )
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
+from astrbot.core.db import (
+    build_database_url,
+    get_database_backend,
+    sanitize_database_url,
+)
+from astrbot.core.db.migration.sqlite_to_postgres import (
+    SQLiteToPostgresMigrationService,
+)
 from astrbot.core.platform.register import platform_cls_map, platform_registry
 from astrbot.core.provider import Provider
 from astrbot.core.provider.register import provider_registry
@@ -299,6 +308,14 @@ async def _validate_neo_connectivity(
     return None
 
 
+def _sanitize_database_error_message(message: str) -> str:
+    sanitized = message or ""
+    sanitized = re.sub(
+        r"postgresql(?:\+asyncpg)?://[^\s]+", "postgres://***", sanitized
+    )
+    return sanitized
+
+
 def save_config(
     post_config: dict, config: AstrBotConfig, is_core: bool = False
 ) -> None:
@@ -384,6 +401,8 @@ class ConfigRoute(Route):
                 "POST",
                 self.delete_provider_source,
             ),
+            "/config/database/test": ("POST", self.test_database_connection),
+            "/config/database/migrate": ("POST", self.migrate_database_to_postgres),
         }
         self.register_routes()
 
@@ -1037,6 +1056,61 @@ class ConfigRoute(Route):
         except Exception as e:
             logger.error(traceback.format_exc())
             return Response().error(str(e)).__dict__
+
+    async def test_database_connection(self):
+        data = await request.json
+        database_config = data.get("database") if isinstance(data, dict) else None
+        if not isinstance(database_config, dict):
+            return Response().error("缺少 database 配置").__dict__
+
+        try:
+            backend = get_database_backend(database_config)
+            if backend != "postgres":
+                return Response().error("当前仅支持测试 Postgres 连接").__dict__
+
+            service = SQLiteToPostgresMigrationService(
+                self.core_lifecycle.db,
+                self.core_lifecycle.astrbot_config,
+            )
+            sanitized_url = await service.test_connection(database_config)
+            return (
+                Response()
+                .ok(
+                    {
+                        "backend": backend,
+                        "database_url": sanitized_url,
+                    },
+                    "连接测试成功",
+                )
+                .__dict__
+            )
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response().error(_sanitize_database_error_message(str(e))).__dict__
+
+    async def migrate_database_to_postgres(self):
+        data = await request.json
+        database_config = data.get("database") if isinstance(data, dict) else None
+        if not isinstance(database_config, dict):
+            return Response().error("缺少 database 配置").__dict__
+
+        try:
+            service = SQLiteToPostgresMigrationService(
+                self.core_lifecycle.db,
+                self.core_lifecycle.astrbot_config,
+            )
+            result = await service.migrate(database_config)
+            result["database_url"] = sanitize_database_url(
+                build_database_url(database_config)
+            )
+            return (
+                Response()
+                .ok(result, "迁移成功，请重启 AstrBot 以切换到 Postgres")
+                .__dict__
+            )
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            return Response().error(_sanitize_database_error_message(str(e))).__dict__
 
     async def post_plugin_configs(self):
         post_configs = await request.json
