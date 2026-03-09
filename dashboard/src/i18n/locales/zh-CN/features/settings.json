@@ -38,11 +38,6 @@
       "subtitle": "如果您遇到数据兼容性问题，可以手动启动数据库迁移助手",
       "button": "启动迁移助手"
     },
-    "backup": {
-      "title": "数据备份与恢复",
-      "subtitle": "导出或导入 AstrBot 的所有数据，方便迁移到新服务器",
-      "button": "备份管理"
-    },
     "cleanup": {
       "title": "日志与缓存清理",
       "subtitle": "查看当前日志和缓存占用，并一键清理。",
@@ -75,6 +70,20 @@
         "statusFailed": "加载存储占用失败",
         "cleanupSuccess": "已清理 {count} 个文件，释放 {size}",
         "cleanupFailed": "清理失败"
+      },
+    },
+    "database": {
+      "title": "主数据库",
+      "subtitle": "配置核心主库后端，支持测试 Postgres 连接并将现有 SQLite 主库一键迁移到 Postgres。知识库仍继续使用 SQLite。",
+      "openConfig": "打开系统配置",
+      "testConnection": "测试连接",
+      "migrate": "迁移到 Postgres",
+      "messages": {
+        "loadFailed": "加载系统配置失败",
+        "testSuccess": "数据库连接测试成功",
+        "testFailed": "数据库连接测试失败",
+        "migrateSuccess": "数据库迁移成功，请重启 AstrBot 以应用变更",
+        "migrateFailed": "数据库迁移失败"
       }
     }
   },

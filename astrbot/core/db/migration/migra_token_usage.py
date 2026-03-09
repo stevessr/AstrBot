@@ -26,7 +26,10 @@ async def migrate_token_usage(db_helper: BaseDatabase) -> None:
 
     logger.info("开始执行数据库迁移（添加 conversations.token_usage 列）...")
 
-    # 这里只适配了 SQLite。因为截止至这一版本，AstrBot 仅支持 SQLite。
+    if not db_helper.is_sqlite:
+        logger.info("当前数据库后端不是 SQLite，跳过 token_usage 迁移")
+        await sp.put_async("global", "global", "migration_done_token_usage_1", True)
+        return
 
     try:
         async with db_helper.get_db() as session:

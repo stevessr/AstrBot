@@ -26,6 +26,7 @@ from .telegram import (
     create_mock_telegram_modules,
     mock_telegram_modules,
 )
+from .botpy import MockBotpyBuilder, create_mock_botpy_modules, mock_botpy_modules
 
 __all__ = [
     # Telegram
@@ -40,4 +41,8 @@ __all__ = [
     "mock_aiocqhttp_modules",
     "create_mock_aiocqhttp_modules",
     "MockAiocqhttpBuilder",
+    # botpy
+    "mock_botpy_modules",
+    "create_mock_botpy_modules",
+    "MockBotpyBuilder",
 ]
