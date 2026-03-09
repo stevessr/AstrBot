@@ -8,7 +8,7 @@ import re
 import ssl
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
@@ -1325,7 +1325,7 @@ class PluginRoute(Route):
         try:
             return datetime.fromtimestamp(
                 plugin_dir.stat().st_mtime,
-                timezone.utc,
+                UTC,
             ).isoformat()
         except OSError as exc:
             logger.warning(f"获取插件安装时间失败 {plugin.name}: {exc!s}")
