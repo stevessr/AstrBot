@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
+from astrbot.core import logger
 from astrbot.core.utils.astrbot_path import (
     get_astrbot_data_path,
     get_astrbot_skills_path,
@@ -497,6 +498,7 @@ class SkillManager:
         config.setdefault("skills", {})
         config["skills"][name] = {"active": bool(active)}
         self._save_config(config)
+        logger.info(f"Skill {'activated' if active else 'deactivated'}: {name}")
 
     def _remove_skill_from_sandbox_cache(self, name: str) -> None:
         cache = self._load_sandbox_skills_cache()
@@ -524,6 +526,7 @@ class SkillManager:
 
         skill_dir = Path(self.skills_root) / name
         if skill_dir.exists():
+            logger.info(f"Removing skill directory: {name}")
             shutil.rmtree(skill_dir)
 
         # Ensure UI consistency even when there is no active sandbox session
@@ -534,6 +537,7 @@ class SkillManager:
         if name in config.get("skills", {}):
             config["skills"].pop(name, None)
             self._save_config(config)
+            logger.info(f"Skill removed from config: {name}")
 
     def install_skill_from_zip(
         self,
@@ -574,7 +578,6 @@ class SkillManager:
                     archive_skill_name
                 ):
                     raise ValueError("Invalid skill name.")
-
             for name in names:
                 if not name:
                     continue
@@ -583,32 +586,62 @@ class SkillManager:
                 parts = PurePosixPath(name).parts
                 if ".." in parts:
                     raise ValueError("Zip archive contains invalid relative paths.")
+            install_targets: list[tuple[str | None, str]] = []
+            if root_mode:
+                skill_name = _normalize_skill_name(
+                    archive_skill_name or zip_path_obj.stem
+                )
+                if not skill_name or not _SKILL_NAME_RE.fullmatch(skill_name):
+                    raise ValueError("Invalid skill name.")
+                install_targets.append((None, skill_name))
+            else:
+                top_dirs = sorted(
+                    {
+                        PurePosixPath(name).parts[0]
+                        for name in file_names
+                        if name.strip()
+                    }
+                )
+                skill_roots = [
+                    archive_root_name
+                    for archive_root_name in top_dirs
+                    if f"{archive_root_name}/SKILL.md" in file_names
+                    or f"{archive_root_name}/skill.md" in file_names
+                ]
 
-            if not root_mode and not overwrite:
-                top_dirs = {PurePosixPath(n).parts[0] for n in file_names if n.strip()}
-                conflict_dirs: list[str] = []
-                for src_dir_name in top_dirs:
-                    if (
-                        f"{src_dir_name}/SKILL.md" not in file_names
-                        and f"{src_dir_name}/skill.md" not in file_names
+                for archive_root_name in skill_roots:
+                    archive_root_name_normalized = _normalize_skill_name(
+                        archive_root_name
+                    )
+                    if archive_root_name in {".", "..", ""} or not (
+                        _SKILL_NAME_RE.fullmatch(archive_root_name_normalized)
                     ):
                         continue
 
-                    candidate_name = _normalize_skill_name(src_dir_name)
-                    if not candidate_name or not _SKILL_NAME_RE.fullmatch(
-                        candidate_name
-                    ):
-                        continue
+                    skill_name = (
+                        archive_skill_name
+                        if archive_skill_name and len(skill_roots) == 1
+                        else archive_root_name_normalized
+                    )
+                    install_targets.append((archive_root_name, skill_name))
 
-                    if archive_skill_name and len(top_dirs) == 1:
-                        target_name = archive_skill_name
-                    else:
-                        target_name = candidate_name
+            if not install_targets:
+                raise ValueError(
+                    "No valid SKILL.md found in any folder of the zip archive."
+                )
 
-                    dest_dir = Path(self.skills_root) / target_name
-                    if dest_dir.exists():
-                        conflict_dirs.append(str(dest_dir))
+            logger.info(
+                "Installing skill from zip: %s (overwrite=%s)",
+                ", ".join(skill_name for _, skill_name in install_targets),
+                overwrite,
+            )
 
+            if not overwrite:
+                conflict_dirs = [
+                    str(Path(self.skills_root) / skill_name)
+                    for _, skill_name in install_targets
+                    if (Path(self.skills_root) / skill_name).exists()
+                ]
                 if conflict_dirs:
                     raise FileExistsError(
                         "One or more skills from the archive already exist and "
@@ -622,78 +655,36 @@ class SkillManager:
                     if not member_name or _is_ignored_zip_entry(member_name):
                         continue
                     zf.extract(member, tmp_dir)
-
-                if root_mode:
-                    archive_hint = _normalize_skill_name(
-                        archive_skill_name or zip_path_obj.stem
+                for archive_root_name, skill_name in install_targets:
+                    src_dir = (
+                        Path(tmp_dir)
+                        if archive_root_name is None
+                        else Path(tmp_dir) / archive_root_name
                     )
-                    if not archive_hint or not _SKILL_NAME_RE.fullmatch(archive_hint):
-                        raise ValueError("Invalid skill name.")
-                    skill_name = archive_hint
-
-                    src_dir = Path(tmp_dir)
                     normalized_path = _normalize_skill_markdown_path(src_dir)
                     if normalized_path is None:
-                        raise ValueError(
-                            "SKILL.md not found in the root of the zip archive."
-                        )
+                        if archive_root_name is None:
+                            raise ValueError(
+                                "SKILL.md not found in the root of the zip archive."
+                            )
+                        continue
+                    if not src_dir.exists():
+                        raise ValueError("Skill folder not found after extraction.")
 
                     dest_dir = Path(self.skills_root) / skill_name
-                    if dest_dir.exists() and overwrite:
+                    if dest_dir.exists():
+                        logger.info(f"Removing existing skill: {skill_name}")
                         shutil.rmtree(dest_dir)
-                    elif dest_dir.exists() and not overwrite:
-                        raise FileExistsError(f"Skill {skill_name} already exists.")
 
-                    shutil.move(str(src_dir), str(dest_dir))
+                    if archive_root_name is None:
+                        dest_dir.mkdir(parents=True, exist_ok=False)
+                        for child in src_dir.iterdir():
+                            shutil.move(str(child), str(dest_dir / child.name))
+                    else:
+                        shutil.move(str(src_dir), str(dest_dir))
+
                     self.set_skill_active(skill_name, True)
                     installed_skills.append(skill_name)
 
-                else:
-                    top_dirs = {
-                        PurePosixPath(n).parts[0] for n in file_names if n.strip()
-                    }
-
-                    for archive_root_name in top_dirs:
-                        archive_root_name_normalized = _normalize_skill_name(
-                            archive_root_name
-                        )
-
-                        if (
-                            f"{archive_root_name}/SKILL.md" not in file_names
-                            and f"{archive_root_name}/skill.md" not in file_names
-                        ):
-                            continue
-
-                        if archive_root_name in {".", "..", ""} or not (
-                            _SKILL_NAME_RE.fullmatch(archive_root_name_normalized)
-                        ):
-                            continue
-
-                        if archive_skill_name and len(top_dirs) == 1:
-                            skill_name = archive_skill_name
-                        else:
-                            skill_name = archive_root_name_normalized
-
-                        src_dir = Path(tmp_dir) / archive_root_name
-                        normalized_path = _normalize_skill_markdown_path(src_dir)
-                        if normalized_path is None:
-                            continue
-
-                        dest_dir = Path(self.skills_root) / skill_name
-                        if dest_dir.exists():
-                            if not overwrite:
-                                raise FileExistsError(
-                                    f"Skill {skill_name} already exists."
-                                )
-                            shutil.rmtree(dest_dir)
-
-                        shutil.move(str(src_dir), str(dest_dir))
-                        self.set_skill_active(skill_name, True)
-                        installed_skills.append(skill_name)
-
-        if not installed_skills:
-            raise ValueError(
-                "No valid SKILL.md found in any folder of the zip archive."
-            )
-
+        logger.info("Skill installed successfully: %s", ", ".join(installed_skills))
         return ", ".join(installed_skills)

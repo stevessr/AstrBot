@@ -74,7 +74,7 @@ const defaultPersona: SelectableItem = {
   id: 'default',
   persona_id: 'default',
   name: tm('personaSelector.defaultPersona'),
-  system_prompt: 'You are a helpful and friendly assistant.'
+  system_prompt: 'You are a helpful and friendly person.'
 }
 
 // 递归查找文件夹名称
