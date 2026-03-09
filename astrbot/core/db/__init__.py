@@ -1,10 +1,12 @@
 import abc
+import copy
 import datetime
+import ssl
 import typing as T
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
 from deprecated import deprecated
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from astrbot.core.db.po import (
@@ -26,25 +28,31 @@ from astrbot.core.db.po import (
 )
 
 
-@dataclass
 class BaseDatabase(abc.ABC):
     """数据库基类"""
 
     DATABASE_URL = ""
+    CONNECT_ARGS: dict[str, T.Any] = {}
+    ENGINE_OPTIONS: dict[str, T.Any] = {}
 
     def __init__(self) -> None:
-        # SQLite only supports a single writer at a time.  Without a busy
-        # timeout the driver raises "database is locked" instantly when a
-        # second write is attempted.  Setting timeout=30 tells SQLite to
-        # wait up to 30 s for the lock, which is enough to ride out brief
-        # write bursts from concurrent agent/metrics/session operations.
-        is_sqlite = "sqlite" in self.DATABASE_URL
-        connect_args = {"timeout": 30} if is_sqlite else {}
+        engine_options = {
+            "echo": False,
+            "future": True,
+            **copy.deepcopy(self.ENGINE_OPTIONS),
+        }
+        connect_args = copy.deepcopy(self.CONNECT_ARGS)
+        # SQLite only supports a single writer at a time. Without a busy timeout
+        # the driver raises "database is locked" instantly when a second write is
+        # attempted. Setting timeout=30 tells SQLite to wait up to 30 s for the lock.
+        if "sqlite" in self.DATABASE_URL and "timeout" not in connect_args:
+            connect_args["timeout"] = 30
+        if connect_args:
+            engine_options["connect_args"] = connect_args
+
         self.engine = create_async_engine(
             self.DATABASE_URL,
-            echo=False,
-            future=True,
-            connect_args=connect_args,
+            **engine_options,
         )
         self.AsyncSessionLocal = async_sessionmaker(
             self.engine,
@@ -63,6 +71,21 @@ class BaseDatabase(abc.ABC):
             self.inited = True
         async with self.AsyncSessionLocal() as session:
             yield session
+
+    async def sync_sequences(self) -> None:
+        """校准自增序列，默认无需处理。"""
+
+    @property
+    def backend_name(self) -> str:
+        return self.engine.url.get_backend_name()
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.backend_name == "sqlite"
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.backend_name == "postgresql"
 
     @deprecated(version="4.0.0", reason="Use get_platform_stats instead")
     @abc.abstractmethod
@@ -782,3 +805,155 @@ class BaseDatabase(abc.ABC):
     ) -> ChatUIProject | None:
         """Get the project that a session belongs to."""
         ...
+
+
+def _normalize_database_config(config: dict | None) -> dict:
+    normalized = copy.deepcopy(config or {})
+    normalized.setdefault("backend", "sqlite")
+    normalized.setdefault("sqlite_path", "")
+    normalized.setdefault("url", "")
+    normalized.setdefault("host", "127.0.0.1")
+    normalized.setdefault("port", 5432)
+    normalized.setdefault("user", "")
+    normalized.setdefault("password", "")
+    normalized.setdefault("database", "")
+    normalized.setdefault("schema", "")
+    normalized.setdefault("ssl_mode", "prefer")
+    return normalized
+
+
+def _url_backend_name(url: str) -> str | None:
+    try:
+        return make_url(url).get_backend_name()
+    except Exception:
+        return None
+
+
+def _normalize_postgres_url(url: str) -> str:
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "postgresql":
+        return url
+    if parsed.drivername != "postgresql+asyncpg":
+        parsed = parsed.set(drivername="postgresql+asyncpg")
+    return parsed.render_as_string(hide_password=False)
+
+
+def build_database_url(config: dict | None) -> str:
+    db_config = _normalize_database_config(config)
+    backend = str(db_config.get("backend") or "sqlite").strip().lower()
+    url = str(db_config.get("url") or "").strip()
+
+    if url:
+        backend_from_url = _url_backend_name(url)
+        if backend_from_url == "postgresql":
+            return _normalize_postgres_url(url)
+        return url
+
+    if backend == "postgres":
+        host = str(db_config.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+        port = int(db_config.get("port") or 5432)
+        username = str(db_config.get("user") or "")
+        password = str(db_config.get("password") or "")
+        database = str(db_config.get("database") or "").strip()
+        if not database:
+            raise ValueError("database.database 不能为空")
+        return URL.create(
+            "postgresql+asyncpg",
+            username=username or None,
+            password=password or None,
+            host=host,
+            port=port,
+            database=database,
+        ).render_as_string(hide_password=False)
+
+    sqlite_path = str(db_config.get("sqlite_path") or "").strip()
+    if not sqlite_path:
+        raise ValueError("database.sqlite_path 不能为空")
+    return f"sqlite+aiosqlite:///{sqlite_path}"
+
+
+def sanitize_database_url(url: str) -> str:
+    safe_url = url.strip()
+    if not safe_url:
+        return ""
+    try:
+        parsed = make_url(safe_url)
+    except Exception:
+        return safe_url
+    if parsed.password is None:
+        return safe_url
+    return parsed.render_as_string(hide_password=True)
+
+
+def _postgres_connect_args(config: dict) -> dict[str, T.Any]:
+    ssl_mode = str(config.get("ssl_mode") or "prefer").strip().lower()
+    if ssl_mode in {"", "prefer", "allow"}:
+        return {}
+    if ssl_mode == "disable":
+        return {"ssl": False}
+
+    ssl_context = ssl.create_default_context()
+    if ssl_mode == "require":
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        return {"ssl": ssl_context}
+    if ssl_mode in {"verify-ca", "verify_full", "verify-full"}:
+        if ssl_mode == "verify-ca":
+            ssl_context.check_hostname = False
+        return {"ssl": ssl_context}
+    raise ValueError(f"不支持的 ssl_mode: {ssl_mode}")
+
+
+def get_database_connect_args(config: dict | None) -> dict[str, T.Any]:
+    db_config = _normalize_database_config(config)
+    backend = str(db_config.get("backend") or "sqlite").strip().lower()
+    url = str(db_config.get("url") or "").strip().lower()
+    if backend == "postgres" or url.startswith("postgresql"):
+        return _postgres_connect_args(db_config)
+    return {}
+
+
+def get_database_engine_options(config: dict | None) -> dict[str, T.Any]:
+    db_config = _normalize_database_config(config)
+    backend = str(db_config.get("backend") or "sqlite").strip().lower()
+    url = str(db_config.get("url") or "").strip().lower()
+    if backend == "postgres" or url.startswith("postgresql"):
+        return {"pool_pre_ping": True}
+    return {}
+
+
+def get_database_schema(config: dict | None) -> str | None:
+    db_config = _normalize_database_config(config)
+    schema = str(db_config.get("schema") or "").strip()
+    return schema or None
+
+
+def get_database_backend(config: dict | None) -> str:
+    db_config = _normalize_database_config(config)
+    url = str(db_config.get("url") or "").strip()
+    backend_from_url = _url_backend_name(url) if url else None
+    if backend_from_url == "postgresql":
+        return "postgres"
+    if backend_from_url == "sqlite":
+        return "sqlite"
+    return str(db_config.get("backend") or "sqlite").strip().lower() or "sqlite"
+
+
+def create_main_database(config: dict | None):
+    db_config = _normalize_database_config(config)
+    backend = get_database_backend(db_config)
+    if backend == "postgres":
+        from astrbot.core.db.postgres import PostgresDatabase
+
+        return PostgresDatabase(
+            database_url=build_database_url(db_config),
+            connect_args=get_database_connect_args(db_config),
+            engine_options=get_database_engine_options(db_config),
+            schema=get_database_schema(db_config),
+        )
+
+    from astrbot.core.db.sqlite import SQLiteDatabase
+
+    sqlite_url = build_database_url(db_config)
+    sqlite_path = sqlite_url.removeprefix("sqlite+aiosqlite:///")
+    return SQLiteDatabase(sqlite_path)

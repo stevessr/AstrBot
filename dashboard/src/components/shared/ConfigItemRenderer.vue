@@ -138,6 +138,9 @@
       v-else-if="itemMeta?.type === 'string'"
       :model-value="modelValue"
       @update:model-value="emitUpdate"
+      :type="isSecretField ? (secretVisible ? 'text' : 'password') : 'text'"
+      :append-inner-icon="isSecretField ? (secretVisible ? 'mdi-eye-off' : 'mdi-eye') : undefined"
+      @click:append-inner="toggleSecretVisibility"
       density="compact"
       variant="outlined"
       class="config-field"
@@ -230,6 +233,7 @@
 </template>
 
 <script setup>
+import { computed, ref } from 'vue'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import ListConfigItem from './ListConfigItem.vue'
 import FileConfigItem from './FileConfigItem.vue'
@@ -271,6 +275,13 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'get-embedding-dim', 'open-fullscreen'])
 const { t } = useI18n()
 const { getRaw } = useModuleI18n('features/config-metadata')
+const secretVisible = ref(false)
+const isSecretField = computed(() => Boolean(props.itemMeta?.secret || props.itemMeta?.input_type === 'password'))
+
+function toggleSecretVisibility() {
+  if (!isSecretField.value) return
+  secretVisible.value = !secretVisible.value
+}
 
 function emitUpdate(val) {
   emit('update:modelValue', val)
