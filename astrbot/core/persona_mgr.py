@@ -7,7 +7,7 @@ from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.sentinels import NOT_GIVEN
 
 DEFAULT_PERSONALITY = Personality(
-    prompt="You are a helpful and friendly assistant.",
+    prompt="You are a helpful and friendly person.",
     name="default",
     begin_dialogs=[],
     mood_imitation_dialogs=[],
