@@ -14,6 +14,16 @@
             {{ tm("skills.upload") }}
           </v-btn>
           <v-btn
+            v-if="mode === 'local'"
+            color="info"
+            prepend-icon="mdi-github"
+            class="me-2"
+            variant="tonal"
+            @click="openGitHubDialog"
+          >
+            {{ tm("skills.installFromGitHub") }}
+          </v-btn>
+          <v-btn
             color="primary"
             prepend-icon="mdi-refresh"
             variant="tonal"
@@ -82,11 +92,12 @@
               title-field="name"
               enabled-field="active"
               :loading="itemLoading[skill.name] || false"
-              :show-edit-button="false"
+              :show-edit-button="!isSandboxPresetSkill(skill)"
               :disable-toggle="isSandboxPresetSkill(skill)"
               :disable-delete="isSandboxPresetSkill(skill)"
               @toggle-enabled="toggleSkill"
               @delete="confirmDelete"
+              @edit="openDetailDialog"
             >
               <template #item-details="{ item }">
                 <div class="d-flex align-center mb-2 ga-2 flex-wrap">
@@ -575,6 +586,135 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="detailDialog" max-width="1400px">
+      <v-card>
+        <v-card-title class="dialog-header d-flex justify-space-between align-center pa-3">
+          <span class="dialog-title">{{ tm("skills.detailDialogTitle") }}: {{ currentSkill?.name }}</span>
+          <v-btn icon="mdi-close" variant="text" density="compact" size="small" @click="detailDialog = false"></v-btn>
+        </v-card-title>
+        <v-card-text class="pa-0 bg-surface">
+          <v-container fluid class="pa-0" style="height: 600px">
+            <v-row style="height: 100%">
+              <v-col cols="4" class="file-tree-sidebar" style="height: 100%; overflow: auto">
+                <div class="file-tree-header">
+                  <div class="text-subtitle-2 mb-0 pa-2">{{ tm("skills.detailFilesTitle") }}</div>
+                </div>
+                <div v-if="fileTree.length === 0" class="text-center pa-4 text-disabled">
+                  <v-icon size="32" color="grey">mdi-folder-open</v-icon>
+                  <p class="text-caption mt-2">No files found</p>
+                </div>
+                <div v-else class="file-tree">
+                  <file-tree-item
+                    v-for="item in fileTree"
+                    :key="item.path"
+                    :item="item"
+                    :level="0"
+                    :selected-path="currentFile"
+                    @select="onFileSelect"
+                  />
+                </div>
+              </v-col>
+              <v-col cols="8" class="editor-column" style="height: 100%">
+                <div v-if="!currentFile" class="d-flex align-center justify-center h-100 text-disabled">
+                  {{ tm("skills.detailNoFileSelected") }}
+                </div>
+                <div v-else class="editor-container">
+                  <div class="editor-header d-flex align-center pa-2">
+                    <v-icon size="small" class="me-2" color="grey">mdi-file-document</v-icon>
+                    <span class="text-caption">{{ currentFile }}</span>
+                  </div>
+                  <div class="editor-wrapper">
+                    <VueMonacoEditor
+                      v-model:value="skillContent"
+                      theme="vs-dark"
+                      :language="getFileLanguage(currentFile)"
+                      style="height: 520px"
+                      :options="{ minimap: { enabled: false }, scrollBeyondLastLine: false }"
+                    />
+                  </div>
+                </div>
+              </v-col>
+            </v-row>
+          </v-container>
+        </v-card-text>
+        <v-card-actions class="dialog-actions d-flex justify-end pa-2">
+          <v-btn variant="text" size="small" @click="detailDialog = false">{{ tm("skills.cancel") }}</v-btn>
+          <v-btn color="primary" size="small" :loading="saving" :disabled="!currentFile" @click="saveSkillDetail">
+            {{ tm("buttons.save") }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="githubDialog" max-width="960px">
+      <v-card>
+        <v-card-title class="text-h4 pa-4 pb-0 pl-6">{{ tm("skills.githubDialogTitle") }}</v-card-title>
+        <v-card-text>
+          <div class="d-flex flex-column flex-md-row ga-3 mt-4 mb-3">
+            <v-text-field
+              v-model="repoInput"
+              :label="tm('skills.githubRepoLabel')"
+              prepend-inner-icon="mdi-github"
+              variant="outlined"
+              :hint="tm('skills.githubRepoHint')"
+              persistent-hint
+              hide-details="auto"
+              class="flex-grow-1"
+              @keydown.enter="scanGitHubRepo"
+            />
+            <v-btn
+              color="primary"
+              variant="tonal"
+              prepend-icon="mdi-magnify-scan"
+              :loading="repoScanLoading"
+              @click="scanGitHubRepo"
+            >
+              {{ tm("skills.githubScan") }}
+            </v-btn>
+          </div>
+
+          <v-progress-linear v-if="repoScanLoading" indeterminate color="primary" class="mb-3" />
+
+          <div v-else-if="!hasScannedRepo" class="text-center pa-8">
+            <v-icon size="56" color="grey-lighten-1">mdi-github</v-icon>
+            <p class="text-grey mt-4">{{ tm("skills.githubScanPrompt") }}</p>
+          </div>
+
+          <div v-else-if="repoScanResults.length === 0" class="text-center pa-8">
+            <v-icon size="56" color="grey-lighten-1">mdi-file-search-outline</v-icon>
+            <p class="text-grey mt-4">{{ tm("skills.githubScanEmpty") }}</p>
+          </div>
+
+          <v-list v-else class="hot-skills-list">
+            <v-list-item v-for="skill in repoScanResults" :key="getHotSkillKey(skill)">
+              <template #title>
+                <span class="font-weight-medium">{{ skill.name }}</span>
+              </template>
+              <template #subtitle>
+                <div class="text-caption">
+                  <div>{{ skill.source }} @{{ skill.skillId }}</div>
+                  <div>{{ tm("skills.path") }}: {{ skill.path }}</div>
+                </div>
+              </template>
+              <template #append>
+                <v-btn
+                  color="primary"
+                  size="small"
+                  :loading="hotItemLoading[getHotSkillKey(skill)] || false"
+                  @click="installHotSkill(skill)"
+                >
+                  {{ tm("skills.install") }}
+                </v-btn>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions class="d-flex justify-end">
+          <v-btn variant="text" @click="githubDialog = false">{{ tm("skills.cancel") }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar
       v-model="snackbar.show"
       :timeout="3500"
@@ -588,8 +728,9 @@
 
 <script>
 import axios from "axios";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineComponent, h, onMounted, reactive, ref, resolveComponent, watch } from "vue";
 import ItemCard from "@/components/shared/ItemCard.vue";
+import { VueMonacoEditor } from "@guolao/vue-monaco-editor";
 import { useI18n, useModuleI18n } from "@/i18n/composables";
 
 const STATUS_WAITING = "waiting";
@@ -598,9 +739,140 @@ const STATUS_SUCCESS = "success";
 const STATUS_ERROR = "error";
 const STATUS_SKIPPED = "skipped";
 
+// Recursive file tree item component - 侧边栏风格
+const FileTreeItem = defineComponent({
+  name: "FileTreeItem",
+  props: {
+    item: { type: Object, required: true },
+    level: { type: Number, default: 0 },
+    selectedPath: { type: String, default: null },
+  },
+  emits: ["select"],
+  setup(props, { emit }) {
+    const VIcon = resolveComponent("v-icon");
+    const isOpen = ref(true);
+    const isDirectory = computed(() => props.item.type === "directory");
+    const isSelected = computed(() => props.selectedPath === props.item.path);
+    const indentWidth = computed(() => props.level * 16 + 8);
+
+    const getFileIcon = (fileName) => {
+      const ext = String(fileName || "").split(".").pop()?.toLowerCase();
+      const iconMap = {
+        md: "mdi-language-markdown",
+        py: "mdi-language-python",
+        js: "mdi-language-javascript",
+        ts: "mdi-language-typescript",
+        json: "mdi-code-json",
+        yaml: "mdi-yaml",
+        yml: "mdi-yaml",
+        xml: "mdi-xml",
+        html: "mdi-language-html5",
+        css: "mdi-language-css3",
+        txt: "mdi-text",
+        sh: "mdi-console",
+        bash: "mdi-console",
+      };
+      return iconMap[ext] || "mdi-file-document-outline";
+    };
+
+    const toggle = () => {
+      if (isDirectory.value) {
+        isOpen.value = !isOpen.value;
+        return;
+      }
+      emit("select", props.item.path);
+    };
+
+    const onChildSelect = (path) => {
+      emit("select", path);
+    };
+
+    return () =>
+      h("div", { class: "sidebar-tree-item" }, [
+        h(
+          "div",
+          {
+            class: ["sidebar-tree-node", { "is-selected": isSelected.value }],
+            style: {
+              paddingLeft: `${indentWidth.value}px`,
+              backgroundColor: isSelected.value
+                ? "rgba(var(--v-theme-primary), 0.12)"
+                : "transparent",
+              borderLeft: isSelected.value
+                ? "3px solid rgb(var(--v-theme-primary))"
+                : "3px solid transparent",
+              marginLeft: isSelected.value ? "3px" : "6px",
+              color: isSelected.value ? "rgb(var(--v-theme-primary))" : "",
+            },
+            onClick: toggle,
+          },
+          [
+            isDirectory.value
+              ? h(
+                  VIcon,
+                  {
+                    size: "16",
+                    class: ["sidebar-tree-arrow", { "is-open": isOpen.value }],
+                    style: { color: isSelected.value ? "rgb(var(--v-theme-primary))" : "" },
+                  },
+                  { default: () => "mdi-chevron-right" },
+                )
+              : h(VIcon, {
+                  size: "16",
+                  class: "sidebar-tree-arrow-placeholder",
+                }),
+            h(
+              VIcon,
+              {
+                size: "18",
+                class: "sidebar-tree-icon",
+                style: { color: isSelected.value ? "rgb(var(--v-theme-primary))" : "" },
+              },
+              {
+                default: () =>
+                  isDirectory.value
+                    ? isOpen.value
+                      ? "mdi-folder-open"
+                      : "mdi-folder"
+                    : getFileIcon(props.item.name),
+              },
+            ),
+            h(
+              "span",
+              {
+                class: "sidebar-tree-label",
+                title: props.item.name,
+                style: {
+                  color: isSelected.value ? "rgb(var(--v-theme-primary))" : "",
+                  fontWeight: isSelected.value ? "600" : "400",
+                },
+              },
+              props.item.name,
+            ),
+          ],
+        ),
+        isDirectory.value && isOpen.value && props.item.children?.length
+          ? h(
+              "div",
+              { class: "sidebar-tree-children" },
+              props.item.children.map((child) =>
+                h(FileTreeItem, {
+                  key: child.path,
+                  item: child,
+                  level: props.level + 1,
+                  selectedPath: props.selectedPath,
+                  onSelect: onChildSelect,
+                }),
+              ),
+            )
+          : null,
+      ]);
+  },
+});
+
 export default {
   name: "SkillsSection",
-  components: { ItemCard },
+  components: { ItemCard, VueMonacoEditor, FileTreeItem },
   setup() {
     const { t } = useI18n();
     const { tm } = useModuleI18n("features/extension");
@@ -610,6 +882,7 @@ export default {
     const loading = ref(false);
     const runtime = ref("local");
     const sandboxCache = reactive({ ready: false, count: 0, updated_at: null });
+
     const uploading = ref(false);
     const uploadDialog = ref(false);
     const uploadInput = ref(null);
@@ -619,6 +892,21 @@ export default {
     const deleteDialog = ref(false);
     const deleting = ref(false);
     const skillToDelete = ref(null);
+
+    const detailDialog = ref(false);
+    const currentSkill = ref(null);
+    const fileTree = ref([]);
+    const currentFile = ref(null);
+    const skillContent = ref("");
+    const saving = ref(false);
+
+    const githubDialog = ref(false);
+    const repoInput = ref("");
+    const repoScanResults = ref([]);
+    const repoScanLoading = ref(false);
+    const hasScannedRepo = ref(false);
+    const hotItemLoading = reactive({});
+
     const snackbar = reactive({ show: false, message: "", color: "success" });
 
     const neoLoading = ref(false);
@@ -924,6 +1212,15 @@ export default {
       }
     };
 
+    const getHotSkillKey = (skill) => `${skill.source}/${skill.skillId}`;
+
+    const getSelectedGitHubProxy = () => {
+      if (typeof window === "undefined" || !window.localStorage) return "";
+      return localStorage.getItem("githubProxyRadioValue") === "1"
+        ? localStorage.getItem("selectedGitHubProxy") || ""
+        : "";
+    };
+
     const fetchSkills = async () => {
       loading.value = true;
       try {
@@ -949,6 +1246,61 @@ export default {
         const msg =
           (res && res.data && res.data.message) || failureMessageDefault;
         showMessage(msg, "error");
+      }
+    };
+
+    const scanGitHubRepo = async () => {
+      const repo = repoInput.value.trim();
+      if (!repo) {
+        showMessage(tm("skills.githubRepoRequired"), "error");
+        return;
+      }
+
+      repoScanLoading.value = true;
+      hasScannedRepo.value = true;
+      try {
+        const res = await axios.post("/api/skills/github/scan", {
+          repo,
+          proxy: getSelectedGitHubProxy(),
+        });
+        const payload = res?.data?.data || {};
+        repoScanResults.value = Array.isArray(payload)
+          ? payload
+          : payload.skills || [];
+      } catch (_err) {
+        repoScanResults.value = [];
+        showMessage(tm("skills.githubScanFailed"), "error");
+      } finally {
+        repoScanLoading.value = false;
+      }
+    };
+
+    const openGitHubDialog = () => {
+      githubDialog.value = true;
+    };
+
+    const installHotSkill = async (skill) => {
+      const key = getHotSkillKey(skill);
+      hotItemLoading[key] = true;
+      try {
+        const res = await axios.post("/api/skills/install", {
+          source: skill.source,
+          skillId: skill.skillId,
+          name: skill.name,
+          proxy: getSelectedGitHubProxy(),
+        });
+        handleApiResponse(
+          res,
+          tm("skills.githubInstallSuccess"),
+          tm("skills.githubInstallFailed"),
+          async () => {
+            await fetchSkills();
+          },
+        );
+      } catch (_err) {
+        showMessage(tm("skills.githubInstallFailed"), "error");
+      } finally {
+        hotItemLoading[key] = false;
       }
     };
 
@@ -1243,7 +1595,7 @@ export default {
           tm("skills.neoDeactivateFailed"),
           async () => {
             await fetchNeoData();
-          },
+          }
         );
       } catch (_err) {
         showMessage(tm("skills.neoDeactivateFailed"), "error");
@@ -1335,6 +1687,123 @@ export default {
       }
     };
 
+    const openDetailDialog = async (skill) => {
+      if (isSandboxPresetSkill(skill)) {
+        showMessage(tm("skills.sandboxPresetReadonly"), "warning");
+        return;
+      }
+      currentSkill.value = skill;
+      fileTree.value = [];
+      currentFile.value = null;
+      skillContent.value = "";
+      detailDialog.value = true;
+      try {
+        const res = await axios.get("/api/skills/detail", {
+          params: { name: skill.name },
+        });
+        if (res?.data?.status !== "ok") {
+          showMessage(res?.data?.message || tm("skills.loadDetailFailed"), "error");
+          return;
+        }
+        fileTree.value = res?.data?.data?.files || [];
+
+        const findSkillMd = (items) => {
+          for (const item of items) {
+            if (item.type === "file" && item.name === "SKILL.md") {
+              return item.path;
+            }
+            if (item.type === "directory" && item.children) {
+              const found = findSkillMd(item.children);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+
+        const skillMdPath = findSkillMd(fileTree.value);
+        if (skillMdPath) {
+          await loadFileContent(skillMdPath);
+        }
+      } catch (_err) {
+        showMessage(tm("skills.loadDetailFailed"), "error");
+      }
+    };
+
+    const onFileSelect = async (path) => {
+      const findFileByPath = (items, targetPath) => {
+        for (const item of items) {
+          if (item.path === targetPath) return item;
+          if (item.children) {
+            const found = findFileByPath(item.children, targetPath);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const file = findFileByPath(fileTree.value, path);
+      if (file && file.type === "file") {
+        await loadFileContent(path);
+      }
+    };
+
+    const loadFileContent = async (filePath) => {
+      if (!currentSkill.value) return;
+      try {
+        const res = await axios.get("/api/skills/file", {
+          params: {
+            name: currentSkill.value.name,
+            file: filePath,
+          },
+        });
+        if (res?.data?.status === "ok") {
+          currentFile.value = filePath;
+          skillContent.value = res?.data?.data?.content || "";
+        } else {
+          showMessage(res?.data?.message || tm("skills.loadFileFailed"), "error");
+        }
+      } catch (_err) {
+        showMessage(tm("skills.loadFileFailed"), "error");
+      }
+    };
+
+    const getFileLanguage = (fileName) => {
+      const ext = String(fileName || "").split(".").pop().toLowerCase();
+      const langMap = {
+        md: "markdown",
+        py: "python",
+        js: "javascript",
+        ts: "typescript",
+        json: "json",
+        yaml: "yaml",
+        yml: "yaml",
+        xml: "xml",
+        html: "html",
+        css: "css",
+        txt: "plaintext",
+      };
+      return langMap[ext] || "plaintext";
+    };
+
+    const saveSkillDetail = async () => {
+      if (!currentSkill.value || !currentFile.value) return;
+      saving.value = true;
+      try {
+        const res = await axios.post("/api/skills/update_detail", {
+          name: currentSkill.value.name,
+          file_path: currentFile.value,
+          content: skillContent.value,
+        });
+        handleApiResponse(res, tm("skills.saveDetailSuccess"), tm("skills.saveDetailFailed"), async () => {
+          await fetchSkills();
+        });
+      } catch (_err) {
+        showMessage(tm("skills.saveDetailFailed"), "error");
+      } finally {
+        saving.value = false;
+      }
+    };
+
     const refreshCurrentMode = async () => {
       if (mode.value === "neo") {
         await loadNeoAvailability();
@@ -1390,6 +1859,18 @@ export default {
       itemLoading,
       deleteDialog,
       deleting,
+      detailDialog,
+      currentSkill,
+      fileTree,
+      currentFile,
+      skillContent,
+      saving,
+      githubDialog,
+      repoInput,
+      repoScanResults,
+      repoScanLoading,
+      hasScannedRepo,
+      hotItemLoading,
       snackbar,
       neoEnabled,
       neoUnavailableMessage,
@@ -1415,6 +1896,11 @@ export default {
       refreshCurrentMode,
       fetchNeoData,
       uploadSkillBatch,
+      getHotSkillKey,
+      scanGitHubRepo,
+      openGitHubDialog,
+      installHotSkill,
+      fetchSkills,
       downloadSkill,
       toggleSkill,
       confirmDelete,
@@ -1433,6 +1919,11 @@ export default {
       sourceTypeLabel,
       sourceTypeColor,
       isSandboxPresetSkill,
+      openDetailDialog,
+      onFileSelect,
+      loadFileContent,
+      getFileLanguage,
+      saveSkillDetail,
     };
   },
 };
@@ -1768,6 +2259,153 @@ export default {
 
 .neo-data-table :deep(tbody tr:hover) {
   background: rgba(var(--v-theme-primary), 0.04);
+}
+
+.hot-skills-list {
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+.editor-wrapper {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.file-tree-header {
+  padding: 8px 12px;
+  background-color: rgb(var(--v-theme-containerBg));
+  border-bottom: 1px solid rgb(var(--v-theme-border));
+}
+
+.file-tree-sidebar {
+  background-color: rgb(var(--v-theme-containerBg));
+  border-right: 1px solid rgb(var(--v-theme-border));
+}
+
+.file-tree-header .text-subtitle-2 {
+  color: rgb(var(--v-theme-primaryText));
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  opacity: 0.7;
+}
+
+.file-tree {
+  padding: 4px 0;
+}
+
+:deep(.sidebar-tree-item) {
+  width: 100%;
+}
+
+:deep(.sidebar-tree-node) {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  cursor: pointer;
+  color: rgb(var(--v-theme-primaryText));
+  font-size: 13px;
+  user-select: none;
+  transition: background-color 0.15s ease;
+  border-radius: 4px;
+  margin: 1px 6px;
+  padding-right: 8px;
+  opacity: 0.85;
+}
+
+:deep(.sidebar-tree-node:hover) {
+  background-color: rgba(var(--v-theme-primary), 0.1);
+  opacity: 1;
+}
+
+:deep(.sidebar-tree-node.is-selected) {
+  background-color: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
+  opacity: 1;
+  border-left: 3px solid rgb(var(--v-theme-primary));
+  margin-left: 3px;
+}
+
+:deep(.sidebar-tree-node.is-selected .sidebar-tree-icon),
+:deep(.sidebar-tree-node.is-selected .sidebar-tree-label) {
+  color: rgb(var(--v-theme-primary));
+  font-weight: 600;
+}
+
+:deep(.sidebar-tree-arrow) {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  margin-right: 2px;
+}
+
+:deep(.sidebar-tree-arrow.is-open) {
+  transform: rotate(90deg);
+}
+
+:deep(.sidebar-tree-arrow-placeholder) {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+:deep(.sidebar-tree-icon) {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+:deep(.sidebar-tree-label) {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+}
+
+:deep(.sidebar-tree-label.is-selected) {
+  font-weight: 600;
+}
+
+:deep(.sidebar-tree-children) {
+  width: 100%;
+}
+
+.dialog-header {
+  background-color: rgb(var(--v-theme-containerBg));
+  border-bottom: 1px solid rgb(var(--v-theme-border));
+}
+
+.dialog-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+.editor-column {
+  background-color: rgb(var(--v-theme-background));
+}
+
+.editor-header {
+  background-color: rgb(var(--v-theme-surface));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.dialog-actions {
+  background-color: rgb(var(--v-theme-containerBg));
+  border-top: 1px solid rgb(var(--v-theme-border));
+}
+
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 @media (max-width: 860px) {
