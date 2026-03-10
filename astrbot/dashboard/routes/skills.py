@@ -793,7 +793,9 @@ class SkillsRoute(Route):
                                 dir=get_astrbot_temp_path(),
                             )
                             os.close(fd)
-                            file_handle = await asyncio.to_thread(open, archive_path, "wb")
+                            file_handle = await asyncio.to_thread(
+                                open, archive_path, "wb"
+                            )
                             try:
                                 async for chunk in response.content.iter_chunked(
                                     64 * 1024
