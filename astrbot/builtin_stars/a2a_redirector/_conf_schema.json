@@ -1,0 +1,118 @@
+{
+  "profiles": {
+    "type": "dict",
+    "description": "Profile name -> redirect target settings",
+    "items": {},
+    "default": {
+      "bash": {
+        "label": "Bash",
+        "transport": "terminal",
+        "executable": "bash",
+        "description": "Route the current session to a local Bash terminal."
+      },
+      "fish": {
+        "label": "Fish",
+        "transport": "terminal",
+        "executable": "fish",
+        "description": "Route the current session to a local Fish terminal."
+      },
+      "zsh": {
+        "label": "Zsh",
+        "transport": "terminal",
+        "executable": "zsh",
+        "description": "Route the current session to a local Zsh terminal."
+      },
+      "sh": {
+        "label": "sh",
+        "transport": "terminal",
+        "executable": "sh",
+        "description": "Route the current session to a local POSIX shell."
+      },
+      "ash": {
+        "label": "ash",
+        "transport": "terminal",
+        "executable": "ash",
+        "description": "Route the current session to a local ash shell."
+      },
+      "claude-code": {
+        "label": "Claude Code",
+        "transport": "a2a",
+        "agent_card_url": "",
+        "description": "Route the current session to a Claude Code A2A bridge."
+      },
+      "codex": {
+        "label": "Codex",
+        "transport": "a2a",
+        "agent_card_url": "",
+        "description": "Route the current session to a Codex CLI A2A bridge."
+      },
+      "qwen-code": {
+        "label": "Qwen Code",
+        "transport": "a2a",
+        "agent_card_url": "",
+        "description": "Route the current session to a Qwen Code A2A bridge."
+      },
+      "gemini-cli": {
+        "label": "Gemini CLI",
+        "transport": "a2a",
+        "agent_card_url": "",
+        "description": "Route the current session to a Gemini CLI A2A bridge."
+      },
+      "iflow": {
+        "label": "iFlow",
+        "transport": "a2a",
+        "agent_card_url": "",
+        "description": "Route the current session to an iFlow CLI A2A bridge."
+      },
+      "copilot-cli": {
+        "label": "Copilot CLI",
+        "transport": "a2a",
+        "agent_card_url": "",
+        "description": "Route the current session to a Copilot CLI A2A bridge."
+      }
+    },
+    "editor_mode": true,
+    "editor_language": "json",
+    "hint": "Each profile value may contain label, transport (terminal or a2a), executable, agent_card_url, description, headers, accepted_output_modes, blocking and history_length. Example: {\"bash\": {\"label\": \"Bash\", \"transport\": \"terminal\", \"executable\": \"bash\"}, \"codex\": {\"label\": \"Codex\", \"transport\": \"a2a\", \"agent_card_url\": \"http://127.0.0.1:41241/.well-known/agent-card.json\"}}"
+  },
+  "require_admin": {
+    "type": "bool",
+    "description": "Only allow AstrBot administrators to use redirect targets",
+    "default": true
+  },
+  "terminal_working_directory": {
+    "type": "string",
+    "description": "Default working directory for new local terminal sessions",
+    "default": ""
+  },
+  "terminal_command_timeout_seconds": {
+    "type": "int",
+    "description": "Timeout for each local terminal command",
+    "default": 180
+  },
+  "response_char_limit": {
+    "type": "int",
+    "description": "Maximum number of response characters sent back to the chat",
+    "default": 12000
+  },
+  "default_history_length": {
+    "type": "int",
+    "description": "Default A2A task history length to request",
+    "default": 20
+  },
+  "request_timeout_seconds": {
+    "type": "int",
+    "description": "HTTP timeout used for agent card discovery and JSON-RPC calls",
+    "default": 180
+  },
+  "poll_interval_seconds": {
+    "type": "float",
+    "description": "Polling interval for non-terminal A2A tasks",
+    "default": 2.0
+  },
+  "max_wait_seconds": {
+    "type": "int",
+    "description": "Maximum time to wait for a task before returning the latest status",
+    "default": 600
+  }
+}
