@@ -1,0 +1,4 @@
+name: astrbot-a2a-redirector
+desc: Redirect the current AstrBot session to an A2A agent such as a terminal or coding CLI bridge.
+author: AstrBot
+version: 0.1.0
