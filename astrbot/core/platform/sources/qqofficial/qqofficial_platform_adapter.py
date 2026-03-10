@@ -538,7 +538,16 @@ class QQOfficialPlatformAdapter(Platform):
         abm.self_id = "qq_official"
         return abm
 
+    @staticmethod
+    def _normalize_required_credential(name: str, value: object) -> str:
+        normalized = value.strip() if isinstance(value, str) else ""
+        if not normalized:
+            raise ValueError(f"QQOfficial 启动失败，platform_config.{name} 不能为空。")
+        return normalized
+
     def run(self):
+        self.appid = self._normalize_required_credential("appid", self.appid)
+        self.secret = self._normalize_required_credential("secret", self.secret)
         return self.client.start(appid=self.appid, secret=self.secret)
 
     def get_client(self) -> botClient:

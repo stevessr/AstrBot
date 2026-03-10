@@ -4,6 +4,7 @@ import os
 import random
 import uuid
 from dataclasses import dataclass
+from functools import wraps
 from typing import cast
 
 import aiofiles
@@ -43,7 +44,58 @@ def _patch_qq_botpy_formdata() -> None:
         logger.debug("[QQOfficial] Skip botpy FormData patch.")
 
 
+def _validate_qq_botpy_login_user(user: object) -> dict:
+    if not isinstance(user, dict):
+        raise RuntimeError(
+            "QQOfficial 登录失败，未能从 /users/@me 获取有效的机器人资料，请检查 appid/secret、机器人权限或 botpy 返回值。"
+        )
+
+    bot_id = user.get("id")
+    if bot_id in (None, ""):
+        raise RuntimeError(
+            "QQOfficial 登录失败，/users/@me 返回的机器人资料缺少 id，请检查 appid/secret、机器人权限或 botpy 返回值。"
+        )
+
+    return user
+
+
+def _patch_qq_botpy_login() -> None:
+    try:
+        from botpy.client import Client as BotpyClient  # type: ignore
+
+        original_bot_login = getattr(BotpyClient, "_bot_login", None)
+        if original_bot_login is None:
+            logger.debug("[QQOfficial] Skip botpy login patch: missing _bot_login.")
+            return
+
+        if getattr(original_bot_login, "__astrbot_qqofficial_patched__", False):
+            return
+
+        @wraps(original_bot_login)
+        async def _patched_bot_login(self, *args, **kwargs):
+            original_login = getattr(getattr(self, "http", None), "login", None)
+            if original_login is None:
+                return await original_bot_login(self, *args, **kwargs)
+
+            @wraps(original_login)
+            async def _validated_login(*login_args, **login_kwargs):
+                user = await original_login(*login_args, **login_kwargs)
+                return _validate_qq_botpy_login_user(user)
+
+            self.http.login = _validated_login
+            try:
+                return await original_bot_login(self, *args, **kwargs)
+            finally:
+                self.http.login = original_login
+
+        setattr(_patched_bot_login, "__astrbot_qqofficial_patched__", True)
+        setattr(BotpyClient, "_bot_login", _patched_bot_login)
+    except Exception:
+        logger.debug("[QQOfficial] Skip botpy login patch.", exc_info=True)
+
+
 _patch_qq_botpy_formdata()
+_patch_qq_botpy_login()
 
 
 @dataclass
