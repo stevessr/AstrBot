@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import shutil
@@ -234,7 +235,12 @@ class SkillsRoute(Route):
         try:
             data = await request.get_json(silent=True) or {}
             source = str(data.get("repo", "") or data.get("source", "")).strip()
-            proxy = self._normalize_proxy_value(data.get("proxy", ""))
+            proxy = self._normalize_proxy_value(
+                data.get("proxy")
+                or data.get("githubProxy")
+                or data.get("proxy_url")
+                or ""
+            )
 
             if not source:
                 return Response().error("Missing GitHub repository source").__dict__
@@ -257,7 +263,12 @@ class SkillsRoute(Route):
             source = str(data.get("source", "") or data.get("repo", "")).strip()
             skill_id = str(data.get("skillId", "") or data.get("skill_id", "")).strip()
             skill_name = str(data.get("name", "")).strip()
-            proxy = self._normalize_proxy_value(data.get("proxy", ""))
+            proxy = self._normalize_proxy_value(
+                data.get("proxy")
+                or data.get("githubProxy")
+                or data.get("proxy_url")
+                or ""
+            )
 
             if not source:
                 return Response().error("Missing skill source").__dict__
@@ -709,6 +720,7 @@ class SkillsRoute(Route):
         candidate_urls = [api_url]
         if proxy:
             candidate_urls.insert(0, self._apply_github_proxy(api_url, proxy))
+            candidate_urls = [candidate_urls[0]]
 
         headers = {
             "Accept": "application/vnd.github+json",
@@ -763,53 +775,46 @@ class SkillsRoute(Route):
                 branch_ref = quote(branch, safe="")
                 archive_url = f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{branch_ref}"
 
-                request_urls = [archive_url]
+                request_url = archive_url
                 if normalized_proxy:
-                    request_urls.insert(
-                        0, self._apply_github_proxy(archive_url, normalized_proxy)
+                    request_url = self._apply_github_proxy(
+                        archive_url, normalized_proxy
                     )
 
-                for request_url in request_urls:
-                    try:
-                        logger.info(
-                            f"Attempting to download {owner}/{repo} from branch '{branch}'"
+                try:
+                    logger.info(
+                        f"Attempting to download {owner}/{repo} from branch '{branch}'"
+                    )
+                    async with session.get(request_url, headers=headers) as response:
+                        if response.status != 200:
+                            logger.warning(
+                                f"Download failed with status {response.status} for branch '{branch}'"
+                            )
+                            continue
+                        await asyncio.to_thread(
+                            os.makedirs,
+                            get_astrbot_temp_path(),
+                            exist_ok=True,
                         )
-                        async with session.get(
-                            request_url, headers=headers
-                        ) as response:
-                            if response.status != 200:
-                                logger.warning(
-                                    f"Download failed with status {response.status} for branch '{branch}'"
-                                )
-                                continue
-                            await asyncio.to_thread(
-                                os.makedirs,
-                                get_astrbot_temp_path(),
-                                exist_ok=True,
-                            )
-                            fd, archive_path = tempfile.mkstemp(
-                                prefix=f"{repo}-",
-                                suffix=".zip",
-                                dir=get_astrbot_temp_path(),
-                            )
-                            os.close(fd)
-                            file_handle = await asyncio.to_thread(
-                                open, archive_path, "wb"
-                            )
-                            try:
-                                async for chunk in response.content.iter_chunked(
-                                    64 * 1024
-                                ):
-                                    await asyncio.to_thread(file_handle.write, chunk)
-                            finally:
-                                await asyncio.to_thread(file_handle.close)
-                            logger.info(
-                                f"Successfully downloaded {owner}/{repo} (branch: {branch})"
-                            )
-                            return archive_path
-                    except Exception as e:
-                        logger.warning(f"Download error for branch '{branch}': {e}")
-                        continue
+                        fd, archive_path = tempfile.mkstemp(
+                            prefix=f"{repo}-",
+                            suffix=".zip",
+                            dir=get_astrbot_temp_path(),
+                        )
+                        os.close(fd)
+                        file_handle = await asyncio.to_thread(open, archive_path, "wb")
+                        try:
+                            async for chunk in response.content.iter_chunked(64 * 1024):
+                                await asyncio.to_thread(file_handle.write, chunk)
+                        finally:
+                            await asyncio.to_thread(file_handle.close)
+                        logger.info(
+                            f"Successfully downloaded {owner}/{repo} (branch: {branch})"
+                        )
+                        return archive_path
+                except Exception as e:
+                    logger.warning(f"Download error for branch '{branch}': {e}")
+                    continue
 
         raise ValueError("Failed to download GitHub repository archive.")
 
