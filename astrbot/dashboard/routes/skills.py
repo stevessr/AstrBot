@@ -1306,8 +1306,6 @@ class SkillsRoute(Route):
             return Response().error("Missing file path").__dict__
         if not _validate_file_path(file_path):
             return Response().error("Invalid file path").__dict__
-        if not _validate_file_extension(file_path):
-            return Response().error("File type not allowed for editing").__dict__
         try:
             skill_manager = SkillManager()
             skills = skill_manager.list_skills(
@@ -1362,8 +1360,6 @@ class SkillsRoute(Route):
                 return Response().error("Missing content").__dict__
             if not _validate_file_path(file_path):
                 return Response().error("Invalid file path").__dict__
-            if not _validate_file_extension(file_path):
-                return Response().error("File type not allowed for editing").__dict__
             skill_manager = SkillManager()
             skills = skill_manager.list_skills(
                 active_only=False, show_sandbox_path=False
