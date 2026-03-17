@@ -1,79 +1,228 @@
 {
   "profiles": {
-    "type": "dict",
-    "description": "Profile name -> redirect target settings",
-    "items": {},
-    "default": {
-      "bash": {
-        "label": "Bash",
+    "type": "template_list",
+    "description": "Redirect target profiles",
+    "hint": "Each entry becomes one `/redirect bind <profile_key>` target. Use the terminal template for local shells and the A2A template for remote agent-card endpoints.",
+    "default": [
+      {
+        "__template_key": "terminal",
         "transport": "terminal",
+        "profile_key": "bash",
+        "label": "Bash",
         "executable": "bash",
         "description": "Route the current session to a local Bash terminal."
       },
-      "fish": {
-        "label": "Fish",
+      {
+        "__template_key": "terminal",
         "transport": "terminal",
+        "profile_key": "fish",
+        "label": "Fish",
         "executable": "fish",
         "description": "Route the current session to a local Fish terminal."
       },
-      "zsh": {
-        "label": "Zsh",
+      {
+        "__template_key": "terminal",
         "transport": "terminal",
+        "profile_key": "zsh",
+        "label": "Zsh",
         "executable": "zsh",
         "description": "Route the current session to a local Zsh terminal."
       },
-      "sh": {
-        "label": "sh",
+      {
+        "__template_key": "terminal",
         "transport": "terminal",
+        "profile_key": "sh",
+        "label": "sh",
         "executable": "sh",
         "description": "Route the current session to a local POSIX shell."
       },
-      "ash": {
-        "label": "ash",
+      {
+        "__template_key": "terminal",
         "transport": "terminal",
+        "profile_key": "ash",
+        "label": "ash",
         "executable": "ash",
         "description": "Route the current session to a local ash shell."
       },
-      "claude-code": {
-        "label": "Claude Code",
+      {
+        "__template_key": "a2a",
         "transport": "a2a",
+        "profile_key": "claude-code",
+        "label": "Claude Code",
         "agent_card_url": "",
+        "headers": {},
+        "accepted_output_modes": [
+          "text/plain",
+          "text/markdown",
+          "application/json"
+        ],
+        "blocking": true,
+        "history_length": 20,
         "description": "Route the current session to a Claude Code A2A bridge."
       },
-      "codex": {
-        "label": "Codex",
+      {
+        "__template_key": "a2a",
         "transport": "a2a",
+        "profile_key": "codex",
+        "label": "Codex",
         "agent_card_url": "",
+        "headers": {},
+        "accepted_output_modes": [
+          "text/plain",
+          "text/markdown",
+          "application/json"
+        ],
+        "blocking": true,
+        "history_length": 20,
         "description": "Route the current session to a Codex CLI A2A bridge."
       },
-      "qwen-code": {
-        "label": "Qwen Code",
+      {
+        "__template_key": "a2a",
         "transport": "a2a",
+        "profile_key": "qwen-code",
+        "label": "Qwen Code",
         "agent_card_url": "",
+        "headers": {},
+        "accepted_output_modes": [
+          "text/plain",
+          "text/markdown",
+          "application/json"
+        ],
+        "blocking": true,
+        "history_length": 20,
         "description": "Route the current session to a Qwen Code A2A bridge."
       },
-      "gemini-cli": {
-        "label": "Gemini CLI",
+      {
+        "__template_key": "a2a",
         "transport": "a2a",
+        "profile_key": "gemini-cli",
+        "label": "Gemini CLI",
         "agent_card_url": "",
+        "headers": {},
+        "accepted_output_modes": [
+          "text/plain",
+          "text/markdown",
+          "application/json"
+        ],
+        "blocking": true,
+        "history_length": 20,
         "description": "Route the current session to a Gemini CLI A2A bridge."
       },
-      "iflow": {
-        "label": "iFlow",
+      {
+        "__template_key": "a2a",
         "transport": "a2a",
+        "profile_key": "iflow",
+        "label": "iFlow",
         "agent_card_url": "",
+        "headers": {},
+        "accepted_output_modes": [
+          "text/plain",
+          "text/markdown",
+          "application/json"
+        ],
+        "blocking": true,
+        "history_length": 20,
         "description": "Route the current session to an iFlow CLI A2A bridge."
       },
-      "copilot-cli": {
-        "label": "Copilot CLI",
+      {
+        "__template_key": "a2a",
         "transport": "a2a",
+        "profile_key": "copilot-cli",
+        "label": "Copilot CLI",
         "agent_card_url": "",
+        "headers": {},
+        "accepted_output_modes": [
+          "text/plain",
+          "text/markdown",
+          "application/json"
+        ],
+        "blocking": true,
+        "history_length": 20,
         "description": "Route the current session to a Copilot CLI A2A bridge."
       }
-    },
-    "editor_mode": true,
-    "editor_language": "json",
-    "hint": "Each profile value may contain label, transport (terminal or a2a), executable, agent_card_url, description, headers, accepted_output_modes, blocking and history_length. Example: {\"bash\": {\"label\": \"Bash\", \"transport\": \"terminal\", \"executable\": \"bash\"}, \"codex\": {\"label\": \"Codex\", \"transport\": \"a2a\", \"agent_card_url\": \"http://127.0.0.1:41241/.well-known/agent-card.json\"}}"
+    ],
+    "templates": {
+      "terminal": {
+        "name": "Local terminal profile",
+        "hint": "Use a local shell executable and bind it to a stable profile key.",
+        "items": {
+          "profile_key": {
+            "type": "string",
+            "description": "Profile key",
+            "hint": "Used by `/redirect bind <profile_key>`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "description": "Description",
+            "default": ""
+          },
+          "executable": {
+            "type": "string",
+            "description": "Local executable",
+            "hint": "Examples: `bash`, `zsh`, `fish`, `python`.",
+            "default": ""
+          }
+        }
+      },
+      "a2a": {
+        "name": "A2A profile",
+        "hint": "Configure a remote agent-card endpoint that AstrBot can bind to.",
+        "items": {
+          "profile_key": {
+            "type": "string",
+            "description": "Profile key",
+            "hint": "Used by `/redirect bind <profile_key>`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "description": "Description",
+            "default": ""
+          },
+          "agent_card_url": {
+            "type": "string",
+            "description": "Agent card URL",
+            "hint": "Supports a full `/.well-known/agent-card.json` URL or a base URL.",
+            "default": ""
+          },
+          "headers": {
+            "type": "dict",
+            "description": "Custom HTTP headers",
+            "hint": "Optional request headers sent during discovery and JSON-RPC calls.",
+            "items": {},
+            "default": {}
+          },
+          "accepted_output_modes": {
+            "type": "list",
+            "description": "Accepted output modes",
+            "default": [
+              "text/plain",
+              "text/markdown",
+              "application/json"
+            ]
+          },
+          "blocking": {
+            "type": "bool",
+            "description": "Wait for the remote task to finish",
+            "default": true
+          },
+          "history_length": {
+            "type": "int",
+            "description": "Task history length",
+            "default": 20
+          }
+        }
+      }
+    }
   },
   "require_admin": {
     "type": "bool",

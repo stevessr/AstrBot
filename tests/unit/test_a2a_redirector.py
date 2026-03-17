@@ -1,13 +1,22 @@
+import json
+from pathlib import Path
+
 from astrbot.builtin_stars.a2a_redirector.a2a_client import (
     A2AClient,
     build_send_params,
     extract_reply,
+)
+from astrbot.builtin_stars.a2a_redirector.main import (
+    DEFAULT_PROFILE_ENTRIES,
+    _profile_entries_to_mapping,
+    _profile_mapping_to_entries,
 )
 from astrbot.builtin_stars.a2a_redirector.models import A2AProfile, SessionBinding
 from astrbot.builtin_stars.a2a_redirector.terminal_bridge import (
     build_terminal_command,
     parse_terminal_output,
 )
+from astrbot.core.config.astrbot_config import AstrBotConfig
 
 
 def make_binding(**kwargs) -> SessionBinding:
@@ -151,3 +160,53 @@ def test_terminal_command_and_output_parsing_for_posix_shell() -> None:
     assert result.output.endswith("/home/steve/project")
     assert result.cwd == "/home/steve/project"
     assert result.exit_code == 0
+
+
+def test_a2a_redirector_schema_uses_template_list_defaults(tmp_path) -> None:
+    schema_path = (
+        Path(__file__).resolve().parents[2]
+        / "astrbot"
+        / "builtin_stars"
+        / "a2a_redirector"
+        / "_conf_schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    config = AstrBotConfig(
+        config_path=str(tmp_path / "a2a_redirector.json"),
+        schema=schema,
+    )
+
+    assert config.profiles[0]["profile_key"] == "bash"
+    assert config.profiles[0]["__template_key"] == "terminal"
+    assert config.require_admin is True
+
+
+def test_profile_entries_to_mapping_supports_template_list() -> None:
+    profiles = _profile_entries_to_mapping(DEFAULT_PROFILE_ENTRIES)
+
+    assert profiles["bash"]["transport"] == "terminal"
+    assert profiles["codex"]["transport"] == "a2a"
+    assert profiles["codex"]["agent_card_url"] == ""
+
+
+def test_profile_mapping_to_entries_preserves_profile_key() -> None:
+    entries = _profile_mapping_to_entries(
+        {
+            "codex": {
+                "transport": "a2a",
+                "label": "Codex",
+                "agent_card_url": "http://127.0.0.1/.well-known/agent-card.json",
+            }
+        }
+    )
+
+    assert entries == [
+        {
+            "__template_key": "a2a",
+            "profile_key": "codex",
+            "transport": "a2a",
+            "label": "Codex",
+            "agent_card_url": "http://127.0.0.1/.well-known/agent-card.json",
+        }
+    ]
