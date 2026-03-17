@@ -27,7 +27,7 @@
     </div>
 
     <v-alert
-      v-if="!modelValue || modelValue.length === 0"
+      v-if="normalizedEntries.length === 0"
       type="info"
       variant="tonal"
       density="compact"
@@ -37,7 +37,7 @@
     </v-alert>
 
     <v-card
-      v-for="(entry, entryIndex) in modelValue"
+      v-for="(entry, entryIndex) in normalizedEntries"
       :key="entryIndex"
       variant="outlined"
       class="mb-3"
@@ -56,7 +56,7 @@
             <v-icon>{{ expandedEntries[entryIndex] ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
           </v-btn>
           <div class="d-flex flex-column">
-            <v-list-item-title class="property-name">{{ templateLabel(entry.__template_key) }}</v-list-item-title>
+            <v-list-item-title class="property-name">{{ entryTitle(entry) }}</v-list-item-title>
             <v-list-item-subtitle class="property-hint" v-if="getTemplate(entry)?.hint || getTemplate(entry)?.description">
               {{ translateIfKey(getTemplate(entry)?.hint || getTemplate(entry)?.description) }}
             </v-list-item-subtitle>
@@ -157,7 +157,7 @@ import { useI18n, useModuleI18n } from '@/i18n/composables'
 
 const props = defineProps({
   modelValue: {
-    type: Array,
+    type: [Array, Object],
     default: () => []
   },
   templates: {
@@ -194,9 +194,20 @@ const templateOptions = computed(() => {
   }))
 })
 
+const normalizedEntries = computed(() => (
+  Array.isArray(props.modelValue) ? props.modelValue : []
+))
+
 function templateLabel(key) {
   if (!key) return t('core.common.templateList.unknownTemplate') || '未指定模板'
   return translateIfKey(props.templates?.[key]?.name || key)
+}
+
+function entryTitle(entry) {
+  const title = [entry?.label, entry?.profile_key, entry?.key, entry?.name].find(
+    value => typeof value === 'string' && value.trim()
+  )
+  return title || templateLabel(entry?.__template_key)
 }
 
 function translateIfKey(value) {
@@ -249,7 +260,7 @@ function ensureEntryDefaults() {
   if (!Array.isArray(props.modelValue)) return
   
   let totalChanged = false
-  const nextValue = props.modelValue.map((entry, idx) => {
+  const nextValue = normalizedEntries.value.map((entry, idx) => {
     const template = getTemplate(entry)
     if (!template || !template.items) return entry
     
@@ -291,12 +302,12 @@ function addEntry(templateKey) {
     __template_key: templateKey,
     ...buildDefaults(template.items || {})
   }
-  emit('update:modelValue', [...(props.modelValue || []), newEntry])
-  expandedEntries.value[props.modelValue.length] = true
+  emit('update:modelValue', [...normalizedEntries.value, newEntry])
+  expandedEntries.value[normalizedEntries.value.length] = true
 }
 
 function removeEntry(index) {
-  const next = [...(props.modelValue || [])]
+  const next = [...normalizedEntries.value]
   next.splice(index, 1)
   const rebuilt = {}
   next.forEach((_, idx) => {
