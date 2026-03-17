@@ -1,5 +1,9 @@
 import json
+import shutil
+import types
 from pathlib import Path
+
+import pytest
 
 from astrbot.builtin_stars.a2a_redirector.a2a_client import (
     A2AClient,
@@ -13,6 +17,8 @@ from astrbot.builtin_stars.a2a_redirector.main import (
 )
 from astrbot.builtin_stars.a2a_redirector.models import A2AProfile, SessionBinding
 from astrbot.builtin_stars.a2a_redirector.terminal_bridge import (
+    TerminalBridgeError,
+    TerminalSession,
     build_terminal_command,
     parse_terminal_output,
 )
@@ -150,14 +156,20 @@ def test_terminal_command_and_output_parsing_for_posix_shell() -> None:
     command = build_terminal_command("bash", "pwd", marker)
 
     assert marker in command
+    assert f"{marker}:BEGIN" in command
     assert '"$PWD"' in command
 
     result = parse_terminal_output(
-        f"/home/steve/project\r\n{marker}:0:/home/steve/project\r\n",
+        (
+            "pwd\r\n"
+            f"{marker}:BEGIN\r\n"
+            "/home/steve/project\r\n"
+            f"{marker}:0:/home/steve/project\r\n"
+        ),
         marker,
     )
 
-    assert result.output.endswith("/home/steve/project")
+    assert result.output == "/home/steve/project"
     assert result.cwd == "/home/steve/project"
     assert result.exit_code == 0
 
@@ -210,3 +222,51 @@ def test_profile_mapping_to_entries_preserves_profile_key() -> None:
             "agent_card_url": "http://127.0.0.1/.well-known/agent-card.json",
         }
     ]
+
+
+def test_terminal_session_read_until_marker_converts_eio_to_bridge_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = TerminalSession(executable="/bin/sh", working_directory=".")
+    session.master_fd = 123
+    session.process = types.SimpleNamespace(returncode=None)
+
+    monkeypatch.setattr(
+        "astrbot.builtin_stars.a2a_redirector.terminal_bridge.select.select",
+        lambda *_args, **_kwargs: ([123], [], []),
+    )
+
+    def raise_eio(_fd: int, _size: int) -> bytes:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(
+        "astrbot.builtin_stars.a2a_redirector.terminal_bridge.os.read",
+        raise_eio,
+    )
+
+    with pytest.raises(
+        TerminalBridgeError,
+        match="Terminal session ended before the command completed.",
+    ):
+        session._read_until_marker("__ASTRBOT_DONE_test__", timeout_seconds=1)
+
+
+@pytest.mark.skipif(shutil.which("fish") is None, reason="fish is not installed")
+def test_terminal_session_supports_fish_interactive_shell(tmp_path: Path) -> None:
+    async def run() -> None:
+        session = await TerminalSession.create(
+            executable="fish",
+            working_directory=str(tmp_path),
+        )
+        try:
+            result = await session.execute("pwd", timeout_seconds=10)
+        finally:
+            await session.close()
+
+        assert result.exit_code == 0
+        assert Path(result.cwd) == tmp_path.resolve()
+        assert result.output == str(tmp_path.resolve())
+
+    import asyncio
+
+    asyncio.run(run())

@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
+import fcntl
 import os
 import pty
 import re
 import select
+import shlex
 import shutil
+import termios
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 from astrbot.api import logger
+from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 PROMPT_MARKER = "__ASTRBOT_PROMPT__> "
 
@@ -49,12 +54,33 @@ def resolve_working_directory(working_directory: str | None) -> str:
 
 
 def build_terminal_command(shell_name: str, command: str, marker: str) -> str:
+    start_marker = f"{marker}:BEGIN"
+    del shell_name
+    return (
+        f"printf '\\n{start_marker}\\n'\n"
+        f"{command}\n"
+        f'printf \'\\n{marker}:%s:%s\\n\' "$?" "$PWD"\n'
+    )
+
+
+def build_fish_terminal_command(command: str, marker: str) -> str:
+    start_marker = f"{marker}:BEGIN"
+    return (
+        f"printf '\\n{start_marker}\\n'\n"
+        f"{command}\n"
+        f"printf '\\n{marker}:%s:%s\\n' $status (pwd)\n"
+    )
+
+
+def build_terminal_source_command(shell_name: str, script_path: Path) -> str:
+    quoted_path = shlex.quote(str(script_path))
     if shell_name == "fish":
-        return f"{command}\nprintf '\\n{marker}:%s:%s\\n' $status (pwd)\n"
-    return f'{command}\nprintf \'\\n{marker}:%s:%s\\n\' "$?" "$PWD"\n'
+        return f"source {quoted_path}\n"
+    return f". {quoted_path}\n"
 
 
 def parse_terminal_output(payload: str, marker: str) -> TerminalCommandResult:
+    start_marker = f"{marker}:BEGIN"
     match = re.search(
         rf"{re.escape(marker)}:(-?\d+):(.*?)(?:\r?\n|$)",
         payload,
@@ -65,12 +91,30 @@ def parse_terminal_output(payload: str, marker: str) -> TerminalCommandResult:
             "Terminal command finished without a completion marker."
         )
 
-    output = payload[: match.start()]
+    start_match = re.search(
+        rf"(?:^|\r?\n){re.escape(start_marker)}(?:\r?\n|$)",
+        payload,
+        flags=re.DOTALL,
+    )
+    output_start = start_match.end() if start_match else 0
+    output = payload[output_start : match.start()]
     output = output.replace(PROMPT_MARKER, "")
     output = output.strip("\r\n")
     exit_code = int(match.group(1))
     cwd = match.group(2).strip() or str(Path.cwd())
     return TerminalCommandResult(output=output, cwd=cwd, exit_code=exit_code)
+
+
+def _is_pty_eof_error(exc: OSError) -> bool:
+    return exc.errno == errno.EIO
+
+
+def _make_controlling_tty(slave_fd: int):
+    def _preexec() -> None:
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+    return _preexec
 
 
 class TerminalSession:
@@ -121,13 +165,18 @@ class TerminalSession:
 
             self._drain_pending_output()
             marker = f"__ASTRBOT_DONE_{uuid4().hex}__"
-            payload = build_terminal_command(self.shell_name, command, marker)
-            os.write(self.master_fd, payload.encode("utf-8", errors="ignore"))
-            response = await asyncio.to_thread(
-                self._read_until_marker,
-                marker,
-                timeout_seconds,
-            )
+            script_path = self._write_command_script(command, marker)
+            payload = build_terminal_source_command(self.shell_name, script_path)
+            try:
+                os.write(self.master_fd, payload.encode("utf-8", errors="ignore"))
+                response = await asyncio.to_thread(
+                    self._read_until_marker,
+                    marker,
+                    timeout_seconds,
+                )
+            finally:
+                with contextlib.suppress(OSError):
+                    script_path.unlink()
             result = parse_terminal_output(response, marker)
             self.working_directory = result.cwd
             return result
@@ -168,7 +217,7 @@ class TerminalSession:
                     "COLUMNS": "120",
                     "LINES": "40",
                 },
-                start_new_session=True,
+                preexec_fn=_make_controlling_tty(slave_fd),
             )
         finally:
             with contextlib.suppress(OSError):
@@ -200,6 +249,21 @@ class TerminalSession:
             "stty -echo\n"
         )
 
+    def _write_command_script(self, command: str, marker: str) -> Path:
+        temp_dir = Path(get_astrbot_temp_path()) / "a2a_redirector"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.shell_name == "fish":
+            script_content = build_fish_terminal_command(command, marker)
+            suffix = ".fish"
+        else:
+            script_content = build_terminal_command(self.shell_name, command, marker)
+            suffix = ".sh"
+
+        script_path = temp_dir / f"terminal_command_{uuid4().hex}{suffix}"
+        script_path.write_text(script_content, encoding="utf-8")
+        return script_path
+
     def _drain_pending_output(self) -> str:
         if self.master_fd is None:
             return ""
@@ -212,6 +276,10 @@ class TerminalSession:
                 data = os.read(self.master_fd, 4096)
             except BlockingIOError:
                 break
+            except OSError as exc:
+                if _is_pty_eof_error(exc):
+                    break
+                raise
             if not data:
                 break
             chunks.append(data.decode("utf-8", errors="ignore"))
@@ -246,6 +314,10 @@ class TerminalSession:
                 data = os.read(self.master_fd, 4096)
             except BlockingIOError:
                 continue
+            except OSError as exc:
+                if _is_pty_eof_error(exc):
+                    break
+                raise
 
             if not data:
                 break
