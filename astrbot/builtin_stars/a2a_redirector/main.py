@@ -88,6 +88,59 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+def _profile_entries_to_mapping(
+    raw_profiles: Any,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw_profiles, list):
+        return {}
+
+    profiles: dict[str, dict[str, Any]] = {}
+    for entry in raw_profiles:
+        if not isinstance(entry, dict):
+            continue
+
+        profile_key = str(
+            entry.get("profile_key") or entry.get("key") or entry.get("label") or ""
+        ).strip()
+        if not profile_key:
+            continue
+
+        payload = {
+            key: value
+            for key, value in entry.items()
+            if not key.startswith("__") and key not in {"profile_key", "key"}
+        }
+        if "transport" not in payload:
+            template_key = str(entry.get("__template_key") or "").strip().lower()
+            payload["transport"] = "terminal" if template_key == "terminal" else "a2a"
+
+        profiles[profile_key] = payload
+
+    return profiles
+
+
+def _profile_mapping_to_entries(
+    profiles: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for profile_key, payload in profiles.items():
+        if not isinstance(profile_key, str) or not isinstance(payload, dict):
+            continue
+
+        entry = {
+            key: value for key, value in payload.items() if not key.startswith("__")
+        }
+        transport = str(entry.get("transport") or "a2a").strip().lower() or "a2a"
+        entry["__template_key"] = "terminal" if transport == "terminal" else "a2a"
+        entry["profile_key"] = profile_key
+        entries.append(entry)
+
+    return entries
+
+
+DEFAULT_PROFILE_ENTRIES = _profile_mapping_to_entries(DEFAULT_PROFILES)
+
+
 class Main(star.Star):
     def __init__(
         self,
@@ -466,9 +519,8 @@ class Main(star.Star):
         )
 
     def _get_profiles(self) -> dict[str, A2AProfile]:
-        raw_profiles = self.config.get("profiles", DEFAULT_PROFILES)
-        if not isinstance(raw_profiles, dict):
-            raw_profiles = DEFAULT_PROFILES
+        raw_profiles = self.config.get("profiles", DEFAULT_PROFILE_ENTRIES)
+        raw_profiles = _profile_entries_to_mapping(raw_profiles) or DEFAULT_PROFILES
 
         profiles: dict[str, A2AProfile] = {}
         for key, payload in raw_profiles.items():
