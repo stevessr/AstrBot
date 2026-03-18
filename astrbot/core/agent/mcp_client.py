@@ -18,6 +18,7 @@ from astrbot import logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.utils.log_pipe import LogPipe
 
+from .mcp_oauth import create_mcp_http_auth, has_mcp_oauth_config
 from .run_context import TContext
 from .tool import FunctionTool
 
@@ -172,9 +173,12 @@ class MCPClient:
                     self.server_errlogs.append(log_msg)
 
         if "url" in cfg:
-            success, error_msg = await _quick_test_mcp_connection(cfg)
-            if not success:
-                raise Exception(error_msg)
+            auth = await create_mcp_http_auth(cfg)
+
+            if not has_mcp_oauth_config(cfg):
+                success, error_msg = await _quick_test_mcp_connection(cfg)
+                if not success:
+                    raise Exception(error_msg)
 
             if "transport" in cfg:
                 transport_type = cfg["transport"]
@@ -190,6 +194,7 @@ class MCPClient:
                     headers=cfg.get("headers", {}),
                     timeout=cfg.get("timeout", 5),
                     sse_read_timeout=cfg.get("sse_read_timeout", 60 * 5),
+                    auth=auth,
                 )
                 streams = await self.exit_stack.enter_async_context(
                     self._streams_context,
@@ -215,6 +220,7 @@ class MCPClient:
                     timeout=timeout,
                     sse_read_timeout=sse_read_timeout,
                     terminate_on_close=cfg.get("terminate_on_close", True),
+                    auth=auth,
                 )
                 read_s, write_s, _ = await self.exit_stack.enter_async_context(
                     self._streams_context,
