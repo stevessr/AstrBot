@@ -98,6 +98,111 @@ async def test_auth_login(app: Quart, core_lifecycle_td: AstrBotCoreLifecycle):
 
 
 @pytest.mark.asyncio
+async def test_mcp_oauth_start_and_status_routes(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+):
+    test_client = app.test_client()
+    tool_mgr = core_lifecycle_td.provider_manager.llm_tools
+
+    async def _mock_start(config: dict, *, callback_base_url: str, force: bool = False):
+        assert config["url"] == "https://example.com/mcp"
+        assert callback_base_url.startswith("http://localhost")
+        assert force is True
+        return {
+            "flow_id": "flow-123",
+            "status": "awaiting_user",
+            "authorization_url": "https://issuer.example.com/authorize",
+            "redirect_uri": f"{callback_base_url}/mcp/oauth/callback",
+            "error": None,
+        }
+
+    def _mock_status(flow_id: str):
+        assert flow_id == "flow-123"
+        return {
+            "flow_id": flow_id,
+            "status": "completed",
+            "authorization_url": "https://issuer.example.com/authorize",
+            "redirect_uri": "http://localhost/mcp/oauth/callback",
+            "error": None,
+        }
+
+    monkeypatch.setattr(tool_mgr, "start_mcp_oauth_authorization", _mock_start)
+    monkeypatch.setattr(tool_mgr, "get_mcp_oauth_flow_status", _mock_status)
+
+    start_response = await test_client.post(
+        "/api/tools/mcp/oauth/start",
+        json={
+            "mcp_server_config": {
+                "transport": "streamable_http",
+                "url": "https://example.com/mcp",
+                "oauth2": {"grant_type": "authorization_code"},
+            },
+            "force": True,
+        },
+        headers=authenticated_header,
+    )
+    assert start_response.status_code == 200
+    start_data = await start_response.get_json()
+    assert start_data["status"] == "ok"
+    assert start_data["data"]["flow_id"] == "flow-123"
+
+    status_response = await test_client.get(
+        "/api/tools/mcp/oauth/status?flow_id=flow-123",
+        headers=authenticated_header,
+    )
+    assert status_response.status_code == 200
+    status_data = await status_response.get_json()
+    assert status_data["status"] == "ok"
+    assert status_data["data"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_mcp_oauth_callback_route_is_public(
+    app: Quart,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+):
+    test_client = app.test_client()
+    tool_mgr = core_lifecycle_td.provider_manager.llm_tools
+    callback_payload = {}
+
+    async def _mock_submit(
+        flow_id: str | None,
+        *,
+        code: str | None,
+        state: str | None,
+        error: str | None,
+    ):
+        callback_payload.update(
+            {
+                "flow_id": flow_id,
+                "code": code,
+                "state": state,
+                "error": error,
+            },
+        )
+
+    monkeypatch.setattr(tool_mgr, "submit_mcp_oauth_callback", _mock_submit)
+
+    response = await test_client.get(
+        "/mcp/oauth/callback?code=code-1&state=state-1",
+    )
+
+    assert response.status_code == 200
+    text = await response.get_data(as_text=True)
+    assert "OAuth authorization completed." in text
+    assert callback_payload == {
+        "flow_id": None,
+        "code": "code-1",
+        "state": "state-1",
+        "error": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_get_stat(app: Quart, authenticated_header: dict):
     test_client = app.test_client()
     response = await test_client.get("/api/stat/get")
