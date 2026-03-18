@@ -26,32 +26,40 @@ async def migrate_token_usage(db_helper: BaseDatabase) -> None:
 
     logger.info("开始执行数据库迁移（添加 conversations.token_usage 列）...")
 
-    if not db_helper.is_sqlite:
-        logger.info("当前数据库后端不是 SQLite，跳过 token_usage 迁移")
+    if not db_helper.is_sqlite and not db_helper.is_postgres:
+        logger.info("当前数据库后端不支持 token_usage 迁移，跳过")
         await sp.put_async("global", "global", "migration_done_token_usage_1", True)
         return
 
     try:
         async with db_helper.get_db() as session:
-            # 检查列是否已存在
-            result = await session.execute(text("PRAGMA table_info(conversations)"))
-            columns = result.fetchall()
-            column_names = [col[1] for col in columns]
+            if db_helper.is_sqlite:
+                # 检查列是否已存在
+                result = await session.execute(text("PRAGMA table_info(conversations)"))
+                columns = result.fetchall()
+                column_names = [col[1] for col in columns]
 
-            if "token_usage" in column_names:
-                logger.info("token_usage 列已存在，跳过迁移")
-                await sp.put_async(
-                    "global", "global", "migration_done_token_usage_1", True
-                )
-                return
+                if "token_usage" in column_names:
+                    logger.info("token_usage 列已存在，跳过迁移")
+                    await sp.put_async(
+                        "global", "global", "migration_done_token_usage_1", True
+                    )
+                    return
 
-            # 添加 token_usage 列
-            await session.execute(
-                text(
-                    "ALTER TABLE conversations ADD COLUMN token_usage INTEGER NOT NULL DEFAULT 0"
+                # 添加 token_usage 列
+                await session.execute(
+                    text(
+                        "ALTER TABLE conversations ADD COLUMN token_usage INTEGER NOT NULL DEFAULT 0"
+                    )
                 )
-            )
-            await session.commit()
+                await session.commit()
+            else:
+                await session.execute(
+                    text(
+                        "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS token_usage INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+                await session.commit()
 
             logger.info("token_usage 列添加成功")
 
