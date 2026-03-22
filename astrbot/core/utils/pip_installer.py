@@ -1104,20 +1104,20 @@ class PipInstaller:
             if constraints_file_path:
                 args.extend(["-c", constraints_file_path])
 
-        package_manager = "uv pip" if _is_uv_available() else "pip"
-        logger.info(f"包管理器：{package_manager} {' '.join(args)}")
-        result_code = await self._run_pip_in_process(args)
+            package_manager = "uv pip" if _is_uv_available() else "pip"
+            logger.info(f"包管理器：{package_manager} {' '.join(args)}")
+            result_code = await self._run_pip_in_process(args)
 
-        if result_code != 0:
-            raise Exception(f"安装失败，错误码：{result_code}")
+            if result_code != 0:
+                raise Exception(f"安装失败，错误码：{result_code}")
 
-        if target_site_packages:
-            _prepend_sys_path(target_site_packages)
-            _ensure_plugin_dependencies_preferred(
-                target_site_packages,
-                requested_requirements,
-            )
-        importlib.invalidate_caches()
+            if target_site_packages:
+                _prepend_sys_path(target_site_packages)
+                _ensure_plugin_dependencies_preferred(
+                    target_site_packages,
+                    requested_requirements,
+                )
+            importlib.invalidate_caches()
 
     def prefer_installed_dependencies(self, requirements_path: str) -> None:
         """优先使用已安装在插件 site-packages 中的依赖，不执行安装。"""
@@ -1145,36 +1145,30 @@ class PipInstaller:
 
         original_handlers = list(logging.getLogger().handlers)
         try:
+            if _is_uv_available() and _get_uv_pip_main() is None:
+                # 使用 uv subprocess 模式
+                result_code, output = await asyncio.to_thread(_run_uv_pip_subprocess, args)
+                for line in output.splitlines():
+                    line = line.strip()
+                    if line:
+                        logger.info(line)
+                return result_code
+
+            # 使用 pip 或 uv pip Python API 模式
+            pip_main = _get_pip_main()
             result_code, output_lines = await asyncio.to_thread(
                 _run_pip_main_with_temporary_environ,
                 pip_main,
                 args,
             )
-        finally:
-            _cleanup_added_root_handlers(original_handlers)
-
-        if _is_uv_available() and _get_uv_pip_main() is None:
-            # 使用 uv subprocess 模式
-            result_code, output = await asyncio.to_thread(_run_uv_pip_subprocess, args)
-            for line in output.splitlines():
+            for line in output_lines:
                 line = line.strip()
                 if line:
                     logger.info(line)
 
-            _cleanup_added_root_handlers(original_handlers)
             return result_code
-
-        # 使用 pip 或 uv pip Python API 模式
-        pip_main = _get_pip_main()
-        result_code, output = await asyncio.to_thread(
-            _run_pip_main_with_output, pip_main, args
-        )
-        for line in output.splitlines():
-            line = line.strip()
-            if line:
-                logger.info(line)
-
-        return result_code
+        finally:
+            _cleanup_added_root_handlers(original_handlers)
 
     async def _run_pip_with_classification(self, args: list[str]) -> None:
         result_code = await self._run_pip_in_process(args)
