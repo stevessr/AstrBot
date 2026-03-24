@@ -31,7 +31,11 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import File, Image, Plain, Record, Video
 from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from astrbot.core.utils.io import download_image_by_url, file_to_base64
+from astrbot.core.utils.io import (
+    download_image_by_url,
+    file_to_base64_async,
+    file_to_base64  # noqa: F401
+)
 from astrbot.core.utils.tencent_record_helper import wav_to_tencent_silk
 
 
@@ -774,23 +778,23 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         file_name = None
         for i in message.chain:
             if isinstance(i, Plain):
-                parsed.plain_text += i.text
-            elif isinstance(i, Image) and not parsed.image_base64:
+                plain_text += i.text
+            elif isinstance(i, Image) and not image_base64:
                 if i.file and i.file.startswith("file:///"):
-                    parsed.image_base64 = await file_to_base64(i.file[8:])
-                    parsed.image_file_path = i.file[8:]
+                    image_base64 = await file_to_base64(i.file[8:])
+                    image_file_path = i.file[8:]
                 elif i.file and i.file.startswith("http"):
-                    parsed.image_file_path = await download_image_by_url(i.file)
-                    parsed.image_base64 = await file_to_base64(parsed.image_file_path)
+                    image_file_path = await download_image_by_url(i.file)
+                    image_base64 = await file_to_base64(image_file_path)
                 elif i.file and i.file.startswith("base64://"):
-                    parsed.image_base64 = i.file
+                    image_base64 = i.file
                 elif i.file:
-                    parsed.image_base64 = await file_to_base64(i.file)
-                    parsed.image_file_path = i.file
+                    image_base64 = await file_to_base64(i.file)
+                    image_file_path = i.file
                 else:
                     raise ValueError("Unsupported image file format")
-                parsed.image_base64 = parsed.image_base64.removeprefix("base64://")
-            elif isinstance(i, Record) and not parsed.record_file_path:
+                image_base64 = image_base64.removeprefix("base64://")
+            elif isinstance(i, Record) and not record_file_path:
                 if i.file:
                     record_wav_path = await i.convert_to_file_path()
                     temp_dir = get_astrbot_temp_path()
@@ -804,7 +808,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                             record_tecent_silk_path,
                         )
                         if duration > 0:
-                            parsed.record_file_path = record_tecent_silk_path
+                            record_file_path = record_tecent_silk_path
                         else:
                             logger.error("转换音频格式时出错：音频时长不大于 0")
                     except Exception as e:
