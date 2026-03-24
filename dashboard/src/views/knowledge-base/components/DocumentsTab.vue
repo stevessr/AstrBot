@@ -658,6 +658,8 @@ const getStageText = (stage: string) => {
     'cleaning': '清洗内容...',
     'parsing': '解析文档...',
     'chunking': '文本分块...',
+    'batching': '提交批处理...',
+    'batch_waiting': '等待批处理完成...',
     'embedding': '生成向量...'
   }
   return stageMap[stage] || stage
