@@ -10,7 +10,7 @@ from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.knowledge_base.kb_helper import KBHelper
 from astrbot.core.knowledge_base.models import KBDocument
-from astrbot.core.provider.provider import EmbeddingProvider
+from astrbot.core.provider.provider import EmbeddingProvider, RemoteBatchFailedError
 from astrbot.dashboard.server import AstrBotDashboard
 
 
@@ -215,6 +215,26 @@ class DummyEmbeddingProvider(EmbeddingProvider):
         super().__init__({}, {})
         self.calls = 0
         self.error_message = ""
+        self.remote_batch_calls = 0
+        self.remote_batch_error: Exception | None = None
+        self.remote_batch_result: list[list[float]] | None = None
+
+    def supports_remote_batch(self) -> bool:
+        return (
+            self.remote_batch_result is not None or self.remote_batch_error is not None
+        )
+
+    async def _run_remote_batch_job(
+        self, texts: list[str], progress_callback=None
+    ) -> list[list[float]]:
+        self.remote_batch_calls += 1
+        if progress_callback:
+            await progress_callback("batching", 1, 1)
+            await progress_callback("batch_waiting", len(texts), len(texts))
+        if self.remote_batch_error:
+            raise self.remote_batch_error
+        assert self.remote_batch_result is not None
+        return self.remote_batch_result
 
     async def get_embedding(self, text: str) -> list[float]:
         return [0.0]
@@ -284,3 +304,53 @@ async def test_get_embeddings_batch_falls_back_to_exponential_backoff(monkeypatc
 
     assert embeddings == [[0.0], [0.0]]
     assert sleep_calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_get_embeddings_batch_prefers_remote_batch():
+    provider = DummyEmbeddingProvider()
+    provider.remote_batch_result = [[1.0], [2.0]]
+    progress_calls = []
+
+    async def progress_callback(stage, current, total):
+        progress_calls.append((stage, current, total))
+
+    embeddings = await provider.get_embeddings_batch(
+        ["a", "b"],
+        batch_size=2,
+        tasks_limit=1,
+        max_retries=2,
+        progress_callback=progress_callback,
+    )
+
+    assert embeddings == [[1.0], [2.0]]
+    assert provider.remote_batch_calls == 1
+    assert provider.calls == 0
+    assert ("batching", 1, 1) in progress_calls
+    assert ("batch_waiting", 2, 2) in progress_calls
+
+
+@pytest.mark.asyncio
+async def test_get_embeddings_batch_falls_back_when_remote_batch_fails():
+    provider = DummyEmbeddingProvider()
+    provider.remote_batch_error = RemoteBatchFailedError("batch failed")
+    progress_calls = []
+
+    async def progress_callback(stage, current, total):
+        progress_calls.append((stage, current, total))
+
+    embeddings = await provider.get_embeddings_batch(
+        ["a", "b"],
+        batch_size=2,
+        tasks_limit=1,
+        max_retries=2,
+        progress_callback=progress_callback,
+    )
+
+    assert embeddings == [[0.0], [0.0]]
+    assert provider.remote_batch_calls == 1
+    assert provider.calls == 2
+    assert ("batching", 1, 1) in progress_calls
+    assert ("batch_waiting", 2, 2) in progress_calls
+    assert ("embedding", 0, 2) in progress_calls
+    assert ("embedding", 2, 2) in progress_calls

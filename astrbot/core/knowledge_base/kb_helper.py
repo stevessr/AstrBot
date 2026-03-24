@@ -306,8 +306,15 @@ class KBHelper:
                 await progress_callback("chunking", 100, 100)
 
             # 阶段3: 生成向量（带进度回调）
-            async def embedding_progress_callback(current, total) -> None:
-                if progress_callback:
+            async def embedding_progress_callback(*args) -> None:
+                if not progress_callback:
+                    return
+
+                if len(args) == 3:
+                    stage, current, total = args
+                    await progress_callback(stage, current, total)
+                elif len(args) == 2:
+                    current, total = args
                     await progress_callback("embedding", current, total)
 
             await self.vec_db.insert_batch(
