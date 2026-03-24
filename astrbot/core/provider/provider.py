@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import os
+import re
 from collections.abc import AsyncGenerator
 from typing import Literal, TypeAlias, Union
 
@@ -337,6 +338,23 @@ class EmbeddingProvider(AbstractProvider):
     async def test(self) -> None:
         await self.get_embedding("astrbot")
 
+    @staticmethod
+    def _extract_retry_after_seconds(error: Exception) -> float | None:
+        error_text = str(error)
+        patterns = [
+            r"Please retry in\s+([0-9]+(?:\.[0-9]+)?)s",
+            r"Please retry in\s+([0-9]+(?:\.[0-9]+)?)\s*seconds?",
+            r"retry after\s+([0-9]+(?:\.[0-9]+)?)\s*seconds?",
+            r"Retry-After\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, error_text, re.IGNORECASE)
+            if match:
+                retry_after = float(match.group(1))
+                if retry_after > 0:
+                    return retry_after
+        return None
+
     async def get_embeddings_batch(
         self,
         texts: list[str],
@@ -382,8 +400,12 @@ class EmbeddingProvider(AbstractProvider):
                             raise Exception(
                                 f"批次 {batch_idx} 处理失败，已重试 {max_retries} 次: {e!s}",
                             )
-                        # 等待一段时间后重试，使用指数退避
-                        await asyncio.sleep(2**attempt)
+                        retry_after = self._extract_retry_after_seconds(e)
+                        if retry_after is not None:
+                            await asyncio.sleep(retry_after)
+                        else:
+                            # 等待一段时间后重试，使用指数退避
+                            await asyncio.sleep(2**attempt)
 
         tasks = []
         for i in range(0, len(texts), batch_size):

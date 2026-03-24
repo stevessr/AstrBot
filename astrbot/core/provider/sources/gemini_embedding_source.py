@@ -54,7 +54,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             assert result.embeddings[0].values is not None
             return result.embeddings[0].values
         except APIError as e:
-            raise Exception(f"Gemini Embedding API请求失败: {e.message}")
+            raise Exception(f"Gemini Embedding API请求失败: {e.message}") from e
 
     async def get_embeddings(self, text: list[str]) -> list[list[float]]:
         """批量获取文本的嵌入"""
@@ -77,7 +77,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                 embeddings.append(embedding.values)
             return embeddings
         except APIError as e:
-            raise Exception(f"Gemini Embedding API批量请求失败: {e.message}")
+            raise Exception(f"Gemini Embedding API批量请求失败: {e.message}") from e
 
     def get_dim(self) -> int:
         """获取向量的维度"""
