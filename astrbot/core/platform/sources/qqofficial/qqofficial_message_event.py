@@ -106,7 +106,7 @@ _patch_qq_botpy_login()
 class QQOfficialMediaPayload:
     plain_text: str = ""
     image_base64: str | None = None
-    image_file_path: str | None = None
+    image_path: str | None = None
     record_file_path: str | None = None
     video_file_path: str | None = None
     file_file_path: str | None = None
@@ -118,7 +118,7 @@ class QQOfficialMediaPayload:
             [
                 self.plain_text,
                 self.image_base64,
-                self.image_file_path,
+                self.image_path,
                 self.record_file_path,
                 self.video_file_path,
                 self.file_file_path,
@@ -304,11 +304,8 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             plain_text = plain_text + "\n"
 
         payload: dict = {
-            # "content": parsed.plain_text,
             "markdown": (
-                MarkdownPayload(content=parsed.plain_text)
-                if parsed.plain_text
-                else None
+                MarkdownPayload(content=plain_text) if plain_text else None
             ),
             "msg_type": 2,
             "msg_id": self.message_obj.message_id,
@@ -448,8 +445,8 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 logger.debug(f"Message sent to C2C: {ret}")
 
             case botpy.message.Message():
-                if parsed.image_file_path:
-                    payload["file_image"] = parsed.image_file_path
+                if image_path:
+                    payload["file_image"] = image_path
                 # Guild text-channel send API (/channels/{channel_id}/messages) does not use v2 msg_type.
                 payload.pop("msg_type", None)
                 ret = await self._send_with_markdown_fallback(
@@ -463,8 +460,8 @@ class QQOfficialMessageEvent(AstrMessageEvent):
                 )
 
             case botpy.message.DirectMessage():
-                if parsed.image_file_path:
-                    payload["file_image"] = parsed.image_file_path
+                if image_path:
+                    payload["file_image"] = image_path
                 # Guild DM send API (/dms/{guild_id}/messages) does not use v2 msg_type.
                 payload.pop("msg_type", None)
                 ret = await self._send_with_markdown_fallback(
@@ -600,21 +597,6 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         file_type: int,
         srv_send_msg: bool = False,
         file_name: str | None = None,
-        **kwargs,
-    ) -> Media | None:
-        """上传媒体文件"""
-        return await self.upload_group_and_c2c_media(
-            file_source,
-            file_type,
-            srv_send_msg=srv_send_msg,
-            **kwargs,
-        )
-
-    async def upload_group_and_c2c_media(
-        self,
-        file_source: str,
-        file_type: int,
-        srv_send_msg: bool = False,
         is_base64: bool = False,
         **kwargs,
     ) -> Media | None:
@@ -722,7 +704,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
     async def _parse_to_qqofficial(message: MessageChain):
         plain_text = ""
         image_base64 = None  # only one img supported
-        image_file_path = None
+        image_path = None
         record_file_path = None
         video_file_source = None
         file_source = None
@@ -731,17 +713,19 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             if isinstance(i, Plain):
                 plain_text += i.text
             elif isinstance(i, Image) and not image_base64:
-                if i.file and i.file.startswith("file:///"):
-                    image_base64 = await file_to_base64(i.file[8:])
-                    image_file_path = i.file[8:]
+                if i.file and i.file.startswith("file://"):
+                    image_path = i.file[7:]
+                    if len(image_path) > 2 and image_path[0] == "/" and image_path[2] == ":":
+                        image_path = image_path[1:]
+                    image_base64 = await file_to_base64_async(image_path)
                 elif i.file and i.file.startswith("http"):
-                    image_file_path = await download_image_by_url(i.file)
-                    image_base64 = await file_to_base64(image_file_path)
+                    image_path = await download_image_by_url(i.file)
+                    image_base64 = await file_to_base64_async(image_path)
                 elif i.file and i.file.startswith("base64://"):
                     image_base64 = i.file
                 elif i.file:
-                    image_base64 = await file_to_base64(i.file)
-                    image_file_path = i.file
+                    image_base64 = await file_to_base64_async(i.file)
+                    image_path = i.file
                 else:
                     raise ValueError("Unsupported image file format")
                 image_base64 = image_base64.removeprefix("base64://")
@@ -786,7 +770,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         return (
             plain_text,
             image_base64,
-            image_file_path,
+            image_path,
             record_file_path,
             video_file_source,
             file_source,
