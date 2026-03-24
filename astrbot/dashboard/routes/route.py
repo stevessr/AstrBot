@@ -19,10 +19,24 @@ class Route:
         self.config = context.config
 
     def register_routes(self) -> None:
+        def _build_endpoint(path: str, method: str, func) -> str:
+            normalized_path = path.strip("/").replace("/", "_").replace("-", "_")
+            if not normalized_path:
+                normalized_path = "root"
+            return (
+                f"{self.__class__.__name__}_{func.__name__}_{method.lower()}_{normalized_path}"
+            )
+
         def _add_rule(path, method, func) -> None:
             # 统一添加 /api 前缀
             full_path = f"/api{path}"
-            self.app.add_url_rule(full_path, view_func=func, methods=[method])
+            endpoint = _build_endpoint(path, method, func)
+            self.app.add_url_rule(
+                full_path,
+                endpoint=endpoint,
+                view_func=func,
+                methods=[method],
+            )
 
         # 兼容字典和列表两种格式
         routes_to_register = (
