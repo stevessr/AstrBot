@@ -12,6 +12,7 @@ from astrbot.core.exceptions import KnowledgeBaseUploadError
 from astrbot.core.knowledge_base.kb_helper import KBHelper
 from astrbot.core.knowledge_base.models import KBDocument
 from astrbot.dashboard.routes.knowledge_base import KnowledgeBaseRoute
+from astrbot.core.provider.provider import EmbeddingProvider
 from astrbot.dashboard.server import AstrBotDashboard
 
 
@@ -253,3 +254,79 @@ async def test_import_documents_invalid_input(app: Quart, authenticated_header: 
     data = await response.get_json()
     assert data["status"] == "error"
     assert "chunks 必须是非空字符串列表" in data["message"]
+
+
+class DummyEmbeddingProvider(EmbeddingProvider):
+    def __init__(self):
+        super().__init__({}, {})
+        self.calls = 0
+        self.error_message = ""
+
+    async def get_embedding(self, text: str) -> list[float]:
+        return [0.0]
+
+    async def get_embeddings(self, text: list[str]) -> list[list[float]]:
+        self.calls += 1
+        if self.calls == 1:
+            raise Exception(self.error_message)
+        return [[0.0] for _ in text]
+
+    def get_dim(self) -> int:
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_extract_retry_after_seconds():
+    provider = DummyEmbeddingProvider()
+    assert (
+        provider._extract_retry_after_seconds(Exception("Please retry in 25.776s."))
+        == 25.776
+    )
+    assert provider._extract_retry_after_seconds(Exception("Retry-After: 12")) == 12.0
+    assert provider._extract_retry_after_seconds(Exception("rate limited")) is None
+
+
+@pytest.mark.asyncio
+async def test_get_embeddings_batch_respects_retry_after(monkeypatch):
+    provider = DummyEmbeddingProvider()
+    provider.error_message = (
+        "Gemini Embedding API 批量请求失败：Please retry in 25.776s."
+    )
+    sleep_calls = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    embeddings = await provider.get_embeddings_batch(
+        ["a", "b"],
+        batch_size=2,
+        tasks_limit=1,
+        max_retries=2,
+    )
+
+    assert embeddings == [[0.0], [0.0]]
+    assert sleep_calls == [25.776]
+
+
+@pytest.mark.asyncio
+async def test_get_embeddings_batch_falls_back_to_exponential_backoff(monkeypatch):
+    provider = DummyEmbeddingProvider()
+    provider.error_message = "temporary network error"
+    sleep_calls = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    embeddings = await provider.get_embeddings_batch(
+        ["a", "b"],
+        batch_size=2,
+        tasks_limit=1,
+        max_retries=2,
+    )
+
+    assert embeddings == [[0.0], [0.0]]
+    assert sleep_calls == [1]
