@@ -5,6 +5,7 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Literal, TypeAlias, Union
 
+from astrbot.core import logger
 from astrbot.core.agent.message import ContentPart, Message, is_checkpoint_message
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.provider.entities import (
@@ -314,6 +315,10 @@ class TTSProvider(AbstractProvider):
             pass
 
 
+class RemoteBatchFailedError(Exception):
+    """远端 Batch API 不可用或执行失败，调用方应回退到普通 embedding。"""
+
+
 class EmbeddingProvider(AbstractProvider):
     def __init__(self, provider_config: dict, provider_settings: dict) -> None:
         super().__init__(provider_config)
@@ -338,6 +343,16 @@ class EmbeddingProvider(AbstractProvider):
     async def test(self) -> None:
         await self.get_embedding("astrbot")
 
+    def supports_remote_batch(self) -> bool:
+        return False
+
+    async def _run_remote_batch_job(
+        self,
+        texts: list[str],
+        progress_callback=None,
+    ) -> list[list[float]]:
+        raise RemoteBatchFailedError("provider does not support remote batch")
+
     @staticmethod
     def _extract_retry_after_seconds(error: Exception) -> float | None:
         error_text = str(error)
@@ -355,7 +370,18 @@ class EmbeddingProvider(AbstractProvider):
                     return retry_after
         return None
 
-    async def get_embeddings_batch(
+    async def _emit_embedding_progress(
+        self, progress_callback, current: int, total: int, stage: str = "embedding"
+    ) -> None:
+        if not progress_callback:
+            return
+
+        try:
+            await progress_callback(stage, current, total)
+        except TypeError:
+            await progress_callback(current, total)
+
+    async def _get_embeddings_batch_fallback(
         self,
         texts: list[str],
         batch_size: int = 16,
@@ -363,19 +389,6 @@ class EmbeddingProvider(AbstractProvider):
         max_retries: int = 3,
         progress_callback=None,
     ) -> list[list[float]]:
-        """批量获取文本的向量，分批处理以节省内存
-
-        Args:
-            texts: 文本列表
-            batch_size: 每批处理的文本数量
-            tasks_limit: 并发任务数量限制
-            max_retries: 失败时的最大重试次数
-            progress_callback: 进度回调函数，接收参数 (current, total)
-
-        Returns:
-            向量列表
-
-        """
         semaphore = asyncio.Semaphore(tasks_limit)
         all_embeddings: list[list[float]] = []
         failed_batches: list[tuple[int, list[str]]] = []
@@ -390,12 +403,15 @@ class EmbeddingProvider(AbstractProvider):
                         batch_embeddings = await self.get_embeddings(batch_texts)
                         all_embeddings.extend(batch_embeddings)
                         completed_count += len(batch_texts)
-                        if progress_callback:
-                            await progress_callback(completed_count, total_count)
+                        await self._emit_embedding_progress(
+                            progress_callback,
+                            completed_count,
+                            total_count,
+                            "embedding",
+                        )
                         return
                     except Exception as e:
                         if attempt == max_retries - 1:
-                            # 最后一次重试失败，记录失败的批次
                             failed_batches.append((batch_idx, batch_texts))
                             raise Exception(
                                 f"批次 {batch_idx} 处理失败，已重试 {max_retries} 次: {e!s}",
@@ -404,7 +420,6 @@ class EmbeddingProvider(AbstractProvider):
                         if retry_after is not None:
                             await asyncio.sleep(retry_after)
                         else:
-                            # 等待一段时间后重试，使用指数退避
                             await asyncio.sleep(2**attempt)
 
         tasks = []
@@ -413,10 +428,8 @@ class EmbeddingProvider(AbstractProvider):
             batch_idx = i // batch_size
             tasks.append(process_batch(batch_idx, batch_texts))
 
-        # 收集所有任务的结果，包括失败的任务
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 检查是否有失败的任务
         errors = [r for r in results if isinstance(r, Exception)]
         if errors:
             error_msg = (
@@ -425,6 +438,53 @@ class EmbeddingProvider(AbstractProvider):
             raise Exception(error_msg)
 
         return all_embeddings
+
+    async def get_embeddings_batch(
+        self,
+        texts: list[str],
+        batch_size: int = 16,
+        tasks_limit: int = 3,
+        max_retries: int = 3,
+        progress_callback=None,
+    ) -> list[list[float]]:
+        """批量获取文本的向量，优先尝试远端 Batch API，失败时回退到本地分批请求。
+
+        Args:
+            texts: 文本列表
+            batch_size: 每批处理的文本数量
+            tasks_limit: 并发任务数量限制
+            max_retries: 失败时的最大重试次数
+            progress_callback: 进度回调函数，优先接收参数 (stage, current, total)
+
+        Returns:
+            向量列表
+
+        """
+        if not texts:
+            return []
+
+        if self.supports_remote_batch():
+            try:
+                return await self._run_remote_batch_job(
+                    texts=texts,
+                    progress_callback=progress_callback,
+                )
+            except RemoteBatchFailedError as e:
+                await self._emit_embedding_progress(
+                    progress_callback,
+                    0,
+                    len(texts),
+                    "embedding",
+                )
+                logger.warning(f"远端 Batch API 不可用，回退普通 embedding: {e}")
+
+        return await self._get_embeddings_batch_fallback(
+            texts=texts,
+            batch_size=batch_size,
+            tasks_limit=tasks_limit,
+            max_retries=max_retries,
+            progress_callback=progress_callback,
+        )
 
 
 class RerankProvider(AbstractProvider):

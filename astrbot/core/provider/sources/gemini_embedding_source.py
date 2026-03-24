@@ -1,3 +1,5 @@
+import asyncio
+import time
 from typing import cast
 
 from google import genai
@@ -7,7 +9,7 @@ from google.genai.errors import APIError
 from astrbot import logger
 
 from ..entities import ProviderType
-from ..provider import EmbeddingProvider
+from ..provider import EmbeddingProvider, RemoteBatchFailedError
 from ..register import register_provider_adapter
 
 
@@ -41,6 +43,87 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             "embedding_model",
             "gemini-embedding-exp-03-07",
         )
+        self.batch_poll_interval = float(provider_config.get("batch_poll_interval", 5))
+        self.batch_timeout = float(provider_config.get("batch_timeout", 300))
+
+    def supports_remote_batch(self) -> bool:
+        return True
+
+    async def _run_remote_batch_job(
+        self,
+        texts: list[str],
+        progress_callback=None,
+    ) -> list[list[float]]:
+        await self._emit_embedding_progress(
+            progress_callback, 0, len(texts), "batching"
+        )
+        try:
+            job = await self.client.batches.create_embeddings(
+                model=self.model,
+                src={
+                    "inlined_requests": {
+                        "contents": texts,
+                        "config": {
+                            "output_dimensionality": self.get_dim(),
+                        },
+                    }
+                },
+                config={"display_name": "AstrBot embedding batch"},
+            )
+        except Exception as e:
+            raise RemoteBatchFailedError(f"提交 Gemini Batch 失败: {e}") from e
+
+        await self._emit_embedding_progress(progress_callback, 1, 1, "batching")
+
+        started_at = time.monotonic()
+        while not job.done:
+            if time.monotonic() - started_at > self.batch_timeout:
+                raise RemoteBatchFailedError(
+                    f"Gemini Batch 超时，job={job.name}, timeout={self.batch_timeout}s"
+                )
+            await self._emit_embedding_progress(
+                progress_callback, 0, 1, "batch_waiting"
+            )
+            await asyncio.sleep(self.batch_poll_interval)
+            try:
+                job = await self.client.batches.get(name=job.name)
+            except Exception as e:
+                raise RemoteBatchFailedError(f"查询 Gemini Batch 状态失败: {e}") from e
+
+        state_name = job.state.name if job.state else "UNKNOWN"
+        if state_name != "JOB_STATE_SUCCEEDED":
+            raise RemoteBatchFailedError(
+                f"Gemini Batch 执行失败，state={state_name}, error={job.error}"
+            )
+
+        responses = (
+            job.dest.inlined_embed_content_responses
+            if job.dest and job.dest.inlined_embed_content_responses
+            else None
+        )
+        if not responses or len(responses) != len(texts):
+            raise RemoteBatchFailedError(
+                f"Gemini Batch 返回结果数量异常: expected={len(texts)}, actual={len(responses) if responses else 0}"
+            )
+
+        embeddings: list[list[float]] = []
+        for response in responses:
+            if response.error:
+                raise RemoteBatchFailedError(
+                    f"Gemini Batch 子请求失败: {response.error}"
+                )
+            if (
+                not response.response
+                or not response.response.embedding
+                or response.response.embedding.values is None
+            ):
+                raise RemoteBatchFailedError("Gemini Batch 返回了空 embedding")
+            embeddings.append(response.response.embedding.values)
+
+        await self._emit_embedding_progress(
+            progress_callback, len(texts), len(texts), "batch_waiting"
+        )
+        return embeddings
 
     async def get_embedding(self, text: str) -> list[float]:
         """获取文本的嵌入"""
