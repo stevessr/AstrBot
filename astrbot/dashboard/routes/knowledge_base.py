@@ -1176,7 +1176,7 @@ class KnowledgeBaseRoute(Route):
             asyncio.create_task(
                 self._background_upload_from_url_task(
                     task_id=task_id,
-                    kb_helper=kb_helper,
+                    kb_id=kb_id,
                     url=url,
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
@@ -1210,7 +1210,7 @@ class KnowledgeBaseRoute(Route):
     async def _background_upload_from_url_task(
         self,
         task_id: str,
-        kb_helper,
+        kb_id: str,
         url: str,
         chunk_size: int,
         chunk_overlap: int,
@@ -1238,7 +1238,9 @@ class KnowledgeBaseRoute(Route):
             progress_callback = self._make_progress_callback(task_id, 0, f"URL: {url}")
 
             # 上传文档
-            doc = await kb_helper.upload_from_url(
+            kb_manager = self._get_kb_manager()
+            doc = await kb_manager.upload_from_url(
+                kb_id=kb_id,
                 url=url,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,

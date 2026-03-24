@@ -1,3 +1,4 @@
+import asyncio
 import traceback
 from pathlib import Path
 
@@ -33,6 +34,7 @@ class KnowledgeBaseManager:
         self._session_deleted_callback_registered = False
 
         self.kb_insts: dict[str, KBHelper] = {}
+        self.url_import_semaphore = asyncio.Semaphore(2)
 
     async def initialize(self) -> None:
         """初始化知识库模块"""
@@ -303,6 +305,8 @@ class KnowledgeBaseManager:
         tasks_limit: int = 3,
         max_retries: int = 3,
         progress_callback=None,
+        enable_cleaning: bool = False,
+        cleaning_provider_id: str | None = None,
     ) -> KBDocument:
         """从 URL 上传文档到指定的知识库
 
@@ -315,6 +319,8 @@ class KnowledgeBaseManager:
             tasks_limit: 并发任务限制
             max_retries: 最大重试次数
             progress_callback: 进度回调函数
+            enable_cleaning: 是否启用内容清洗
+            cleaning_provider_id: 内容清洗使用的 LLM Provider ID
 
         Returns:
             KBDocument: 上传的文档对象
@@ -327,12 +333,15 @@ class KnowledgeBaseManager:
         if not kb_helper:
             raise ValueError(f"Knowledge base with id {kb_id} not found.")
 
-        return await kb_helper.upload_from_url(
-            url=url,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            batch_size=batch_size,
-            tasks_limit=tasks_limit,
-            max_retries=max_retries,
-            progress_callback=progress_callback,
-        )
+        async with self.url_import_semaphore:
+            return await kb_helper.upload_from_url(
+                url=url,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                batch_size=batch_size,
+                tasks_limit=tasks_limit,
+                max_retries=max_retries,
+                progress_callback=progress_callback,
+                enable_cleaning=enable_cleaning,
+                cleaning_provider_id=cleaning_provider_id,
+            )
