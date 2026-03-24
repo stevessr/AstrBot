@@ -1,3 +1,5 @@
+import asyncio
+import traceback
 from pathlib import Path
 
 from astrbot.core import logger
@@ -32,6 +34,7 @@ class KnowledgeBaseManager:
         self._session_deleted_callback_registered = False
 
         self.kb_insts: dict[str, KBHelper] = {}
+        self.url_import_semaphore = asyncio.Semaphore(2)
 
     async def initialize(self) -> None:
         """初始化知识库模块"""
@@ -52,10 +55,10 @@ class KnowledgeBaseManager:
             await self.load_kbs()
 
         except ImportError as e:
-            logger.error(f"知识库模块导入失败: {e}")
-            logger.warning("请确保已安装所需依赖: pypdf, aiofiles, Pillow, rank-bm25")
+            logger.error(f"知识库模块导入失败：{e}")
+            logger.warning("请确保已安装所需依赖：pypdf, aiofiles, Pillow, rank-bm25")
         except Exception as e:
-            logger.error(f"知识库模块初始化失败: {e}", exc_info=True)
+            logger.error(f"知识库模块初始化失败：{e}", exc_info=True)
 
     async def _init_kb_database(self) -> None:
         self.kb_db = KBSQLiteDatabase(DB_PATH.as_posix())
@@ -79,7 +82,7 @@ class KnowledgeBaseManager:
             except Exception as e:
                 kb_helper.init_error = str(e)
                 logger.error(
-                    f"知识库 {record.kb_name}({record.kb_id}) 初始化失败: {e}",
+                    f"知识库 {record.kb_name}({record.kb_id}) 初始化失败：{e}",
                     exc_info=True,
                 )
             self.kb_insts[record.kb_id] = kb_helper
@@ -99,7 +102,7 @@ class KnowledgeBaseManager:
     ) -> KBHelper:
         """创建新的知识库实例"""
         if embedding_provider_id is None:
-            raise ValueError("创建知识库时必须提供embedding_provider_id")
+            raise ValueError("创建知识库时必须提供 embedding_provider_id")
         kb = KnowledgeBase(
             kb_name=kb_name,
             description=description,
@@ -243,7 +246,7 @@ class KnowledgeBaseManager:
             kb.top_m_final = previous_state["top_m_final"]
             kb_helper.init_error = previous_init_error
             logger.error(
-                f"知识库 {kb.kb_name}({kb.kb_id}) 重新初始化失败，继续使用旧实例: {e}",
+                f"知识库 {kb.kb_name}({kb.kb_id}) 重新初始化失败，继续使用旧实例：{e}",
                 exc_info=True,
             )
             return kb_helper
@@ -274,7 +277,7 @@ class KnowledgeBaseManager:
             if kb_helper := await self.get_kb_by_name(kb_name):
                 if kb_helper.init_error:
                     unavailable_kbs.append((kb_name, kb_helper.init_error))
-                    logger.warning(f"知识库 {kb_name} 不可用: {kb_helper.init_error}")
+                    logger.warning(f"知识库 {kb_name} 不可用：{kb_helper.init_error}")
                     continue
                 kb_ids.append(kb_helper.kb.kb_id)
                 kb_id_helper_map[kb_helper.kb.kb_id] = kb_helper
@@ -282,7 +285,7 @@ class KnowledgeBaseManager:
         # all requested KBs are unavailable
         if not kb_ids and unavailable_kbs:
             errors = "; ".join(f"{n}: {e}" for n, e in unavailable_kbs)
-            raise ValueError(f"所有请求的知识库均不可用: {errors}")
+            raise ValueError(f"所有请求的知识库均不可用：{errors}")
 
         if not kb_ids:
             return {}
@@ -329,24 +332,24 @@ class KnowledgeBaseManager:
             str: 格式化的上下文文本
 
         """
-        lines = ["以下是相关的知识库内容,请参考这些信息回答用户的问题:\n"]
+        lines = ["以下是相关的知识库内容，请参考这些信息回答用户的问题:\n"]
 
         for i, result in enumerate(results, 1):
             lines.append(f"【知识 {i}】")
-            lines.append(f"来源: {result.kb_name} / {result.doc_name}")
-            lines.append(f"内容: {result.content}")
-            lines.append(f"相关度: {result.score:.2f}")
+            lines.append(f"来源：{result.kb_name} / {result.doc_name}")
+            lines.append(f"内容：{result.content}")
+            lines.append(f"相关度：{result.score:.2f}")
             lines.append("")
 
         return "\n".join(lines)
 
     async def terminate(self) -> None:
-        """终止所有知识库实例,关闭数据库连接"""
+        """终止所有知识库实例，关闭数据库连接"""
         for kb_id, kb_helper in self.kb_insts.items():
             try:
                 await kb_helper.terminate()
             except Exception as e:
-                logger.error(f"关闭知识库 {kb_id} 失败: {e}")
+                logger.error(f"关闭知识库 {kb_id} 失败：{e}")
 
         self.kb_insts.clear()
 
@@ -355,7 +358,7 @@ class KnowledgeBaseManager:
             try:
                 await self.kb_db.close()
             except Exception as e:
-                logger.error(f"关闭知识库元数据数据库失败: {e}")
+                logger.error(f"关闭知识库元数据数据库失败：{e}")
 
     async def upload_from_url(
         self,
@@ -367,6 +370,8 @@ class KnowledgeBaseManager:
         tasks_limit: int = 3,
         max_retries: int = 3,
         progress_callback=None,
+        enable_cleaning: bool = False,
+        cleaning_provider_id: str | None = None,
     ) -> KBDocument:
         """从 URL 上传文档到指定的知识库
 
@@ -379,6 +384,8 @@ class KnowledgeBaseManager:
             tasks_limit: 并发任务限制
             max_retries: 最大重试次数
             progress_callback: 进度回调函数
+            enable_cleaning: 是否启用内容清洗
+            cleaning_provider_id: 内容清洗使用的 LLM Provider ID
 
         Returns:
             KBDocument: 上传的文档对象
@@ -391,12 +398,15 @@ class KnowledgeBaseManager:
         if not kb_helper:
             raise ValueError(f"Knowledge base with id {kb_id} not found.")
 
-        return await kb_helper.upload_from_url(
-            url=url,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            batch_size=batch_size,
-            tasks_limit=tasks_limit,
-            max_retries=max_retries,
-            progress_callback=progress_callback,
-        )
+        async with self.url_import_semaphore:
+            return await kb_helper.upload_from_url(
+                url=url,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                batch_size=batch_size,
+                tasks_limit=tasks_limit,
+                max_retries=max_retries,
+                progress_callback=progress_callback,
+                enable_cleaning=enable_cleaning,
+                cleaning_provider_id=cleaning_provider_id,
+            )
