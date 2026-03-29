@@ -1,4 +1,4 @@
-/* Auto-generated MDI subset – 248 icons */
+/* Auto-generated MDI subset – 259 icons */
 /* Do not edit manually. Run: pnpm run subset-icons */
 
 @font-face {
@@ -300,8 +300,16 @@
   content: "\F01BC";
 }
 
+.mdi-database-check::before {
+  content: "\F0AA9";
+}
+
 .mdi-database-cog::before {
   content: "\F164B";
+}
+
+.mdi-database-export::before {
+  content: "\F095E";
 }
 
 .mdi-database-off::before {
@@ -418,6 +426,10 @@
 
 .mdi-file-question-outline::before {
   content: "\F1036";
+}
+
+.mdi-file-search-outline::before {
+  content: "\F0C7D";
 }
 
 .mdi-file-upload::before {
@@ -572,8 +584,28 @@
   content: "\F0318";
 }
 
+.mdi-language-css3::before {
+  content: "\F031C";
+}
+
+.mdi-language-html5::before {
+  content: "\F031D";
+}
+
+.mdi-language-javascript::before {
+  content: "\F031E";
+}
+
 .mdi-language-markdown::before {
   content: "\F0354";
+}
+
+.mdi-language-python::before {
+  content: "\F0320";
+}
+
+.mdi-language-typescript::before {
+  content: "\F06E6";
 }
 
 .mdi-layers-outline::before {
@@ -618,6 +650,10 @@
 
 .mdi-magnify::before {
   content: "\F0349";
+}
+
+.mdi-magnify-scan::before {
+  content: "\F1276";
 }
 
 .mdi-memory::before {
@@ -844,6 +880,10 @@
   content: "\F0CC8";
 }
 
+.mdi-shield-key-outline::before {
+  content: "\F0BC5";
+}
+
 .mdi-shuffle-variant::before {
   content: "\F049F";
 }
@@ -1006,6 +1046,10 @@
 
 .mdi-wrench-outline::before {
   content: "\F0BE0";
+}
+
+.mdi-xml::before {
+  content: "\F05C0";
 }
 
 .mdi-zip-box::before {
