@@ -246,7 +246,6 @@ import PersonaSelector from './PersonaSelector.vue'
 import KnowledgeBaseSelector from './KnowledgeBaseSelector.vue'
 import PluginSetSelector from './PluginSetSelector.vue'
 import T2ITemplateEditor from './T2ITemplateEditor.vue'
-import { ref } from 'vue'
 import { useI18n, useModuleI18n } from '@/i18n/composables'
 
 const numericTemp = ref(null)
