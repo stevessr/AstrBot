@@ -11,6 +11,7 @@ from astrbot.core.db.po import (
     ChatUIProject,
     CommandConfig,
     CommandConflict,
+    ConversationCompressionSnapshot,
     ConversationV2,
     CronJob,
     Persona,
@@ -44,6 +45,7 @@ from astrbot.core.utils.astrbot_path import (
 MAIN_DB_MODELS: dict[str, type[SQLModel]] = {
     "platform_stats": PlatformStat,
     "conversations": ConversationV2,
+    "conversation_compression_snapshots": ConversationCompressionSnapshot,
     "personas": Persona,
     "persona_folders": PersonaFolder,
     "preferences": Preference,
