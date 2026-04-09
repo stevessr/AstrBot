@@ -15,6 +15,7 @@ from astrbot.core.db.po import (
     ChatUIProject,
     CommandConfig,
     CommandConflict,
+    ConversationCompressionSnapshot,
     ConversationV2,
     CronJob,
     Persona,
@@ -394,6 +395,11 @@ class SQLiteDatabase(BaseDatabase):
                         col(ConversationV2.conversation_id) == cid,
                     ),
                 )
+                await session.execute(
+                    delete(ConversationCompressionSnapshot).where(
+                        col(ConversationCompressionSnapshot.conversation_id) == cid,
+                    ),
+                )
 
     async def delete_conversations_by_user_id(self, user_id: str) -> None:
         async with self.get_db() as session:
@@ -404,6 +410,76 @@ class SQLiteDatabase(BaseDatabase):
                         col(ConversationV2.user_id) == user_id
                     ),
                 )
+                await session.execute(
+                    delete(ConversationCompressionSnapshot).where(
+                        col(ConversationCompressionSnapshot.user_id) == user_id,
+                    ),
+                )
+
+    async def create_conversation_compression_snapshot(
+        self,
+        conversation_id: str,
+        user_id: str,
+        history: list[dict],
+    ) -> ConversationCompressionSnapshot:
+        async with self.get_db() as session:
+            session: AsyncSession
+            async with session.begin():
+                snapshot = ConversationCompressionSnapshot(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    history=history,
+                )
+                session.add(snapshot)
+                await session.flush()
+                await session.refresh(snapshot)
+                return snapshot
+
+    async def get_conversation_compression_snapshots(
+        self,
+        conversation_id: str,
+        user_id: str,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ConversationCompressionSnapshot]:
+        async with self.get_db() as session:
+            session: AsyncSession
+            query = (
+                select(ConversationCompressionSnapshot)
+                .where(
+                    ConversationCompressionSnapshot.conversation_id == conversation_id,
+                    ConversationCompressionSnapshot.user_id == user_id,
+                )
+                .order_by(
+                    desc(ConversationCompressionSnapshot.created_at),
+                    desc(ConversationCompressionSnapshot.id),
+                )
+                .offset(offset)
+            )
+            if limit is not None:
+                query = query.limit(limit)
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
+    async def delete_conversation_compression_snapshots(
+        self,
+        conversation_id: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
+        async with self.get_db() as session:
+            session: AsyncSession
+            async with session.begin():
+                query = delete(ConversationCompressionSnapshot)
+                if conversation_id is not None:
+                    query = query.where(
+                        col(ConversationCompressionSnapshot.conversation_id)
+                        == conversation_id,
+                    )
+                if user_id is not None:
+                    query = query.where(
+                        col(ConversationCompressionSnapshot.user_id) == user_id,
+                    )
+                await session.execute(query)
 
     async def get_session_conversations(
         self,

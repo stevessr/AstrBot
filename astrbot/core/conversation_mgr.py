@@ -10,7 +10,11 @@ from collections.abc import Awaitable, Callable
 from astrbot.core import sp
 from astrbot.core.agent.message import AssistantMessageSegment, UserMessageSegment
 from astrbot.core.db import BaseDatabase
-from astrbot.core.db.po import Conversation, ConversationV2
+from astrbot.core.db.po import (
+    Conversation,
+    ConversationCompressionSnapshot,
+    ConversationV2,
+)
 from astrbot.core.utils.datetime_utils import to_utc_timestamp
 
 
@@ -364,29 +368,43 @@ class ConversationManager:
             content=history,
         )
 
-    async def get_human_readable_context(
+    async def save_compression_snapshot(
         self,
         unified_msg_origin: str,
         conversation_id: str,
+        history: list[dict],
+    ) -> ConversationCompressionSnapshot:
+        """Save a pre-compression conversation snapshot."""
+        return await self.db.create_conversation_compression_snapshot(
+            conversation_id=conversation_id,
+            user_id=unified_msg_origin,
+            history=history,
+        )
+
+    async def get_compression_snapshots(
+        self,
+        unified_msg_origin: str,
+        conversation_id: str,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ConversationCompressionSnapshot]:
+        """Get saved conversation compression snapshots."""
+        return await self.db.get_conversation_compression_snapshots(
+            conversation_id=conversation_id,
+            user_id=unified_msg_origin,
+            offset=offset,
+            limit=limit,
+        )
+
+    def _get_human_readable_context_from_history(
+        self,
+        history: list[dict],
         page: int = 1,
         page_size: int = 10,
     ) -> tuple[list[str], int]:
-        """获取人类可读的上下文.
+        """Convert stored conversation history to paged human-readable text."""
+        page = max(1, page)
 
-        Args:
-            unified_msg_origin (str): 统一的消息来源字符串。格式为 platform_name:message_type:session_id
-            conversation_id (str): 对话 ID, 是 uuid 格式的字符串
-            page (int): 页码
-            page_size (int): 每页大小
-
-        """
-        conversation = await self.get_conversation(unified_msg_origin, conversation_id)
-        if not conversation:
-            return [], 0
-        history = json.loads(conversation.history)
-
-        # contexts_groups 存放按顺序的段落（每个段落是一个 str 列表），
-        # 之后会被展平成一个扁平的 str 列表返回。
         contexts_groups: list[list[str]] = []
         temp_contexts: list[str] = []
         for record in history:
@@ -416,3 +434,52 @@ class ConversationManager:
             total_pages += 1
 
         return paged_contexts, total_pages
+
+    async def get_human_readable_context(
+        self,
+        unified_msg_origin: str,
+        conversation_id: str,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> tuple[list[str], int]:
+        """获取人类可读的上下文.
+
+        Args:
+            unified_msg_origin (str): 统一的消息来源字符串。格式为 platform_name:message_type:session_id
+            conversation_id (str): 对话 ID, 是 uuid 格式的字符串
+            page (int): 页码
+            page_size (int): 每页大小
+
+        """
+        conversation = await self.get_conversation(unified_msg_origin, conversation_id)
+        if not conversation:
+            return [], 0
+        history = json.loads(conversation.history)
+        return self._get_human_readable_context_from_history(history, page, page_size)
+
+    async def get_human_readable_snapshot_context(
+        self,
+        unified_msg_origin: str,
+        conversation_id: str,
+        snapshot_index: int,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> tuple[list[str], int, ConversationCompressionSnapshot | None]:
+        """Get paged human-readable text for a saved compression snapshot."""
+        normalized_index = max(1, snapshot_index)
+        snapshots = await self.get_compression_snapshots(
+            unified_msg_origin,
+            conversation_id,
+            offset=normalized_index - 1,
+            limit=1,
+        )
+        if not snapshots:
+            return [], 0, None
+
+        snapshot = snapshots[0]
+        contexts, total_pages = self._get_human_readable_context_from_history(
+            snapshot.history or [],
+            page,
+            page_size,
+        )
+        return contexts, total_pages, snapshot

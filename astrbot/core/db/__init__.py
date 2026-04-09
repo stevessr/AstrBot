@@ -15,6 +15,7 @@ from astrbot.core.db.po import (
     ChatUIProject,
     CommandConfig,
     CommandConflict,
+    ConversationCompressionSnapshot,
     ConversationV2,
     CronJob,
     Persona,
@@ -218,6 +219,36 @@ class BaseDatabase(abc.ABC):
     @abc.abstractmethod
     async def delete_conversations_by_user_id(self, user_id: str) -> None:
         """Delete all conversations for a specific user."""
+        ...
+
+    @abc.abstractmethod
+    async def create_conversation_compression_snapshot(
+        self,
+        conversation_id: str,
+        user_id: str,
+        history: list[dict],
+    ) -> ConversationCompressionSnapshot:
+        """Persist a conversation snapshot captured before manual compression."""
+        ...
+
+    @abc.abstractmethod
+    async def get_conversation_compression_snapshots(
+        self,
+        conversation_id: str,
+        user_id: str,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ConversationCompressionSnapshot]:
+        """Get conversation snapshots ordered from newest to oldest."""
+        ...
+
+    @abc.abstractmethod
+    async def delete_conversation_compression_snapshots(
+        self,
+        conversation_id: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
+        """Delete conversation compression snapshots by conversation and/or user."""
         ...
 
     @abc.abstractmethod

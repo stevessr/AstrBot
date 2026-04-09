@@ -53,15 +53,7 @@ class ContextManager:
             The processed message list.
         """
         try:
-            result = messages
-
-            # 1. 基于轮次的截断 (Enforce max turns)
-            if self.config.enforce_max_turns != -1:
-                result = self.truncator.truncate_by_turns(
-                    result,
-                    keep_most_recent_turns=self.config.enforce_max_turns,
-                    drop_turns=self.config.truncate_turns,
-                )
+            result = self._apply_turn_limit(messages)
 
             # 2. 基于 token 的压缩
             if self.config.max_context_tokens > 0:
@@ -78,6 +70,40 @@ class ContextManager:
         except Exception as e:
             logger.error(f"Error during context processing: {e}", exc_info=True)
             return messages
+
+    async def manual_compress(
+        self,
+        messages: list[Message],
+        trusted_token_usage: int = 0,
+    ) -> list[Message]:
+        """Manually trigger compression without checking thresholds."""
+        try:
+            result = self._apply_turn_limit(messages)
+            if not result:
+                return result
+
+            prev_tokens = 0
+            if self.config.max_context_tokens > 0:
+                prev_tokens = self.token_counter.count_tokens(
+                    result,
+                    trusted_token_usage,
+                )
+
+            return await self._run_compression(result, prev_tokens)
+        except Exception as e:
+            logger.error(f"Error during manual compression: {e}", exc_info=True)
+            return messages
+
+    def _apply_turn_limit(self, messages: list[Message]) -> list[Message]:
+        """Apply the configured turn limit before compression."""
+        if self.config.enforce_max_turns == -1:
+            return messages
+
+        return self.truncator.truncate_by_turns(
+            messages,
+            keep_most_recent_turns=self.config.enforce_max_turns,
+            drop_turns=self.config.truncate_turns,
+        )
 
     async def _run_compression(
         self, messages: list[Message], prev_tokens: int
@@ -100,15 +126,24 @@ class ContextManager:
         tokens_after_summary = self.token_counter.count_tokens(messages)
 
         # calculate compress rate
-        compress_rate = (tokens_after_summary / self.config.max_context_tokens) * 100
-        logger.info(
-            f"Compress completed."
-            f" {prev_tokens} -> {tokens_after_summary} tokens,"
-            f" compression rate: {compress_rate:.2f}%.",
-        )
+        if self.config.max_context_tokens > 0:
+            compress_rate = (
+                tokens_after_summary / self.config.max_context_tokens
+            ) * 100
+            logger.info(
+                f"Compress completed."
+                f" {prev_tokens} -> {tokens_after_summary} tokens,"
+                f" compression rate: {compress_rate:.2f}%.",
+            )
+        else:
+            logger.info(
+                "Compress completed. %s -> %s tokens.",
+                prev_tokens,
+                tokens_after_summary,
+            )
 
         # last check
-        if self.compressor.should_compress(
+        if self.config.max_context_tokens > 0 and self.compressor.should_compress(
             messages, tokens_after_summary, self.config.max_context_tokens
         ):
             logger.info(

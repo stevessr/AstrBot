@@ -684,6 +684,70 @@ class TestContextManager:
         # Should have been compressed
         assert len(result) <= len(messages)
 
+    @pytest.mark.asyncio
+    async def test_manual_compress_uses_llm_summary_path(self):
+        """Test manual_compress triggers LLM summary without threshold checks."""
+
+        class SummaryProvider(MockProvider):
+            async def text_chat(self, **kwargs):
+                contexts = kwargs.get("contexts", [])
+                return LLMResponse(
+                    role="assistant",
+                    completion_text=f"summary for {len(contexts)} messages",
+                )
+
+        manager = ContextManager(
+            ContextConfig(
+                llm_compress_provider=SummaryProvider(),  # type: ignore[arg-type]
+                llm_compress_keep_recent=2,
+                max_context_tokens=0,
+            )
+        )
+        messages = self.create_messages(6)
+
+        result = await manager.manual_compress(messages)
+
+        assert len(result) < len(messages)
+        assert any(
+            msg.role == "user"
+            and isinstance(msg.content, str)
+            and "previous history conversation summary" in msg.content
+            for msg in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_manual_compress_falls_back_to_truncate_mode(self):
+        """Test manual_compress uses truncate mode when no LLM compressor exists."""
+        manager = ContextManager(
+            ContextConfig(
+                max_context_tokens=0,
+                truncate_turns=1,
+            )
+        )
+        messages = self.create_messages(8)
+
+        result = await manager.manual_compress(messages)
+
+        assert len(result) < len(messages)
+
+    @pytest.mark.asyncio
+    async def test_manual_compress_keeps_empty_or_short_history_unchanged(self):
+        """Test manual_compress does not break empty or short histories."""
+        manager = ContextManager(
+            ContextConfig(
+                llm_compress_provider=MockProvider(),  # type: ignore[arg-type]
+                llm_compress_keep_recent=10,
+                max_context_tokens=0,
+            )
+        )
+
+        empty_result = await manager.manual_compress([])
+        short_messages = self.create_messages(2)
+        short_result = await manager.manual_compress(short_messages)
+
+        assert empty_result == []
+        assert short_result == short_messages
+
     # ==================== split_history Tests ====================
 
     def test_split_history_ensures_user_start(self):
