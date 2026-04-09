@@ -5,7 +5,6 @@ import shutil
 import ssl
 import tempfile
 import traceback
-import uuid
 import zipfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path

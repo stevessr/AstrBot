@@ -1,5 +1,4 @@
 import asyncio
-import traceback
 from pathlib import Path
 
 from astrbot.core import logger

@@ -1150,7 +1150,9 @@ class PipInstaller:
         try:
             if _is_uv_available() and _get_uv_pip_main() is None:
                 # 使用 uv subprocess 模式
-                result_code, output = await asyncio.to_thread(_run_uv_pip_subprocess, args)
+                result_code, output = await asyncio.to_thread(
+                    _run_uv_pip_subprocess, args
+                )
                 for line in output.splitlines():
                     line = line.strip()
                     if line:

@@ -14,7 +14,6 @@ import botpy
 import botpy.message
 from botpy import Client
 from botpy.gateway import BotWebSocket
-from botpy.types.message import MarkdownPayload
 
 from astrbot import logger
 from astrbot.api.event import MessageChain

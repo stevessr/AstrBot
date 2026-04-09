@@ -33,8 +33,8 @@ from astrbot.api.platform import AstrBotMessage, PlatformMetadata
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import (
     download_image_by_url,
+    file_to_base64,  # noqa: F401
     file_to_base64_async,
-    file_to_base64  # noqa: F401
 )
 from astrbot.core.utils.tencent_record_helper import wav_to_tencent_silk
 
@@ -328,9 +328,7 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             plain_text = plain_text + "\n"
 
         payload: dict = {
-            "markdown": (
-                MarkdownPayload(content=plain_text) if plain_text else None
-            ),
+            "markdown": (MarkdownPayload(content=plain_text) if plain_text else None),
             "msg_type": 2,
             "msg_id": self.message_obj.message_id,
         }
@@ -779,7 +777,11 @@ class QQOfficialMessageEvent(AstrMessageEvent):
             elif isinstance(i, Image) and not image_base64:
                 if i.file and i.file.startswith("file://"):
                     image_path = i.file[7:]
-                    if len(image_path) > 2 and image_path[0] == "/" and image_path[2] == ":":
+                    if (
+                        len(image_path) > 2
+                        and image_path[0] == "/"
+                        and image_path[2] == ":"
+                    ):
                         image_path = image_path[1:]
                     image_base64 = await file_to_base64_async(image_path)
                 elif i.file and i.file.startswith("http"):
