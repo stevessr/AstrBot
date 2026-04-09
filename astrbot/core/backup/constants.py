@@ -54,8 +54,6 @@ MAIN_DB_MODELS: dict[str, type[SQLModel]] = {
     "session_project_relations": SessionProjectRelation,
     "attachments": Attachment,
     "api_keys": ApiKey,
-    "chatui_projects": ChatUIProject,
-    "session_project_relations": SessionProjectRelation,
     "command_configs": CommandConfig,
     "command_conflicts": CommandConflict,
     "cron_jobs": CronJob,

@@ -23,9 +23,7 @@ class Route:
             normalized_path = path.strip("/").replace("/", "_").replace("-", "_")
             if not normalized_path:
                 normalized_path = "root"
-            return (
-                f"{self.__class__.__name__}_{func.__name__}_{method.lower()}_{normalized_path}"
-            )
+            return f"{self.__class__.__name__}_{func.__name__}_{method.lower()}_{normalized_path}"
 
         def _add_rule(path, method, func) -> None:
             # 统一添加 /api 前缀
