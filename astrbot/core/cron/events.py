@@ -1,7 +1,9 @@
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
+from astrbot.core import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
@@ -13,6 +15,25 @@ from astrbot.core.platform.platform_metadata import PlatformMetadata
 
 class CronMessageEvent(AstrMessageEvent):
     """Synthetic event used when a cron job triggers the main agent loop."""
+
+    # 全局钩子注册表
+    _send_hooks: list[
+        Callable[[AstrMessageEvent, MessageChain], Awaitable[MessageChain]]
+    ] = []
+
+    @classmethod
+    def register_send_hook(
+        cls,
+        hook: Callable[[AstrMessageEvent, MessageChain], Awaitable[MessageChain]],
+    ) -> None:
+        """注册一个发送前钩子，用于处理消息链。
+
+        钩子函数签名: async hook(event: AstrMessageEvent, message_chain: MessageChain) -> MessageChain
+
+        钩子可以修改 message_chain 并返回修改后的结果。
+        """
+        cls._send_hooks.append(hook)
+        logger.info(f"CronMessageEvent 注册了发送钩子: {hook.__name__}")
 
     def __init__(
         self,
@@ -56,6 +77,14 @@ class CronMessageEvent(AstrMessageEvent):
     async def send(self, message: MessageChain) -> None:
         if message is None:
             return
+
+        # 执行所有注册的钩子，允许修改消息链
+        for hook in self._send_hooks:
+            try:
+                message = await hook(self, message)
+            except Exception as e:
+                logger.error(f"CronMessageEvent 钩子执行失败: {e}", exc_info=True)
+
         await self.context_obj.send_message(self.session, message)
         await super().send(message)
 
