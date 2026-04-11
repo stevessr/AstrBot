@@ -143,17 +143,18 @@ class ConversationCommands:
     def _resolve_manual_compress_provider(
         self,
         provider_settings: dict,
+        default_provider: Provider,
     ) -> Provider | None:
         if provider_settings.get("context_limit_reached_strategy") != "llm_compress":
             return None
 
         provider_id = provider_settings.get("llm_compress_provider_id", "")
         if not provider_id:
-            return None
+            return default_provider
 
         provider = self.context.get_provider_by_id(provider_id)
         if not isinstance(provider, Provider):
-            return None
+            return default_provider
 
         return provider
 
@@ -188,6 +189,7 @@ class ConversationCommands:
             ),
             llm_compress_provider=self._resolve_manual_compress_provider(
                 provider_settings,
+                provider,
             ),
         )
         return ContextManager(context_config)
