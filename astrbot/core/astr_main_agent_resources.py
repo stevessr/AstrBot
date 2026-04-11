@@ -11,7 +11,12 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.computer.computer_client import get_booter
-from astrbot.core.computer.tools import (
+from astrbot.core.knowledge_base.kb_helper import KBHelper
+from astrbot.core.message import components as Comp
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.star.context import Context
+from astrbot.core.tools.computer_tools import (
     AnnotateExecutionTool,
     BrowserBatchExecTool,
     BrowserExecTool,
@@ -32,11 +37,6 @@ from astrbot.core.computer.tools import (
     RunBrowserSkillTool,
     SyncSkillReleaseTool,
 )
-from astrbot.core.knowledge_base.kb_helper import KBHelper
-from astrbot.core.message import components as Comp
-from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.platform.message_session import MessageSession
-from astrbot.core.star.context import Context
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 LLM_SAFETY_MODE_SYSTEM_PROMPT = """You are running in Safe Mode.
@@ -535,7 +535,7 @@ KNOWLEDGE_BASE_QUERY_TOOL = KnowledgeBaseQueryTool()
 SEND_MESSAGE_TO_USER_TOOL = SendMessageToUserTool()
 
 EXECUTE_SHELL_TOOL = ExecuteShellTool()
-LOCAL_EXECUTE_SHELL_TOOL = ExecuteShellTool(is_local=True)
+# LOCAL_EXECUTE_SHELL_TOOL = ExecuteShellTool(is_local=True)  # Not implemented yet
 PYTHON_TOOL = PythonTool()
 LOCAL_PYTHON_TOOL = LocalPythonTool()
 FILE_UPLOAD_TOOL = FileUploadTool()
