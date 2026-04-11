@@ -8,6 +8,8 @@ from astrbot.builtin_stars.builtin_commands.commands.conversation import (
     ConversationCommands,
 )
 from astrbot.core.db.po import Conversation
+from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.provider.provider import Provider
 
 
 class DummyEvent:
@@ -113,6 +115,162 @@ async def test_compact_saves_snapshot_and_updates_conversation(
     assert update_args.kwargs["token_usage"] > 0
     assert event.get_extra("_clean_ltm_session") is True
     assert "/history snapshot 1" in event.get_result_text()
+
+
+@pytest.mark.asyncio
+async def test_compact_uses_current_chat_provider_for_llm_summary_when_unset(
+    mock_context,
+    mock_provider,
+):
+    history = [
+        {"role": "user", "content": "first user"},
+        {"role": "assistant", "content": "first assistant"},
+        {"role": "user", "content": "second user"},
+        {"role": "assistant", "content": "second assistant"},
+        {"role": "user", "content": "third user"},
+        {"role": "assistant", "content": "third assistant"},
+    ]
+    mock_provider.text_chat = AsyncMock(
+        return_value=LLMResponse(
+            role="assistant",
+            completion_text="compressed summary",
+        )
+    )
+    mock_context.get_using_provider = MagicMock(return_value=mock_provider)
+    mock_context.get_config = MagicMock(
+        return_value={
+            "provider_settings": {
+                "context_limit_reached_strategy": "llm_compress",
+                "max_context_length": -1,
+                "dequeue_context_length": 1,
+                "llm_compress_keep_recent": 2,
+                "llm_compress_provider_id": "",
+            }
+        }
+    )
+    mock_context.conversation_manager.get_curr_conversation_id = AsyncMock(
+        return_value="conv-1"
+    )
+    mock_context.conversation_manager.get_conversation = AsyncMock(
+        return_value=Conversation(
+            platform_id="test_platform",
+            user_id="test-user",
+            cid="conv-1",
+            history=json.dumps(history),
+            token_usage=128,
+        )
+    )
+    mock_context.conversation_manager.save_compression_snapshot = AsyncMock()
+    mock_context.conversation_manager.update_conversation = AsyncMock()
+
+    commands = ConversationCommands(mock_context)
+    event = DummyEvent()
+
+    await commands.compact(event)
+
+    mock_provider.text_chat.assert_awaited_once()
+    update_args = mock_context.conversation_manager.update_conversation.await_args
+    compressed_history = update_args.args[2]
+    assert any(
+        item["role"] == "user"
+        and "Our previous history conversation summary: compressed summary"
+        in item["content"]
+        for item in compressed_history
+    )
+    assert "LLM 摘要压缩" in event.get_result_text()
+
+
+@pytest.mark.asyncio
+async def test_compact_prefers_configured_llm_compress_provider(mock_context):
+    class SummaryProvider(Provider):
+        def __init__(self, provider_id: str, summary_text: str) -> None:
+            super().__init__(
+                {
+                    "id": provider_id,
+                    "type": "openai_chat_completion",
+                    "model": "gpt-4o-mini",
+                    "max_context_tokens": 128000,
+                },
+                {},
+            )
+            self.set_model("gpt-4o-mini")
+            self.summary_text = summary_text
+            self.calls = 0
+
+        def get_current_key(self) -> str:
+            return "test-key"
+
+        def set_key(self, key: str) -> None:  # noqa: ARG002
+            return None
+
+        async def get_models(self) -> list[str]:
+            return ["gpt-4o-mini"]
+
+        async def text_chat(self, **kwargs) -> LLMResponse:  # noqa: ARG002
+            self.calls += 1
+            return LLMResponse(
+                role="assistant",
+                completion_text=self.summary_text,
+            )
+
+    current_provider = SummaryProvider("chat-provider", "chat provider summary")
+    compress_provider = SummaryProvider(
+        "compress-provider",
+        "configured provider summary",
+    )
+    history = [
+        {"role": "user", "content": "first user"},
+        {"role": "assistant", "content": "first assistant"},
+        {"role": "user", "content": "second user"},
+        {"role": "assistant", "content": "second assistant"},
+        {"role": "user", "content": "third user"},
+        {"role": "assistant", "content": "third assistant"},
+    ]
+
+    mock_context.get_using_provider = MagicMock(return_value=current_provider)
+    mock_context.get_provider_by_id = MagicMock(return_value=compress_provider)
+    mock_context.get_config = MagicMock(
+        return_value={
+            "provider_settings": {
+                "context_limit_reached_strategy": "llm_compress",
+                "max_context_length": -1,
+                "dequeue_context_length": 1,
+                "llm_compress_keep_recent": 2,
+                "llm_compress_provider_id": "compress-provider",
+            }
+        }
+    )
+    mock_context.conversation_manager.get_curr_conversation_id = AsyncMock(
+        return_value="conv-1"
+    )
+    mock_context.conversation_manager.get_conversation = AsyncMock(
+        return_value=Conversation(
+            platform_id="test_platform",
+            user_id="test-user",
+            cid="conv-1",
+            history=json.dumps(history),
+            token_usage=128,
+        )
+    )
+    mock_context.conversation_manager.save_compression_snapshot = AsyncMock()
+    mock_context.conversation_manager.update_conversation = AsyncMock()
+
+    commands = ConversationCommands(mock_context)
+    event = DummyEvent()
+
+    await commands.compact(event)
+
+    assert current_provider.calls == 0
+    assert compress_provider.calls == 1
+    update_args = mock_context.conversation_manager.update_conversation.await_args
+    compressed_history = update_args.args[2]
+    assert any(
+        item["role"] == "user"
+        and "Our previous history conversation summary: configured provider summary"
+        in item["content"]
+        for item in compressed_history
+    )
+    assert "LLM 摘要压缩" in event.get_result_text()
 
 
 @pytest.mark.asyncio
