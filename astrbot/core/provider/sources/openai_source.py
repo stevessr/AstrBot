@@ -522,7 +522,12 @@ class ProviderOpenAIOfficial(Provider):
     async def _query_chat(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
         if tools:
             model = payloads.get("model", "").lower()
-            omit_empty_param_field = "gemini" in model
+            # Ollama's implementation requires parameters.properties to always be present
+            # in tool schemas, even for tools without parameters. Google's API allows
+            # omitting it, but Ollama returns 400 error when parameters is missing or
+            # empty. Only enable omission for non-Ollama Gemini providers.
+            is_ollama = self.provider_config.get("provider") == "ollama"
+            omit_empty_param_field = "gemini" in model and not is_ollama
             tool_list = tools.openai_schema(
                 omit_empty_parameter_field=omit_empty_param_field,
             )
@@ -597,7 +602,10 @@ class ProviderOpenAIOfficial(Provider):
         """流式查询 API，逐步返回结果"""
         if tools:
             model = payloads.get("model", "").lower()
-            omit_empty_param_field = "gemini" in model
+            # Ollama's implementation requires parameters.properties to always be present
+            # in tool schemas, even for tools without parameters.
+            is_ollama = self.provider_config.get("provider") == "ollama"
+            omit_empty_param_field = "gemini" in model and not is_ollama
             tool_list = tools.openai_schema(
                 omit_empty_parameter_field=omit_empty_param_field,
             )
