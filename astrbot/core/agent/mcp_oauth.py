@@ -13,28 +13,19 @@ from typing import Any, Literal
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.auth.extensions.client_credentials import (
+    ClientCredentialsOAuthProvider,
+)
+from mcp.shared.auth import (
+    OAuthClientInformationFull,
+    OAuthClientMetadata,
+    OAuthToken,
+)
 from pydantic import BaseModel, ConfigDict
 
 from astrbot import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-
-try:
-    from mcp.client.auth import OAuthClientProvider, TokenStorage
-    from mcp.client.auth.extensions.client_credentials import (
-        ClientCredentialsOAuthProvider,
-    )
-    from mcp.shared.auth import (
-        OAuthClientInformationFull,
-        OAuthClientMetadata,
-        OAuthToken,
-    )
-except (ModuleNotFoundError, ImportError):
-    OAuthClientProvider = None  # type: ignore[assignment]
-    ClientCredentialsOAuthProvider = None  # type: ignore[assignment]
-    TokenStorage = object  # type: ignore[assignment]
-    OAuthClientInformationFull = None  # type: ignore[assignment]
-    OAuthClientMetadata = None  # type: ignore[assignment]
-    OAuthToken = None  # type: ignore[assignment]
 
 
 class MCPOAuthError(Exception):
