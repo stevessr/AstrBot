@@ -70,7 +70,7 @@
         "statusFailed": "加载存储占用失败",
         "cleanupSuccess": "已清理 {count} 个文件，释放 {size}",
         "cleanupFailed": "清理失败"
-      },
+      }
     },
     "database": {
       "title": "主数据库",
