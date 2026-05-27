@@ -719,8 +719,9 @@ class QQOfficialMessageEvent(AstrMessageEvent):
         if file_name:
             payload["file_name"] = file_name
 
+        is_base64 = file_source.startswith("base64://")
         if is_base64:
-            payload["file_data"] = file_source
+            payload["file_data"] = file_source.removeprefix("base64://")
         elif await asyncio.to_thread(os.path.exists, file_source):
             async with aiofiles.open(file_source, "rb") as f:
                 file_content = await f.read()

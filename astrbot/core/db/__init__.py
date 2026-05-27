@@ -4,7 +4,6 @@ import datetime
 import ssl
 import typing as T
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
 from deprecated import deprecated
 from sqlalchemy import event
@@ -48,7 +47,6 @@ def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
         cursor.close()
 
 
-@dataclass
 class BaseDatabase(abc.ABC):
     """数据库基类"""
 

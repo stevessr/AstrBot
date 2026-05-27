@@ -149,7 +149,6 @@ class SkillsRoute(Route):
         self.routes = {
             "/skills": ("GET", self.get_skills),
             "/skills/detail": ("GET", self.get_skill_detail),
-            "/skills/file": ("GET", self.get_file_content),
             "/skills/github/scan": ("POST", self.scan_github_skills),
             "/skills/install": ("POST", self.install_skill),
             "/skills/upload": ("POST", self.upload_skill),
