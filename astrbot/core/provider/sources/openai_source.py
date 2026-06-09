@@ -658,9 +658,6 @@ class ProviderOpenAIOfficial(Provider):
 
         return llm_response
 
-    async def _query(self, payloads: dict, tools: ToolSet | None) -> LLMResponse:
-        return await self._query_chat(payloads, tools)
-
     async def _query_stream_chat(
         self,
         payloads: dict,
