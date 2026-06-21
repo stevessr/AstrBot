@@ -5,6 +5,8 @@
   "copy": "Copy",
   "copied": "Copied",
   "copyFailed": "Copy failed",
+  "expand": "Expand",
+  "collapse": "Collapse",
   "delete": "Delete",
   "edit": "Edit",
   "add": "Add",

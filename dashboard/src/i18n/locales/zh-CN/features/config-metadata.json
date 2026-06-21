@@ -1093,6 +1093,43 @@
         "description": "禁用匿名使用统计",
         "hint": "禁用后，AstrBot 将不再上传匿名使用统计数据。"
       },
+      "database": {
+        "backend": {
+          "description": "主数据库后端",
+          "hint": "仅影响 AstrBot 核心主库；知识库仍继续使用独立 SQLite。"
+        },
+        "sqlite_path": {
+          "description": "SQLite 主库路径",
+          "hint": "使用 SQLite 时的主数据库文件路径。相对路径以当前工作目录为基准。"
+        },
+        "url": {
+          "description": "数据库连接 URL",
+          "hint": "可选。填写后优先于下方 host/port/user/password/database 组合。Postgres 示例：postgresql+asyncpg://user:password@127.0.0.1:5432/astrbot"
+        },
+        "host": {
+          "description": "Postgres 主机"
+        },
+        "port": {
+          "description": "Postgres 端口"
+        },
+        "user": {
+          "description": "Postgres 用户名"
+        },
+        "password": {
+          "description": "Postgres 密码"
+        },
+        "database": {
+          "description": "Postgres 数据库名"
+        },
+        "schema": {
+          "description": "Postgres Schema",
+          "hint": "可选。留空时使用默认 schema（通常为 public）。"
+        },
+        "ssl_mode": {
+          "description": "Postgres SSL 模式",
+          "hint": "控制与 Postgres 建立连接时的 SSL 行为。"
+        }
+      },
       "dashboard": {
         "trust_proxy_headers": {
           "description": "信任代理请求头获取客户端 IP",
