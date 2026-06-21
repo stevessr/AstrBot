@@ -4,7 +4,7 @@
   "tooltip": {
     "info": "函数调用和 MCP 是什么？",
     "marketplace": "浏览和安装来自社区的 MCP 服务器",
-    "serverConfig": "MCP 服务器(stdio)配置支持以下字段:\ncommand: 命令名称 (例如 python 或 uv)\nargs: 命令参数数组 (例如 [\"run\", \"server.py\"])\nenv: 环境变量对象 (例如 {\"api_key\": \"abc\"})\ncwd: 工作目录路径 (例如 /path/to/server)\nencoding: 输出编码 (默认 utf-8)\nencoding_error_handler: The text encoding error handler. Defaults to strict.\n其他字段请参考 MCP 文档\n⚠️ 如果您使用 Docker 部署 AstrBot, 请务必将 MCP 服务器装在 AstrBot 挂载好的 data 目录下"
+    "serverConfig": "MCP 服务器 (stdio) 配置支持以下字段:\ncommand: 命令名称 (例如 python 或 uv)\nargs: 命令参数数组 (例如 [\"run\", \"server.py\"])\nenv: 环境变量对象 (例如 {\"api_key\": \"abc\"})\ncwd: 工作目录路径 (例如 /path/to/server)\nencoding: 输出编码 (默认 utf-8)\nencoding_error_handler: The text encoding error handler. Defaults to strict.\n其他字段请参考 MCP 文档\n⚠️ 如果您使用 Docker 部署 AstrBot, 请务必将 MCP 服务器装在 AstrBot 挂载好的 data 目录下"
   },
   "tabs": {
     "local": "本地服务器",
@@ -19,14 +19,18 @@
       "useTemplateStdio": "Stdio 模板",
       "useTemplateStreamableHttp": "Streamable HTTP 模板",
       "useTemplateSse": "SSE 模板",
+      "useTemplateOauth2": "OAuth 2.0 模板",
       "sync": "同步服务器"
     },
     "empty": "暂无 MCP 服务器，点击 新增服务器 添加",
     "status": {
       "noTools": "无可用工具",
       "availableTools": "可用工具",
-      "configSummary": "配置: {keys}",
-      "noConfig": "未设置配置"
+      "configSummary": "配置：{keys}",
+      "noConfig": "未设置配置",
+      "oauthAuthorized": "OAuth 2.0 已授权",
+      "oauthLoginRequired": "OAuth 2.0 需要登录授权",
+      "oauthClientCredentials": "OAuth 2.0 client_credentials"
     }
   },
   "functionTools": {
@@ -99,14 +103,24 @@
       },
       "errors": {
         "configEmpty": "配置不能为空",
-        "jsonFormat": "JSON 格式错误: {error}",
-        "jsonParse": "JSON 解析错误: {error}"
+        "jsonFormat": "JSON 格式错误：{error}",
+        "jsonParse": "JSON 解析错误：{error}"
       },
       "buttons": {
         "cancel": "取消",
         "save": "保存",
         "testConnection": "测试连接",
+        "oauthLogin": "OAuth 2.0 登录",
         "sync": "同步"
+      },
+      "oauth": {
+        "status": {
+          "notAuthorized": "检测到 OAuth 2.0 授权码流程，请先完成登录授权。",
+          "awaitingUser": "已打开 OAuth 登录页，等待授权完成。",
+          "authorizing": "正在完成 OAuth 授权。",
+          "authorized": "OAuth 2.0 授权已完成。",
+          "failed": "OAuth 2.0 授权失败。"
+        }
       },
       "tips": {
         "timeoutConfig": "工具调用的超时时间请前往配置页面单独配置",
@@ -122,7 +136,7 @@
         "importConfig": "导入配置"
       }
     },
-    "confirmDelete": "确定要删除服务器 {name} 吗?",
+    "confirmDelete": "确定要删除服务器 {name} 吗？",
     "syncProvider": {
       "title": "同步 MCP 服务器",
       "subtitle": "从提供商同步 MCP 服务器配置到本地",
@@ -133,7 +147,7 @@
       },
       "providers": {
         "modelscope": "ModelScope",
-        "description": "ModelScope 是一个开源的模型社区，提供各种机器学习和AI服务的MCP服务器"
+        "description": "ModelScope 是一个开源的模型社区，提供各种机器学习和 AI 服务的 MCP 服务器"
       },
       "fields": {
         "provider": "选择提供商",
@@ -154,35 +168,39 @@
         "readyToSync": "准备同步服务器配置"
       },
       "messages": {
-        "syncSuccess": "MCP 服务器同步成功!",
-        "syncError": "同步失败: {error}",
+        "syncSuccess": "MCP 服务器同步成功！",
+        "syncError": "同步失败：{error}",
         "tokenHelp": "如何获取 ModelScope 访问令牌？点击右侧按钮查看说明"
       }
     }
   },
   "messages": {
-    "getServersError": "获取 MCP 服务器列表失败: {error}",
-    "getToolsError": "获取函数工具列表失败: {error}",
-    "saveSuccess": "保存成功!",
-    "saveError": "保存失败: {error}",
-    "deleteSuccess": "删除成功!",
-    "deleteError": "删除失败: {error}",
-    "updateSuccess": "更新成功!",
-    "updateError": "更新失败: {error}",
-    "getMarketError": "获取 MCP 市场服务器列表失败: {error}",
+    "getServersError": "获取 MCP 服务器列表失败：{error}",
+    "getToolsError": "获取函数工具列表失败：{error}",
+    "saveSuccess": "保存成功！",
+    "saveError": "保存失败：{error}",
+    "deleteSuccess": "删除成功！",
+    "deleteError": "删除失败：{error}",
+    "updateSuccess": "更新成功！",
+    "updateError": "更新失败：{error}",
+    "getMarketError": "获取 MCP 市场服务器列表失败：{error}",
     "importError": {
       "noConfig": "此服务器没有可用配置",
       "invalidFormat": "服务器配置格式不正确",
-      "failed": "导入配置失败: {error}"
+      "failed": "导入配置失败：{error}"
     },
-    "configParseError": "配置解析错误: {error}",
+    "configParseError": "配置解析错误：{error}",
     "noAvailableConfig": "无可用配置",
-    "toggleToolSuccess": "工具状态切换成功!",
+    "toggleToolSuccess": "工具状态切换成功！",
     "toggleToolReadonly": "内置工具为只读，无法进行启用或停用操作。",
-    "toggleToolError": "工具状态切换失败: {error}",
+    "toggleToolError": "工具状态切换失败：{error}",
     "updateToolPermissionSuccess": "工具 {name} 权限已更新",
     "updateToolPermissionFailed": "工具权限更新失败",
     "updateToolPermissionBuiltin": "内置工具不支持单独配置权限",
-    "testError": "测试连接失败: {error}"
+    "testError": "测试连接失败：{error}",
+    "oauthPopupOpened": "OAuth 登录页已打开，请在新窗口中完成授权。",
+    "oauthPopupBlocked": "浏览器拦截了 OAuth 登录弹窗，请允许弹窗后重试。",
+    "oauthAuthorized": "OAuth 2.0 授权成功！",
+    "oauthStartError": "启动 OAuth 2.0 授权失败：{error}"
   }
 }
