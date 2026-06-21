@@ -12,7 +12,11 @@ from astrbot.core.agent.message import ContentPart, Message
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.provider.entities import LLMResponse, TokenUsage, ToolCallsResult
+from astrbot.core.provider.entities import (
+    LLMResponse,
+    TokenUsage,
+    ToolCallsResult,
+)
 
 from ..headers import build_conversation_headers
 from ..register import register_provider_adapter
