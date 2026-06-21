@@ -110,7 +110,7 @@ const availableSkills = ref([])
 
 const defaultPersonaData = {
   persona_id: 'default',
-  system_prompt: 'You are a helpful and friendly assistant.',
+  system_prompt: 'You are a helpful and friendly person.',
   tools: null,
   skills: null
 }
