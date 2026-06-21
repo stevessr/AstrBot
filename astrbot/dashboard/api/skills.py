@@ -439,10 +439,12 @@ async def list_dashboard_skill_files(
 async def get_dashboard_skill_file(
     name: str,
     path: str = "SKILL.md",
+    file: str | None = None,
     _username: str = Depends(require_dashboard_user),
     service: SkillsService = Depends(get_service),
 ):
-    return await _run(lambda: service.get_skill_file(name, path))
+    resolved_path = file if file is not None else path
+    return await _run(lambda: service.get_skill_file(name, resolved_path))
 
 
 @legacy_router.post("/file")
@@ -560,3 +562,56 @@ async def delete_dashboard_neo_skill_release(
 ):
     body = await _json_or_empty(request)
     return await _run(lambda: service.delete_neo_release(body))
+
+
+@legacy_router.post("/github/scan")
+async def scan_dashboard_github_skills(
+    request: Request,
+    _username: str = Depends(require_dashboard_user),
+    service: SkillsService = Depends(get_service),
+):
+    body = await _json_or_empty(request)
+    repo = str(body.get("repo", "") or body.get("source", "")).strip()
+    proxy = str(body.get("proxy", "")).strip()
+    return await _run(lambda: service.scan_github_skills(repo, proxy))
+
+
+@legacy_router.post("/skills-sh/scan")
+async def scan_dashboard_skills_sh_skills(
+    request: Request,
+    _username: str = Depends(require_dashboard_user),
+    service: SkillsService = Depends(get_service),
+):
+    body = await _json_or_empty(request)
+    query = str(body.get("query", "") or body.get("source", "")).strip()
+    proxy = str(body.get("proxy", "")).strip()
+    return await _run(lambda: service.scan_skills_sh_skills(query, proxy))
+
+
+@legacy_router.post("/install")
+async def install_dashboard_skill(
+    request: Request,
+    _username: str = Depends(require_dashboard_user),
+    service: SkillsService = Depends(get_service),
+):
+    body = await _json_or_empty(request)
+    source = str(body.get("source", "") or body.get("repo", "")).strip()
+    skill_id = str(body.get("skillId", "") or body.get("skill_id", "")).strip()
+    skill_name = str(body.get("name", "")).strip()
+    proxy = str(body.get("proxy", "")).strip()
+    source_type = str(body.get("sourceType", "") or body.get("source_type", "")).strip()
+    skills_sh_path = str(
+        body.get("skillsShPath", "") or body.get("skills_sh_path", "")
+    ).strip()
+    if source_type == "skills_sh" or skills_sh_path:
+        return await _run(
+            lambda: service.install_skill_from_skills_sh(
+                skills_sh_path or source,
+                skill_id,
+                skill_name,
+                proxy,
+            )
+        )
+    return await _run(
+        lambda: service.install_skill_from_github(source, skill_id, skill_name, proxy)
+    )
