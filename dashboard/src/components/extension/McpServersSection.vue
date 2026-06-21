@@ -81,6 +81,61 @@
               </v-icon>
               {{ tm('mcpServers.status.noTools') }}
             </template>
+            <div v-if="server.oauth2_enabled" class="d-flex align-center mb-2">
+              <v-icon size="small" :color="server.oauth2_authorized ? 'success' : 'warning'" class="me-2">
+                mdi-shield-key-outline
+              </v-icon>
+              <span class="text-caption text-medium-emphasis">
+                {{ server.oauth2_grant_type === 'client_credentials'
+                  ? tm('mcpServers.status.oauthClientCredentials')
+                  : (server.oauth2_authorized
+                    ? tm('mcpServers.status.oauthAuthorized')
+                    : tm('mcpServers.status.oauthLoginRequired')) }}
+              </span>
+            </div>
+
+            <template v-if="server.tools && server.tools.length > 0">
+              <div class="d-flex" style="gap: 8px;">
+                <div>
+                  <div class="d-flex align-center mb-1">
+                    <v-icon size="small" color="grey" class="me-2">mdi-tools</v-icon>
+                    <v-dialog max-width="600px">
+                      <template v-slot:activator="{ props: listToolsProps }">
+                        <span class="text-caption text-medium-emphasis cursor-pointer" v-bind="listToolsProps"
+                          style="text-decoration: underline;">
+                          {{ tm('mcpServers.status.availableTools', { count: server.tools.length }) }} ({{ server.tools.length }})
+                        </span>
+                      </template>
+                      <template v-slot:default="{ isActive }">
+                        <v-card style="padding: 16px;">
+                          <v-card-title class="d-flex align-center">
+                            <span>{{ tm('mcpServers.status.availableTools') }}</span>
+                          </v-card-title>
+                          <v-card-text>
+                            <ul>
+                              <li v-for="(tool, idx) in server.tools" :key="idx" style="margin: 8px 0px;">{{ tool }}</li>
+                            </ul>
+                          </v-card-text>
+                          <v-card-actions class="d-flex justify-end">
+                            <v-btn variant="text" color="primary" @click="isActive.value = false">
+                              Close
+                            </v-btn>
+                          </v-card-actions>
+                        </v-card>
+                      </template>
+                    </v-dialog>
+                  </div>
+                </div>
+                <div v-if="mcpServerUpdateLoaders[server.name]" class="text-caption text-medium-emphasis">
+                  <v-progress-circular indeterminate color="primary" size="16"></v-progress-circular>
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <v-icon size="small" color="warning" class="me-1">mdi-alert-circle</v-icon>
+              {{ tm('mcpServers.status.noTools') }}
+            </template>
           </div>
 
           <template #actions>
@@ -187,6 +242,9 @@
               <v-btn size="small" color="primary" variant="tonal" @click="setConfigTemplate('sse')" class="me-1">
                 {{ tm('mcpServers.buttons.useTemplateSse') }}
               </v-btn>
+              <v-btn size="small" color="primary" variant="tonal" @click="setConfigTemplate('streamable_http_oauth')">
+                {{ tm('mcpServers.buttons.useTemplateOauth2') }}
+              </v-btn>
             </div>
 
             <small style="color: grey">*{{ tm('dialogs.addServer.tips.timeoutConfig') }}</small>
@@ -213,6 +271,11 @@
               <span>{{ jsonError }}</span>
             </div>
 
+            <div v-if="hasAuthorizationCodeOAuthConfig" class="mt-3 text-caption">
+              <v-icon size="small" :color="oauthFlowStatusColor" class="me-1">mdi-shield-key-outline</v-icon>
+              <span :class="oauthFlowStatusClass">{{ oauthFlowStatusText }}</span>
+            </div>
+
           </v-form>
           <div style="margin-top: 8px;">
             <small>{{ addServerDialogMessage }}</small>
@@ -227,6 +290,9 @@
           </v-btn>
           <v-btn variant="text" @click="testServerConnection" :disabled="loading">
             {{ tm('dialogs.addServer.buttons.testConnection') }}
+          </v-btn>
+          <v-btn variant="text" color="secondary" @click="authorizeOauth" :disabled="loading || !hasAuthorizationCodeOAuthConfig">
+            {{ tm('dialogs.addServer.buttons.oauthLogin') }}
           </v-btn>
           <v-btn color="primary" variant="tonal" @click="saveServer" :loading="loading" :disabled="!isServerFormValid">
             {{ tm('dialogs.addServer.buttons.save') }}
@@ -333,6 +399,11 @@ export default {
       loading: false,
       loadingGettingServers: false,
       mcpServerUpdateLoaders: {},
+      oauthFlowId: '',
+      oauthFlowStatus: '',
+      oauthFlowError: '',
+      oauthPollTimer: null,
+      oauthPollInFlight: false,
       isEditMode: false,
       serverConfigJson: '',
       jsonError: null,
@@ -351,6 +422,59 @@ export default {
     isServerFormValid() {
       return !!this.currentServer.name && !this.jsonError;
     },
+    parsedServerConfig() {
+      try {
+        if (!this.serverConfigJson.trim()) {
+          return null;
+        }
+        return JSON.parse(this.serverConfigJson);
+      } catch {
+        return null;
+      }
+    },
+    currentOauthConfig() {
+      if (!this.parsedServerConfig || typeof this.parsedServerConfig !== 'object') {
+        return null;
+      }
+      return this.parsedServerConfig.oauth2 || this.parsedServerConfig.oauth || null;
+    },
+    hasAuthorizationCodeOAuthConfig() {
+      return !!this.currentOauthConfig
+        && (this.currentOauthConfig.grant_type || 'authorization_code') === 'authorization_code';
+    },
+    oauthFlowStatusColor() {
+      if (this.oauthFlowStatus === 'completed') {
+        return 'success';
+      }
+      if (this.oauthFlowStatus === 'failed') {
+        return 'error';
+      }
+      return 'warning';
+    },
+    oauthFlowStatusClass() {
+      if (this.oauthFlowStatus === 'completed') {
+        return 'text-success';
+      }
+      if (this.oauthFlowStatus === 'failed') {
+        return 'text-error';
+      }
+      return 'text-medium-emphasis';
+    },
+    oauthFlowStatusText() {
+      if (this.oauthFlowStatus === 'completed') {
+        return this.tm('dialogs.addServer.oauth.status.authorized');
+      }
+      if (this.oauthFlowStatus === 'awaiting_user') {
+        return this.tm('dialogs.addServer.oauth.status.awaitingUser');
+      }
+      if (this.oauthFlowStatus === 'authorizing') {
+        return this.tm('dialogs.addServer.oauth.status.authorizing');
+      }
+      if (this.oauthFlowStatus === 'failed') {
+        return this.oauthFlowError || this.tm('dialogs.addServer.oauth.status.failed');
+      }
+      return this.tm('dialogs.addServer.oauth.status.notAuthorized');
+    },
     getServerConfigSummary() {
       return (server) => {
         if (server.transport) {
@@ -360,7 +484,7 @@ export default {
           return `${server.command} ${(server.args || []).join(' ')}`;
         }
         const configKeys = Object.keys(server).filter(key =>
-          !['name', 'active', 'tools'].includes(key)
+          !['name', 'active', 'tools', 'oauth2_enabled', 'oauth2_authorized', 'oauth2_grant_type'].includes(key)
         );
         if (configKeys.length > 0) {
           return this.tm('mcpServers.status.configSummary', { keys: configKeys.join(', ') });
@@ -387,7 +511,7 @@ export default {
   mounted() {
     this.getServers();
     this.refreshInterval = setInterval(() => {
-      // 轮询时间延长到30秒，减少服务器压力，同时保持数据相对新鲜
+      // 轮询时间延长到 30 秒，减少服务器压力，同时保持数据相对新鲜
       this.getServers();
     }, 30000);
   },
@@ -395,6 +519,7 @@ export default {
     if (this.refreshInterval) {
       clearInterval(this.refreshInterval);
     }
+    this.stopOauthPolling();
   },
   methods: {
     openurl(url) {
@@ -452,6 +577,18 @@ export default {
           headers: {},
           timeout: 5,
           sse_read_timeout: 300
+        };
+      } else if (type === 'streamable_http_oauth') {
+        template = {
+          transport: 'streamable_http',
+          url: 'your mcp server url',
+          headers: {},
+          timeout: 5,
+          sse_read_timeout: 300,
+          oauth2: {
+            grant_type: 'authorization_code',
+            client_name: 'AstrBot MCP Client'
+          }
         };
       } else {
         template = {
@@ -523,12 +660,17 @@ export default {
       delete configCopy.active;
       delete configCopy.tools;
       delete configCopy.errlogs;
+      delete configCopy.oauth2_enabled;
+      delete configCopy.oauth2_authorized;
+      delete configCopy.oauth2_grant_type;
       this.currentServer = {
         name: server.name,
         active: server.active,
         tools: server.tools || []
       };
       this.originalServerName = server.name;
+      this.oauthFlowStatus = server.oauth2_authorized ? 'completed' : '';
+      this.oauthFlowError = '';
       this.serverConfigJson = JSON.stringify(configCopy, null, 2);
       this.isEditMode = true;
       this.showMcpServerDialog = true;
@@ -554,6 +696,142 @@ export default {
       this.addServerDialogMessage = '';
       this.resetForm();
     },
+    stopOauthPolling() {
+      if (this.oauthPollTimer) {
+        clearInterval(this.oauthPollTimer);
+        this.oauthPollTimer = null;
+      }
+      this.oauthPollInFlight = false;
+    },
+    async pollOauthStatus() {
+      if (!this.oauthFlowId || this.oauthPollInFlight) {
+        return;
+      }
+      this.oauthPollInFlight = true;
+      try {
+        const response = await axios.get('/api/tools/mcp/oauth/status', {
+          params: { flow_id: this.oauthFlowId }
+        });
+        if (response.data.status === 'error') {
+          this.stopOauthPolling();
+          this.oauthFlowStatus = 'failed';
+          this.oauthFlowError = response.data.message || this.tm('dialogs.addServer.oauth.status.failed');
+          this.showError(this.oauthFlowError);
+          return;
+        }
+        const flow = response.data.data || {};
+        this.oauthFlowStatus = flow.status || '';
+        this.oauthFlowError = flow.error || '';
+        if (this.oauthFlowStatus === 'completed') {
+          this.stopOauthPolling();
+          this.addServerDialogMessage = this.tm('messages.oauthAuthorized');
+          this.showSuccess(this.tm('messages.oauthAuthorized'));
+        } else if (this.oauthFlowStatus === 'failed') {
+          this.stopOauthPolling();
+          const errorMessage = flow.error || this.tm('dialogs.addServer.oauth.status.failed');
+          this.addServerDialogMessage = errorMessage;
+          this.showError(errorMessage);
+        }
+      } catch (error) {
+        this.stopOauthPolling();
+        this.oauthFlowStatus = 'failed';
+        this.oauthFlowError = error.response?.data?.message || error.message;
+        this.showError(this.oauthFlowError);
+      } finally {
+        this.oauthPollInFlight = false;
+      }
+    },
+    startOauthPolling() {
+      this.stopOauthPolling();
+      this.pollOauthStatus();
+      this.oauthPollTimer = setInterval(() => {
+        this.pollOauthStatus();
+      }, 1500);
+    },
+    async authorizeOauth() {
+      if (!this.validateJson()) {
+        return;
+      }
+      const configObj = this.parsedServerConfig;
+      if (!configObj) {
+        this.showError(this.tm('dialogs.addServer.errors.configEmpty'));
+        return;
+      }
+
+      const popup = window.open('', 'astrbot-mcp-oauth', 'popup=yes,width=720,height=840');
+      if (popup) {
+        try {
+          popup.opener = null;
+          popup.document.title = 'AstrBot OAuth 2.0';
+          popup.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 24px;">Preparing OAuth 2.0 login...</div>';
+        } catch {
+          // Ignore cross-window access issues; navigation below is the critical path.
+        }
+      }
+      this.loading = true;
+      this.oauthFlowError = '';
+
+      try {
+        const response = await axios.post('/api/tools/mcp/oauth/start', {
+          mcp_server_config: configObj,
+          force: true
+        });
+
+        if (response.data.status === 'error') {
+          if (popup) {
+            popup.close();
+          }
+          this.showError(response.data.message || this.tm('messages.oauthStartError', { error: 'Unknown error' }));
+          return;
+        }
+
+        const flow = response.data.data || {};
+        this.oauthFlowId = flow.flow_id || '';
+        this.oauthFlowStatus = flow.status || '';
+        this.addServerDialogMessage = '';
+
+        if (flow.authorization_url) {
+          if (popup && !popup.closed) {
+            popup.location.replace(flow.authorization_url);
+          } else {
+            const fallbackPopup = window.open(
+              flow.authorization_url,
+              'astrbot-mcp-oauth',
+              'popup=yes,width=720,height=840'
+            );
+            if (!fallbackPopup) {
+              this.showError(this.tm('messages.oauthPopupBlocked'));
+              return;
+            }
+          }
+          this.addServerDialogMessage = this.tm('messages.oauthPopupOpened');
+        } else if (popup) {
+          popup.close();
+        }
+
+        if (this.oauthFlowStatus === 'completed') {
+          this.addServerDialogMessage = this.tm('messages.oauthAuthorized');
+          this.showSuccess(this.tm('messages.oauthAuthorized'));
+          return;
+        }
+
+        if (!this.oauthFlowId) {
+          this.showError(this.tm('messages.oauthStartError', { error: 'Missing OAuth flow id' }));
+          return;
+        }
+
+        this.startOauthPolling();
+      } catch (error) {
+        if (popup) {
+          popup.close();
+        }
+        this.showError(this.tm('messages.oauthStartError', {
+          error: error.response?.data?.message || error.message
+        }));
+      } finally {
+        this.loading = false;
+      }
+    },
     testServerConnection() {
       if (!this.validateJson()) {
         return;
@@ -578,6 +856,7 @@ export default {
         });
     },
     resetForm() {
+      this.stopOauthPolling();
       this.currentServer = {
         name: '',
         active: true,
@@ -585,6 +864,9 @@ export default {
       };
       this.serverConfigJson = '';
       this.jsonError = null;
+      this.oauthFlowId = '';
+      this.oauthFlowStatus = '';
+      this.oauthFlowError = '';
       this.isEditMode = false;
       this.originalServerName = '';
     },

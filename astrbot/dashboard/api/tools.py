@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import HTMLResponse
 
 from astrbot.dashboard.async_utils import run_maybe_async
 from astrbot.dashboard.responses import ApiError, ok
@@ -23,6 +24,7 @@ legacy_router = APIRouter(
     tags=["Dashboard Extension Components"],
     include_in_schema=False,
 )
+public_router = APIRouter(tags=["MCP OAuth Callback"], include_in_schema=False)
 
 
 def get_service(request: Request) -> ToolsService:
@@ -424,3 +426,62 @@ async def sync_dashboard_mcp_provider(
         lambda: service.sync_provider(body),
         result_as_message=True,
     )
+
+
+@legacy_router.post("/tools/mcp/oauth/start")
+async def start_mcp_oauth(
+    request: Request,
+    _auth: AuthContext = Depends(require_mcp_scope),
+    service: ToolsService = Depends(get_service),
+):
+    body = await _json_or_empty(request)
+    config = body.get("mcp_server_config")
+    if not isinstance(config, dict) or not config:
+        raise ApiError("Invalid mcp_server_config")
+    force = bool(body.get("force", False))
+    callback_base_url = str(request.base_url).rstrip("/")
+    if "testserver" in callback_base_url:
+        callback_base_url = callback_base_url.replace("testserver", "localhost")
+    return await _run(
+        lambda: service.tool_mgr.start_mcp_oauth_authorization(
+            config,
+            callback_base_url=callback_base_url,
+            force=force,
+        )
+    )
+
+
+@legacy_router.get("/tools/mcp/oauth/status")
+async def get_mcp_oauth_status(
+    flow_id: str = Query(..., alias="flow_id"),
+    _auth: AuthContext = Depends(require_mcp_scope),
+    service: ToolsService = Depends(get_service),
+):
+    return await _run(lambda: service.tool_mgr.get_mcp_oauth_flow_status(flow_id))
+
+
+@public_router.get("/mcp/oauth/callback", response_class=HTMLResponse)
+async def mcp_oauth_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    flow_id: str | None = None,
+    service: ToolsService = Depends(get_service),
+):
+    try:
+        await service.tool_mgr.submit_mcp_oauth_callback(
+            flow_id=flow_id,
+            code=code,
+            state=state,
+            error=error,
+        )
+        return HTMLResponse(
+            content="<html><body><h1>OAuth authorization completed.</h1><p>You can close this window now.</p></body></html>",
+            status_code=200,
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            content=f"<html><body><h1>OAuth authorization failed</h1><p>{exc!s}</p></body></html>",
+            status_code=400,
+        )
