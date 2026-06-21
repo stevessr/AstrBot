@@ -76,7 +76,12 @@ from .static_files import router as static_files_router
 from .stats import legacy_router as legacy_stats_router
 from .subagents import legacy_router as legacy_subagents_router
 from .t2i import legacy_router as legacy_t2i_router
-from .tools import legacy_router as legacy_tools_router
+from .tools import (
+    legacy_router as legacy_tools_router,
+)
+from .tools import (
+    public_router as public_tools_router,
+)
 from .updates import legacy_router as legacy_updates_router
 
 CLEAR_SITE_DATA_HEADERS = {"Clear-Site-Data": '"cache"'}
@@ -183,6 +188,7 @@ def create_dashboard_asgi_app(
     app.include_router(legacy_stats_router)
     app.include_router(legacy_subagents_router)
     app.include_router(legacy_tools_router)
+    app.include_router(public_tools_router)
     app.include_router(legacy_platform_router)
     app.include_router(legacy_plugins_router)
     app.include_router(legacy_t2i_router)
