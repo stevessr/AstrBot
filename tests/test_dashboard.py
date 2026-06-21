@@ -3522,6 +3522,171 @@ async def test_batch_upload_skills_accepts_valid_skill_archive(
 
 
 @pytest.mark.asyncio
+async def test_github_skill_import_routes(
+    app: FastAPIAppAdapter,
+    authenticated_header: dict,
+    monkeypatch,
+):
+    async def _fake_scan_skills_from_source(self, source: str, proxy: str = ""):
+        _ = self
+        assert source == "demo-owner/demo-repo"
+        assert proxy == ""
+        return [
+            {
+                "skillId": "demo-skill",
+                "name": "Demo Skill",
+                "source": source,
+                "path": "demo-repo-main/demo-skill",
+            }
+        ]
+
+    async def _fake_install_skill_from_source(
+        self,
+        source: str,
+        skill_id: str,
+        skill_name: str = "",
+        proxy: str = "",
+    ):
+        _ = self
+        assert source == "demo-owner/demo-repo"
+        assert skill_id == "demo-skill"
+        assert skill_name == "Demo Skill"
+        assert proxy == ""
+        return "demo-skill"
+
+    monkeypatch.setattr(
+        "astrbot.dashboard.services.skills_service.SkillsService._scan_skills_from_source",
+        _fake_scan_skills_from_source,
+    )
+    monkeypatch.setattr(
+        "astrbot.dashboard.services.skills_service.SkillsService._install_skill_from_source",
+        _fake_install_skill_from_source,
+    )
+
+    test_client = app.test_client()
+
+    scan_response = await test_client.post(
+        "/api/skills/github/scan",
+        json={"repo": "demo-owner/demo-repo"},
+        headers=authenticated_header,
+    )
+    scan_data = await scan_response.get_json()
+    assert scan_response.status_code == 200
+    assert scan_data["status"] == "ok"
+    assert scan_data["data"]["skills"][0]["skillId"] == "demo-skill"
+
+    install_response = await test_client.post(
+        "/api/skills/install",
+        json={
+            "source": "demo-owner/demo-repo",
+            "skillId": "demo-skill",
+            "name": "Demo Skill",
+        },
+        headers=authenticated_header,
+    )
+    install_data = await install_response.get_json()
+    assert install_response.status_code == 200
+    assert install_data["status"] == "ok"
+    assert install_data["data"]["name"] == "demo-skill"
+
+
+@pytest.mark.asyncio
+async def test_skills_sh_scan_and_install_routes(
+    app: FastAPIAppAdapter,
+    authenticated_header: dict,
+    monkeypatch,
+):
+    async def _fake_fetch_skills_sh_page(self, page_url: str, proxy: str = ""):
+        _ = self
+        assert proxy == ""
+        if page_url.endswith("/hot"):
+            return (
+                '<a href="/demo-owner/demo-repo/demo-skill">'
+                "1 demo-skill demo-owner/demo-repo 42"
+                "</a>"
+            )
+        assert page_url.endswith("/demo-owner/demo-repo/demo-skill")
+        return (
+            "<h1>Demo Skill</h1>"
+            "<code>$ npx skills add https://github.com/demo-owner/demo-repo "
+            "--skill demo-skill</code>"
+        )
+
+    async def _fake_install_skill_from_source(
+        self,
+        source: str,
+        skill_id: str,
+        skill_name: str = "",
+        proxy: str = "",
+    ):
+        _ = self
+        assert source == "https://github.com/demo-owner/demo-repo"
+        assert skill_id == "demo-skill"
+        assert skill_name == "Demo Skill"
+        assert proxy == ""
+        return "demo-skill"
+
+    monkeypatch.setattr(
+        "astrbot.dashboard.services.skills_service.SkillsService._fetch_skills_sh_page",
+        _fake_fetch_skills_sh_page,
+    )
+    monkeypatch.setattr(
+        "astrbot.dashboard.services.skills_service.SkillsService._install_skill_from_source",
+        _fake_install_skill_from_source,
+    )
+
+    test_client = app.test_client()
+
+    hot_response = await test_client.post(
+        "/api/skills/skills-sh/scan",
+        json={},
+        headers=authenticated_header,
+    )
+    hot_data = await hot_response.get_json()
+    assert hot_response.status_code == 200
+    assert hot_data["status"] == "ok"
+    assert hot_data["data"]["skills"] == [
+        {
+            "skillId": "demo-skill",
+            "name": "demo-skill",
+            "source": "demo-owner/demo-repo",
+            "sourceType": "skills_sh",
+            "skillsShPath": "demo-owner/demo-repo/demo-skill",
+            "installUrl": "https://github.com/demo-owner/demo-repo",
+            "path": "https://www.skills.sh/demo-owner/demo-repo/demo-skill",
+        }
+    ]
+
+    detail_response = await test_client.post(
+        "/api/skills/skills-sh/scan",
+        json={"query": "https://www.skills.sh/demo-owner/demo-repo/demo-skill"},
+        headers=authenticated_header,
+    )
+    detail_data = await detail_response.get_json()
+    assert detail_response.status_code == 200
+    assert detail_data["status"] == "ok"
+    assert detail_data["data"]["skills"][0]["name"] == "Demo Skill"
+    assert detail_data["data"]["skills"][0]["installUrl"] == (
+        "https://github.com/demo-owner/demo-repo"
+    )
+
+    install_response = await test_client.post(
+        "/api/skills/install",
+        json={
+            "sourceType": "skills_sh",
+            "skillsShPath": "demo-owner/demo-repo/demo-skill",
+            "skillId": "demo-skill",
+            "name": "Demo Skill",
+        },
+        headers=authenticated_header,
+    )
+    install_data = await install_response.get_json()
+    assert install_response.status_code == 200
+    assert install_data["status"] == "ok"
+    assert install_data["data"]["name"] == "demo-skill"
+
+
+@pytest.mark.asyncio
 async def test_batch_upload_skills_partial_success(
     app: FastAPIAppAdapter,
     authenticated_header: dict,
