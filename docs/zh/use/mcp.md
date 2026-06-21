@@ -87,6 +87,48 @@ npx -v
 
 在 AstrBot WebUI 打开 `插件 → MCP`，点击 `新增服务器`，填写服务器名称，将上面的 JSON 粘贴到 `服务器配置` 中。可先点击 `测试连接`；勾选 `保存后连接服务器` 后点击 `保存`，即可连接服务器。
 
+## OAuth 2.0 MCP 服务器
+
+对于需要 OAuth 2.0 的远程 MCP Server，AstrBot 现在支持在 WebUI 中直接完成授权登录。
+
+一个典型的 HTTP MCP 配置如下：
+
+```json
+{
+    "transport": "streamable_http",
+    "url": "https://example.com/mcp",
+    "headers": {},
+    "timeout": 5,
+    "sse_read_timeout": 300,
+    "oauth2": {
+        "grant_type": "authorization_code",
+        "client_name": "AstrBot MCP Client"
+    }
+}
+```
+
+如果服务端使用预先分配的客户端凭据，也可以改为 `client_credentials`：
+
+```json
+{
+    "transport": "streamable_http",
+    "url": "https://example.com/mcp",
+    "oauth2": {
+        "grant_type": "client_credentials",
+        "client_id": "your-client-id",
+        "client_secret": "your-client-secret",
+        "scope": "read write"
+    }
+}
+```
+
+在 WebUI 的 MCP 服务器弹窗中：
+
+1. 填写带有 `oauth2` 字段的 JSON 配置。
+2. 点击 `OAuth 2.0 登录`。
+3. 在新打开的授权页面完成登录。
+4. 返回 AstrBot，等待状态显示授权完成后再测试连接或保存。
+
 参考链接：
 
 1. 在这里了解如何使用 MCP: [Model Context Protocol](https://modelcontextprotocol.io/introduction)
