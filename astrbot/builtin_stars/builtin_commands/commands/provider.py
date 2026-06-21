@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 
 from astrbot import logger
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.core.provider.entities import ProviderType
+from astrbot.core.provider.provider import Provider
 from astrbot.core.utils.error_redaction import safe_error
 
 
@@ -107,6 +109,184 @@ class ProviderCommands:
             )
 
         return display_data
+
+    def _resolve_model_name(
+        self,
+        model_name: str,
+        models: Sequence[str],
+    ) -> str | None:
+        requested = model_name.strip()
+        if not requested:
+            return None
+
+        requested_norm = requested.casefold()
+        for candidate in models:
+            if candidate == requested or candidate.casefold() == requested_norm:
+                return candidate
+
+        for candidate in models:
+            candidate_norm = candidate.casefold()
+            if candidate_norm.endswith(f"/{requested_norm}") or candidate_norm.endswith(
+                f":{requested_norm}"
+            ):
+                return candidate
+
+        return None
+
+    async def _get_models_or_reply_error(
+        self,
+        message: AstrMessageEvent,
+        provider: Provider,
+    ) -> list[str] | None:
+        try:
+            return list(await provider.get_models())
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            message.set_result(
+                MessageEventResult().message(safe_error("获取模型列表失败：", e))
+            )
+            return None
+
+    def _apply_model(self, provider: Provider, model_name: str) -> str:
+        provider.set_model(model_name)
+        meta = provider.meta()
+        return f"✅ 成功切换模型。当前提供商：[{meta.id}] 当前模型：[{provider.get_model()}]"
+
+    async def _find_provider_for_model(
+        self,
+        model_name: str,
+        *,
+        exclude_provider_id: str | None,
+    ) -> tuple[Provider | None, str | None]:
+        for provider in self.context.get_all_providers():
+            meta = provider.meta()
+            if meta.id == exclude_provider_id:
+                continue
+            if meta.provider_type != ProviderType.CHAT_COMPLETION:
+                continue
+            try:
+                models = list(await provider.get_models())
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(
+                    "获取提供商 %s 模型列表失败，跳过跨提供商查找：%s",
+                    meta.id,
+                    safe_error("", e),
+                )
+                continue
+            matched_model = self._resolve_model_name(model_name, models)
+            if matched_model is not None:
+                return provider, matched_model
+        return None, None
+
+    async def _switch_model_by_name(
+        self,
+        message: AstrMessageEvent,
+        model_name: str,
+        provider: Provider,
+    ) -> None:
+        model_name = model_name.strip()
+        if not model_name:
+            message.set_result(MessageEventResult().message("模型名不能为空。"))
+            return
+
+        umo = message.unified_msg_origin
+        current_provider_id = provider.meta().id
+        models = await self._get_models_or_reply_error(message, provider)
+        if models is None:
+            return
+
+        matched_model = self._resolve_model_name(model_name, models)
+        if matched_model is not None:
+            message.set_result(
+                MessageEventResult().message(self._apply_model(provider, matched_model))
+            )
+            return
+
+        target_provider, target_model = await self._find_provider_for_model(
+            model_name,
+            exclude_provider_id=current_provider_id,
+        )
+        if target_provider is None or target_model is None:
+            message.set_result(
+                MessageEventResult().message(
+                    f"模型 [{model_name}] 未在任何已配置的提供商中找到，请检查配置或网络后重试。"
+                )
+            )
+            return
+
+        target_provider_id = target_provider.meta().id
+        try:
+            await self.context.provider_manager.set_provider(
+                provider_id=target_provider_id,
+                provider_type=ProviderType.CHAT_COMPLETION,
+                umo=umo,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            message.set_result(
+                MessageEventResult().message(safe_error("切换提供商失败：", e))
+            )
+            return
+
+        self._apply_model(target_provider, target_model)
+        message.set_result(
+            MessageEventResult().message(
+                f"✅ 检测到模型 [{target_model}] 属于提供商 [{target_provider_id}]，已自动切换提供商并设置模型。"
+            )
+        )
+
+    async def model_ls(
+        self,
+        message: AstrMessageEvent,
+        idx_or_name: int | str | None = None,
+    ) -> None:
+        """查看或者切换模型"""
+        provider = self.context.get_using_provider(message.unified_msg_origin)
+        if not provider:
+            message.set_result(
+                MessageEventResult().message("未找到任何 LLM 提供商。请先配置。")
+            )
+            return
+
+        if idx_or_name is None:
+            models = await self._get_models_or_reply_error(message, provider)
+            if models is None:
+                return
+
+            parts = ["## Models\n"]
+            for i, model in enumerate(models, 1):
+                line = f"{i}. {model}"
+                if model == provider.get_model():
+                    line += " 👈"
+                parts.append(line + "\n")
+            parts.append(f"\nCurrent model: {provider.get_model() or 'None'}")
+            parts.append("\nUse /model <idx_or_name> to switch models.")
+            message.set_result(
+                MessageEventResult().message("".join(parts)).use_t2i(False)
+            )
+            return
+
+        if isinstance(idx_or_name, int):
+            models = await self._get_models_or_reply_error(message, provider)
+            if models is None:
+                return
+            if idx_or_name > len(models) or idx_or_name < 1:
+                message.set_result(
+                    MessageEventResult().message("❌ Invalid model index.")
+                )
+                return
+            message.set_result(
+                MessageEventResult().message(
+                    self._apply_model(provider, models[idx_or_name - 1])
+                )
+            )
+            return
+
+        await self._switch_model_by_name(message, idx_or_name, provider)
 
     async def provider(
         self,
