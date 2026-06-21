@@ -96,6 +96,34 @@ class ConversationV2(TimestampMixin, SQLModel, table=True):
     )
 
 
+class ConversationCompressionSnapshot(TimestampMixin, SQLModel, table=True):
+    """A persisted snapshot of conversation history before manual compression."""
+
+    __tablename__: str = "conversation_compression_snapshots"
+
+    id: int | None = Field(
+        default=None,
+        primary_key=True,
+        sa_column_kwargs={"autoincrement": True},
+    )
+    snapshot_id: str = Field(
+        max_length=36,
+        nullable=False,
+        unique=True,
+        default_factory=lambda: str(uuid.uuid4()),
+    )
+    conversation_id: str = Field(nullable=False, index=True)
+    user_id: str = Field(nullable=False, index=True)
+    history: list = Field(default_factory=list, sa_type=JSON)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            name="uix_conversation_compression_snapshot_id",
+        ),
+    )
+
+
 class PersonaFolder(TimestampMixin, SQLModel, table=True):
     """Persona 文件夹，支持递归层级结构。
 
