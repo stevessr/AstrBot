@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
 
+import aiofiles
 import aiohttp
 import certifi
 import psutil
@@ -355,6 +356,13 @@ async def download_file(
 def file_to_base64(file_path: str) -> str:
     with open(file_path, "rb") as f:
         data_bytes = f.read()
+        base64_str = base64.b64encode(data_bytes).decode()
+    return "base64://" + base64_str
+
+
+async def file_to_base64_async(file_path: str) -> str:
+    async with aiofiles.open(file_path, "rb") as f:
+        data_bytes = await f.read()
         base64_str = base64.b64encode(data_bytes).decode()
     return "base64://" + base64_str
 
