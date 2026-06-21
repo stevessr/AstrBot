@@ -65,6 +65,10 @@
       "t2iRendering": {
         "title": "Text-to-Image",
         "subtitle": "Rendering strategy, endpoint, and custom templates for text-to-image."
+      },
+      "database": {
+        "title": "Main Database",
+        "subtitle": "Main database backend and migration settings."
       }
     },
     "messages": {
@@ -146,6 +150,25 @@
         "statusFailed": "Failed to load storage usage",
         "cleanupSuccess": "Cleared {count} files and freed {size}",
         "cleanupFailed": "Cleanup failed"
+      }
+    },
+    "migration": {
+      "title": "Data Migration to v4.0.0",
+      "subtitle": "If you encounter data migration issues, you can manually start the database migration assistant",
+      "button": "Start Migration Assistant"
+    },
+    "database": {
+      "title": "Main Database",
+      "subtitle": "Configure the core main database backend, test Postgres connectivity, and migrate the existing SQLite main database to Postgres. The knowledge base will continue using SQLite.",
+      "openConfig": "Open System Config",
+      "testConnection": "Test Connection",
+      "migrate": "Migrate to Postgres",
+      "messages": {
+        "loadFailed": "Failed to load system config",
+        "testSuccess": "Database connection succeeded",
+        "testFailed": "Database connection failed",
+        "migrateSuccess": "Database migration succeeded. Please restart AstrBot to apply the change",
+        "migrateFailed": "Database migration failed"
       }
     }
   },
