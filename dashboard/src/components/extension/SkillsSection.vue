@@ -477,6 +477,23 @@
           />
         </template>
       </v-tooltip>
+      <v-tooltip
+        v-if="mode === 'local'"
+        :text="tm('skills.installFromSource')"
+        location="left"
+      >
+        <template #activator="{ props }">
+          <v-btn
+            v-bind="props"
+            color="darkprimary"
+            icon="mdi-cloud-download-outline"
+            size="x-large"
+            variant="elevated"
+            class="skills-fab"
+            @click="openImportDialog"
+          />
+        </template>
+      </v-tooltip>
     </div>
 
     <v-dialog v-model="uploadDialog" max-width="880px" :persistent="uploading">
@@ -919,6 +936,136 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="importDialog" max-width="960px">
+      <v-card class="skills-import-dialog">
+        <v-card-title class="px-6 pt-6 pb-2">
+          <div class="text-h4 font-weight-medium">
+            {{ tm("skills.importDialogTitle") }}
+          </div>
+        </v-card-title>
+        <v-card-text class="px-6 pb-5 pt-2">
+          <v-tabs v-model="importMode" color="primary" density="comfortable">
+            <v-tab value="skillsSh">{{
+              tm("skills.importModeSkillsSh")
+            }}</v-tab>
+            <v-tab value="github">{{ tm("skills.importModeGitHub") }}</v-tab>
+          </v-tabs>
+
+          <v-window v-model="importMode" class="mt-4">
+            <v-window-item value="skillsSh">
+              <div class="d-flex flex-column flex-md-row ga-3 mb-3">
+                <v-text-field
+                  v-model="skillsShQuery"
+                  :label="tm('skills.skillsShSourceLabel')"
+                  prepend-inner-icon="mdi-store-search-outline"
+                  variant="outlined"
+                  :hint="tm('skills.skillsShSourceHint')"
+                  persistent-hint
+                  hide-details="auto"
+                  class="flex-grow-1"
+                  @keydown.enter="scanSkillsSh"
+                />
+                <v-btn
+                  color="primary"
+                  variant="tonal"
+                  prepend-icon="mdi-magnify-scan"
+                  :loading="importScanLoading"
+                  @click="scanSkillsSh"
+                >
+                  {{ tm("skills.skillsShScan") }}
+                </v-btn>
+              </div>
+            </v-window-item>
+
+            <v-window-item value="github">
+              <div class="d-flex flex-column flex-md-row ga-3 mb-3">
+                <v-text-field
+                  v-model="repoInput"
+                  :label="tm('skills.githubRepoLabel')"
+                  prepend-inner-icon="mdi-github"
+                  variant="outlined"
+                  :hint="tm('skills.githubRepoHint')"
+                  persistent-hint
+                  hide-details="auto"
+                  class="flex-grow-1"
+                  @keydown.enter="scanGitHubRepo"
+                />
+                <v-btn
+                  color="primary"
+                  variant="tonal"
+                  prepend-icon="mdi-magnify-scan"
+                  :loading="importScanLoading"
+                  @click="scanGitHubRepo"
+                >
+                  {{ tm("skills.githubScan") }}
+                </v-btn>
+              </div>
+            </v-window-item>
+          </v-window>
+
+          <v-progress-linear
+            v-if="importScanLoading"
+            indeterminate
+            color="primary"
+            class="mb-3"
+          />
+
+          <div v-else-if="!hasScannedImport" class="text-center pa-8">
+            <v-icon size="56" color="grey-lighten-1"
+              >mdi-cloud-search-outline</v-icon
+            >
+            <p class="text-grey mt-4">{{ tm("skills.importScanPrompt") }}</p>
+          </div>
+
+          <div
+            v-else-if="importScanResults.length === 0"
+            class="text-center pa-8"
+          >
+            <v-icon size="56" color="grey-lighten-1"
+              >mdi-file-search-outline</v-icon
+            >
+            <p class="text-grey mt-4">{{ tm("skills.importScanEmpty") }}</p>
+          </div>
+
+          <v-list v-else class="skills-import-list">
+            <v-list-item
+              v-for="skill in importScanResults"
+              :key="getImportSkillKey(skill)"
+            >
+              <template #title>
+                <span class="font-weight-medium">{{ skill.name }}</span>
+              </template>
+              <template #subtitle>
+                <div class="text-caption">
+                  <div>{{ skill.source }} @ {{ skill.skillId }}</div>
+                  <div v-if="skill.path">
+                    {{ tm("skills.path") }}: {{ skill.path }}
+                  </div>
+                </div>
+              </template>
+              <template #append>
+                <v-btn
+                  color="primary"
+                  size="small"
+                  :loading="
+                    importItemLoading[getImportSkillKey(skill)] || false
+                  "
+                  @click="installImportSkill(skill)"
+                >
+                  {{ tm("skills.install") }}
+                </v-btn>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions class="d-flex justify-end px-6 pb-4">
+          <v-btn variant="text" @click="importDialog = false">
+            {{ tm("skills.cancel") }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar
       v-model="snackbar.show"
       :timeout="3500"
@@ -930,7 +1077,9 @@
   </div>
 </template>
 
+
 <script>
+import axios from "axios";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { VueMonacoEditor } from "@guolao/vue-monaco-editor";
 import { skillApi, systemConfigApi } from "@/api/v1";
@@ -969,6 +1118,14 @@ export default {
     const deleteDialog = ref(false);
     const deleting = ref(false);
     const skillToDelete = ref(null);
+    const importDialog = ref(false);
+    const importMode = ref("skillsSh");
+    const repoInput = ref("");
+    const skillsShQuery = ref("");
+    const importScanResults = ref([]);
+    const importScanLoading = ref(false);
+    const hasScannedImport = ref(false);
+    const importItemLoading = reactive({});
     const batchSelectionEnabled = ref(false);
     const selectedSkillNames = ref([]);
     const batchDeleteTargets = ref([]);
@@ -1370,6 +1527,108 @@ export default {
         const msg =
           (res && res.data && res.data.message) || failureMessageDefault;
         showMessage(msg, "error");
+      }
+    };
+
+    const getImportSkillKey = (skill) =>
+      `${skill.source || ""}/${skill.skillId || skill.name || ""}/${
+        skill.skillsShPath || ""
+      }`;
+
+    const getSelectedGitHubProxy = () => {
+      if (typeof window === "undefined" || !window.localStorage) return "";
+      return localStorage.getItem("githubProxyRadioValue") === "1"
+        ? localStorage.getItem("selectedGitHubProxy") || ""
+        : "";
+    };
+
+    const openImportDialog = () => {
+      importDialog.value = true;
+    };
+
+    const normalizeImportPayload = (res) => {
+      const payload = res?.data?.data || {};
+      if (Array.isArray(payload)) return payload;
+      return Array.isArray(payload.skills) ? payload.skills : [];
+    };
+
+    const scanSkillsSh = async () => {
+      importMode.value = "skillsSh";
+      importScanLoading.value = true;
+      hasScannedImport.value = true;
+      try {
+        const res = await axios.post("/api/skills/skills-sh/scan", {
+          query: skillsShQuery.value.trim(),
+        });
+        importScanResults.value = normalizeImportPayload(res);
+        if (res?.data?.status !== "ok") {
+          showMessage(
+            res?.data?.message || tm("skills.skillsShScanFailed"),
+            "error",
+          );
+        }
+      } catch (_err) {
+        importScanResults.value = [];
+        showMessage(tm("skills.skillsShScanFailed"), "error");
+      } finally {
+        importScanLoading.value = false;
+      }
+    };
+
+    const scanGitHubRepo = async () => {
+      importMode.value = "github";
+      const repo = repoInput.value.trim();
+      if (!repo) {
+        showMessage(tm("skills.githubRepoRequired"), "error");
+        return;
+      }
+
+      importScanLoading.value = true;
+      hasScannedImport.value = true;
+      try {
+        const res = await axios.post("/api/skills/github/scan", {
+          repo,
+          proxy: getSelectedGitHubProxy(),
+        });
+        importScanResults.value = normalizeImportPayload(res);
+        if (res?.data?.status !== "ok") {
+          showMessage(
+            res?.data?.message || tm("skills.githubScanFailed"),
+            "error",
+          );
+        }
+      } catch (_err) {
+        importScanResults.value = [];
+        showMessage(tm("skills.githubScanFailed"), "error");
+      } finally {
+        importScanLoading.value = false;
+      }
+    };
+
+    const installImportSkill = async (skill) => {
+      const key = getImportSkillKey(skill);
+      importItemLoading[key] = true;
+      try {
+        const res = await axios.post("/api/skills/install", {
+          source: skill.installUrl || skill.source,
+          skillId: skill.skillId,
+          name: skill.name,
+          sourceType: skill.sourceType,
+          skillsShPath: skill.skillsShPath,
+          proxy: getSelectedGitHubProxy(),
+        });
+        handleApiResponse(
+          res,
+          tm("skills.importInstallSuccess"),
+          tm("skills.importInstallFailed"),
+          async () => {
+            await fetchSkills();
+          },
+        );
+      } catch (_err) {
+        showMessage(tm("skills.importInstallFailed"), "error");
+      } finally {
+        importItemLoading[key] = false;
       }
     };
 
@@ -2064,6 +2323,14 @@ export default {
       itemLoading,
       deleteDialog,
       deleting,
+      importDialog,
+      importMode,
+      repoInput,
+      skillsShQuery,
+      importScanResults,
+      importScanLoading,
+      hasScannedImport,
+      importItemLoading,
       batchSelectionEnabled,
       selectedSkillNames,
       batchDeleteTargets,
@@ -2100,6 +2367,11 @@ export default {
       refreshCurrentMode,
       fetchNeoData,
       uploadSkillBatch,
+      getImportSkillKey,
+      openImportDialog,
+      scanSkillsSh,
+      scanGitHubRepo,
+      installImportSkill,
       downloadSkill,
       openSkillEditor,
       closeSkillEditor,

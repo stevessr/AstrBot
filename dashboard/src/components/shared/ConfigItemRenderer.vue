@@ -1,8 +1,12 @@
 <template>
   <div class="w-100" :class="{ 'config-field--full-width': itemMeta?.full_width }">
     <!-- Special handling for specific metadata types -->
-    <template v-if="itemMeta?._special === 'select_provider'">
-      <ProviderSelector :model-value="modelValue" @update:model-value="emitUpdate" :provider-type="'chat_completion'" />
+    <template v-if="getSpecialName(itemMeta?._special) === 'select_provider'">
+      <ProviderSelector
+        :model-value="modelValue"
+        @update:model-value="emitUpdate"
+        :provider-type="getProviderTypeBySpecial(itemMeta?._special)"
+      />
     </template>
     <template v-else-if="itemMeta?._special === 'select_provider_stt'">
       <ProviderSelector :model-value="modelValue" @update:model-value="emitUpdate" :provider-type="'speech_to_text'" />
@@ -144,7 +148,7 @@
       :type="stringInputType"
       :append-inner-icon="secretToggleIcon"
       :autocomplete="itemMeta?.secret ? 'new-password' : undefined"
-      @click:append-inner="secretVisible = !secretVisible"
+      @click:append-inner="toggleSecretVisibility"
       density="compact"
       variant="outlined"
       class="config-field"
@@ -311,6 +315,13 @@ const emit = defineEmits(['update:modelValue', 'get-embedding-dim', 'open-fullsc
 const { t } = useI18n()
 const { getRaw } = useModuleI18n('features/config-metadata')
 const { configText } = usePluginI18n()
+const isSecretField = computed(() => Boolean(props.itemMeta?.secret || props.itemMeta?.input_type === 'password'))
+
+function toggleSecretVisibility() {
+  if (!isSecretField.value) return
+  secretVisible.value = !secretVisible.value
+}
+
 
 async function emitUpdate(val) {
   val = validateNumericConfig(props.itemMeta?.type, val)
@@ -432,6 +443,47 @@ function getSelectItems(itemMeta) {
   return itemMeta.options || []
 }
 
+function parseSpecialValue(value) {
+  if (!value || typeof value !== 'string') {
+    return { name: '', subtype: '' }
+  }
+  const [name, ...rest] = value.split(':')
+  return {
+    name,
+    subtype: rest.join(':') || ''
+  }
+}
+
+function getSpecialName(value) {
+  return parseSpecialValue(value).name
+}
+
+function getSpecialSubtype(value) {
+  return parseSpecialValue(value).subtype
+}
+
+function getProviderTypeBySpecial(value) {
+  const subtype = (getSpecialSubtype(value) || '').trim().toLowerCase()
+  if (!subtype) {
+    return 'chat_completion'
+  }
+  if (subtype === 'chat' || subtype === 'chat_completion') {
+    return 'chat_completion'
+  }
+  if (subtype === 'embedding') {
+    return 'embedding'
+  }
+  if (subtype === 'rerank') {
+    return 'rerank'
+  }
+  if (subtype === 'stt' || subtype === 'speech_to_text') {
+    return 'speech_to_text'
+  }
+  if (subtype === 'tts' || subtype === 'text_to_speech') {
+    return 'text_to_speech'
+  }
+  return 'chat_completion'
+}
 </script>
 
 <style scoped>
