@@ -409,8 +409,15 @@ class KBHelper:
                 await progress_callback("chunking", 100, 100)
 
             # 阶段3: 生成向量（带进度回调）
-            async def embedding_progress_callback(current, total) -> None:
-                if progress_callback:
+            async def embedding_progress_callback(*args) -> None:
+                if not progress_callback:
+                    return
+
+                if len(args) == 3:
+                    stage, current, total = args
+                    await progress_callback(stage, current, total)
+                elif len(args) == 2:
+                    current, total = args
                     await progress_callback("embedding", current, total)
 
             try:
@@ -787,6 +794,7 @@ class KBHelper:
             progress_callback=progress_callback,
             enable_cleaning=enable_cleaning,
             cleaning_provider_id=cleaning_provider_id,
+            repair_tasks_limit=tasks_limit,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
@@ -823,6 +831,7 @@ class KBHelper:
         enable_cleaning: bool = False,
         cleaning_provider_id: str | None = None,
         repair_max_rpm: int = 60,
+        repair_tasks_limit: int = 3,
         chunk_size: int = 512,
         chunk_overlap: int = 50,
     ) -> list[str]:
@@ -865,16 +874,37 @@ class KBHelper:
             initial_chunks = await text_splitter.chunk(content)
             logger.info(f"初步分块完成，生成 {len(initial_chunks)} 个块用于修复。")
 
-            # 并发处理所有块
+            # 受限并发处理所有块，避免瞬时打满外部 LLM API
             rate_limiter = RateLimiter(repair_max_rpm)
-            tasks = [
-                _repair_and_translate_chunk_with_retry(
-                    chunk, llm_provider, rate_limiter
-                )
-                for chunk in initial_chunks
-            ]
+            semaphore = asyncio.Semaphore(max(1, repair_tasks_limit))
+            total_chunks = len(initial_chunks)
+            completed_count = 0
 
-            repaired_results = await asyncio.gather(*tasks, return_exceptions=True)
+            if progress_callback and total_chunks > 0:
+                await progress_callback("cleaning", 0, total_chunks)
+
+            async def process_chunk(index: int, chunk: str):
+                async with semaphore:
+                    try:
+                        result = await _repair_and_translate_chunk_with_retry(
+                            chunk, llm_provider, rate_limiter
+                        )
+                        return index, result
+                    except Exception as e:
+                        return index, e
+
+            tasks = [
+                asyncio.create_task(process_chunk(i, chunk))
+                for i, chunk in enumerate(initial_chunks)
+            ]
+            repaired_results: list[list[str] | Exception | None] = [None] * total_chunks
+
+            for task in asyncio.as_completed(tasks):
+                index, result = await task
+                repaired_results[index] = result
+                completed_count += 1
+                if progress_callback and total_chunks > 0:
+                    await progress_callback("cleaning", completed_count, total_chunks)
 
             final_chunks = []
             for i, result in enumerate(repaired_results):
