@@ -113,8 +113,8 @@ let savedTimer;
 let personaLoadVersion = 0;
 
 const defaultPersonaData = {
-  persona_id: "default",
-  system_prompt: "You are a helpful and friendly assistant.",
+  persona_id: 'default',
+  system_prompt: 'You are a helpful and friendly person.',
   tools: null,
   skills: null,
 };
