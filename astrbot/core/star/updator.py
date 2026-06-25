@@ -1,3 +1,4 @@
+import asyncio
 import os
 import zipfile
 
@@ -21,6 +22,64 @@ class PluginUpdator(RepoZipUpdator):
 
     def get_plugin_store_path(self) -> str:
         return self.plugin_store_path
+
+    async def _try_git_update(
+        self, plugin_path: str, plugin_name: str, proxy: str = ""
+    ) -> bool:
+        """尝试使用 git pull 更新插件。
+
+        检查插件目录是否为 Git 仓库，如果是则执行 git pull。
+        成功返回 True，失败返回 False 以让调用方回退到其他更新方式。
+
+        Args:
+            plugin_path: 插件本地目录路径
+            plugin_name: 插件名称（仅用于日志）
+            proxy: 代理地址
+        """
+        git_dir = os.path.join(plugin_path, ".git")
+        if not os.path.exists(git_dir) or not os.path.isdir(git_dir):
+            return False
+
+        logger.info(f"插件 {plugin_name} 是 Git 仓库，使用 git pull 更新...")
+        try:
+            env = os.environ.copy()
+            if proxy:
+                env["http_proxy"] = proxy
+                env["https_proxy"] = proxy
+                env["GIT_HTTP_PROXY"] = proxy
+
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "pull",
+                cwd=plugin_path,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+
+            out_text = stdout.decode().strip()
+            err_text = stderr.decode().strip()
+
+            if proc.returncode == 0:
+                if out_text and "Already up to date" not in out_text:
+                    logger.info(f"git pull 输出：{out_text}")
+                if err_text:
+                    logger.info(f"git pull stderr: {err_text}")
+                logger.info(f"插件 {plugin_name} 已通过 git pull 更新成功")
+                return True
+
+            logger.warning(
+                f"git pull 更新插件 {plugin_name} 失败 (exit {proc.returncode}): "
+                f"{err_text or out_text}"
+            )
+            return False
+        except FileNotFoundError:
+            logger.warning("系统中未找到 git 命令，将回退到 ZIP 下载方式更新")
+            return False
+        except Exception as e:
+            logger.warning(f"执行 git pull 时发生异常：{e}，将回退到 ZIP 下载方式更新")
+            return False
 
     async def install(self, repo_url: str, proxy="", download_url: str = "") -> str:
         _, repo_name, _ = self.parse_github_url(repo_url)
@@ -55,6 +114,12 @@ class PluginUpdator(RepoZipUpdator):
         logger.info(
             f"Updating plugin at path: {plugin_path}, repository URL: {repo_url}",
         )
+
+        # 优先使用 git pull 更新（如果插件目录是 Git 仓库）
+        if repo_url and await self._try_git_update(plugin_path, plugin.name, proxy):
+            return plugin_path
+
+        # 回退到原有的 ZIP 下载 + 解压方式
         if download_url:
             logger.info(
                 f"Downloading plugin update archive for {plugin.name}: {download_url}"
