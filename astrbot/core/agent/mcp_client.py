@@ -541,7 +541,7 @@ class MCPClient:
                     self.server_errlogs.append(log_msg)
 
         if "url" in cfg:
-            auth = await create_mcp_http_auth(cfg)
+            auth = await create_mcp_http_auth(cfg, server_name=name)
 
             if not has_mcp_oauth_config(cfg):
                 success, error_msg = await _quick_test_mcp_connection(cfg)
