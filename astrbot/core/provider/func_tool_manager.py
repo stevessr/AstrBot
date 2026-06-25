@@ -34,8 +34,10 @@ DEFAULT_MCP_CONFIG = {"mcpServers": {}}
 
 DEFAULT_MCP_INIT_TIMEOUT_SECONDS = 180.0
 DEFAULT_ENABLE_MCP_TIMEOUT_SECONDS = 180.0
+DEFAULT_MCP_RECOVERY_INTERVAL_SECONDS = 30.0
 MCP_INIT_TIMEOUT_ENV = "ASTRBOT_MCP_INIT_TIMEOUT"
 ENABLE_MCP_TIMEOUT_ENV = "ASTRBOT_MCP_ENABLE_TIMEOUT"
+MCP_RECOVERY_INTERVAL_ENV = "ASTRBOT_MCP_RECOVERY_INTERVAL"
 MAX_MCP_TIMEOUT_SECONDS = 300.0
 
 
@@ -304,6 +306,7 @@ class FunctionToolManager:
         self._timeout_warn_lock = threading.Lock()
         self._runtime_lock = asyncio.Lock()
         self._mcp_starting: set[str] = set()
+        self._mcp_recovery_task: asyncio.Task[None] | None = None
         self._mcp_oauth_manager = MCPOAuthManager()
         self._init_timeout_default = _resolve_timeout(
             timeout=None,
@@ -314,6 +317,11 @@ class FunctionToolManager:
             timeout=None,
             env_name=ENABLE_MCP_TIMEOUT_ENV,
             default=DEFAULT_ENABLE_MCP_TIMEOUT_SECONDS,
+        )
+        self._mcp_recovery_interval = _resolve_timeout(
+            timeout=None,
+            env_name=MCP_RECOVERY_INTERVAL_ENV,
+            default=DEFAULT_MCP_RECOVERY_INTERVAL_SECONDS,
         )
         self._warn_on_timeout_mismatch(
             self._init_timeout_default,
@@ -543,6 +551,128 @@ class FunctionToolManager:
                 port = ""
             logger.debug(f"  主机: {scheme}://{host}{port}")
 
+    def _ensure_mcp_recovery_loop(self) -> None:
+        """Start the background MCP recovery loop when it is not running."""
+        if self._mcp_recovery_task is None or self._mcp_recovery_task.done():
+            self._mcp_recovery_task = asyncio.create_task(
+                self._mcp_recovery_loop(),
+                name="mcp-recovery",
+            )
+
+    async def _stop_mcp_recovery_loop(self) -> None:
+        """Stop the background MCP recovery loop."""
+        if self._mcp_recovery_task is None or self._mcp_recovery_task.done():
+            return
+
+        self._mcp_recovery_task.cancel()
+        try:
+            await self._mcp_recovery_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._mcp_recovery_task = None
+
+    async def _mcp_recovery_loop(self) -> None:
+        """Periodically recover active MCP servers that are missing or stale."""
+        while True:
+            await asyncio.sleep(self._mcp_recovery_interval)
+            try:
+                await self.recover_mcp_servers_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("MCP recovery loop failed", exc_info=True)
+
+    async def recover_mcp_servers_once(self) -> None:
+        """Recover configured active MCP servers once.
+
+        Missing active servers are started again. Existing active servers are
+        asked for their tool list, which lets the MCP client reconnect if the
+        transport was closed since the previous check.
+        """
+        config = self.load_mcp_config()
+        mcp_servers = config.get("mcpServers", {})
+        if not isinstance(mcp_servers, dict):
+            logger.warning(
+                f"Invalid MCP server config type during recovery: {type(mcp_servers).__name__}. Expected object/dict."
+            )
+            return
+
+        for name, cfg in list(mcp_servers.items()):
+            if not isinstance(cfg, dict) or not cfg.get("active", True):
+                continue
+
+            async with self._runtime_lock:
+                runtime = self._mcp_server_runtime.get(name)
+                is_starting = name in self._mcp_starting
+
+            if is_starting:
+                continue
+
+            if runtime is None:
+                logger.info(f"Attempting to recover MCP server {name}...")
+                try:
+                    await self._start_mcp_server(
+                        name=name,
+                        cfg=cfg,
+                        timeout=self._enable_timeout_default,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except TimeoutError:
+                    logger.warning(f"Timed out while recovering MCP server {name}.")
+                    self._log_safe_mcp_debug_config(cfg)
+                except Exception as exc:
+                    logger.warning(f"Failed to recover MCP server {name}: {exc!s}")
+                    self._log_safe_mcp_debug_config(cfg)
+                continue
+
+            old_tool_names = [tool.name for tool in runtime.client.tools]
+            try:
+                tools_res = await runtime.client.list_tools_and_save()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"MCP server {name} health check failed: {exc!s}")
+                continue
+
+            new_tool_names = [tool.name for tool in tools_res.tools]
+            if new_tool_names == old_tool_names:
+                continue
+
+            existing_active = {
+                f.name: f.active
+                for f in self.func_list
+                if isinstance(f, MCPTool) and f.mcp_server_name == name
+            }
+            inactivated_llm_tools = sp.get(
+                "inactivated_llm_tools",
+                [],
+                scope="global",
+                scope_id="global",
+            )
+            if not isinstance(inactivated_llm_tools, list):
+                inactivated_llm_tools = []
+
+            self.func_list = [
+                f
+                for f in self.func_list
+                if not (isinstance(f, MCPTool) and f.mcp_server_name == name)
+            ]
+            for tool in runtime.client.tools:
+                func_tool = MCPTool(
+                    mcp_tool=tool,
+                    mcp_client=runtime.client,
+                    mcp_server_name=name,
+                )
+                if func_tool.name in existing_active:
+                    func_tool.active = existing_active[func_tool.name]
+                elif func_tool.name in inactivated_llm_tools:
+                    func_tool.active = False
+                self.func_list.append(func_tool)
+
+            logger.info(f"Refreshed MCP server {name} tools: {new_tool_names}")
+
     async def init_mcp_clients(
         self, raise_on_all_failed: bool = False
     ) -> MCPInitSummary:
@@ -640,6 +770,7 @@ class FunctionToolManager:
         logger.info(
             f"MCP services initialization completed: {summary.success}/{summary.total} successful, {len(summary.failed)} failed."
         )
+        self._ensure_mcp_recovery_loop()
         if summary.total > 0 and summary.success == 0:
             msg = "All MCP services failed to initialize, please check the mcp_server.json and server availability."
             if raise_on_all_failed:
@@ -925,6 +1056,7 @@ class FunctionToolManager:
             shutdown_event=shutdown_event,
             timeout=timeout_value,
         )
+        self._ensure_mcp_recovery_loop()
 
     async def disable_mcp_server(
         self,
@@ -942,6 +1074,9 @@ class FunctionToolManager:
                 Only raised when disabling a specific server (name is not None).
 
         """
+        if name is None:
+            await self._stop_mcp_recovery_loop()
+
         if name:
             async with self._runtime_lock:
                 runtime = self._mcp_server_runtime.get(name)
