@@ -121,6 +121,13 @@ except (ModuleNotFoundError, ImportError):
             "Warning: Missing 'mcp' dependency or MCP library version too old, Streamable HTTP connection unavailable.",
         )
 
+_MCP_RECOVERABLE_EXCEPTIONS = (
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+    anyio.EndOfStream,
+    httpx.TransportError,
+)
+
 
 def _prepare_config(config: dict) -> dict:
     """Prepare configuration, handle nested format"""
@@ -657,10 +664,32 @@ class MCPClient:
         await self.session.initialize()
 
     async def list_tools_and_save(self) -> mcp.ListToolsResult:
-        """List all tools from the server and save them to self.tools"""
+        """List all tools from the server and save them to self.tools.
+
+        Returns:
+            The MCP server's tool list response.
+
+        Raises:
+            RuntimeError: If the session is unavailable after reconnecting.
+            Exception: If listing tools or reconnecting fails.
+        """
         if not self.session:
-            raise Exception("MCP Client is not initialized")
-        response = await self.session.list_tools()
+            if self._mcp_server_config and self._server_name:
+                await self._reconnect()
+            if not self.session:
+                raise RuntimeError("MCP Client is not initialized")
+
+        try:
+            response = await self.session.list_tools()
+        except _MCP_RECOVERABLE_EXCEPTIONS as exc:
+            logger.warning(
+                f"MCP server {self._server_name or self.name or 'unknown'} list_tools failed ({type(exc).__name__}), attempting to reconnect..."
+            )
+            await self._reconnect()
+            if not self.session:
+                raise RuntimeError("MCP Client is not initialized after reconnect")
+            response = await self.session.list_tools()
+
         self.tools = response.tools
         return response
 
@@ -751,13 +780,15 @@ class MCPClient:
         """
 
         @retry(
-            retry=retry_if_exception_type(anyio.ClosedResourceError),
+            retry=retry_if_exception_type(_MCP_RECOVERABLE_EXCEPTIONS),
             stop=stop_after_attempt(2),
             wait=wait_exponential(multiplier=1, min=1, max=3),
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
         async def _call_with_retry():
+            if not self.session:
+                await self._reconnect()
             if not self.session:
                 raise ValueError("MCP session is not available for MCP function tools.")
 
@@ -767,9 +798,9 @@ class MCPClient:
                     arguments=arguments,
                     read_timeout_seconds=read_timeout_seconds,
                 )
-            except anyio.ClosedResourceError:
+            except _MCP_RECOVERABLE_EXCEPTIONS as exc:
                 logger.warning(
-                    f"MCP tool {tool_name} call failed (ClosedResourceError), attempting to reconnect..."
+                    f"MCP tool {tool_name} call failed ({type(exc).__name__}), attempting to reconnect..."
                 )
                 # Attempt to reconnect
                 await self._reconnect()
