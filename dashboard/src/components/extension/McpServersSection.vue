@@ -724,6 +724,10 @@ export default {
         this.oauthFlowError = flow.error || '';
         if (this.oauthFlowStatus === 'completed') {
           this.stopOauthPolling();
+          if (flow.mcp_server_config && typeof flow.mcp_server_config === 'object') {
+            this.serverConfigJson = JSON.stringify(flow.mcp_server_config, null, 2);
+            this.validateJson();
+          }
           this.addServerDialogMessage = this.tm('messages.oauthAuthorized');
           this.showSuccess(this.tm('messages.oauthAuthorized'));
         } else if (this.oauthFlowStatus === 'failed') {
@@ -774,6 +778,7 @@ export default {
       try {
         const response = await axios.post('/api/tools/mcp/oauth/start', {
           mcp_server_config: configObj,
+          server_name: this.currentServer.name || this.originalServerName || undefined,
           force: true
         });
 
@@ -810,6 +815,10 @@ export default {
         }
 
         if (this.oauthFlowStatus === 'completed') {
+          if (flow.mcp_server_config && typeof flow.mcp_server_config === 'object') {
+            this.serverConfigJson = JSON.stringify(flow.mcp_server_config, null, 2);
+            this.validateJson();
+          }
           this.addServerDialogMessage = this.tm('messages.oauthAuthorized');
           this.showSuccess(this.tm('messages.oauthAuthorized'));
           return;

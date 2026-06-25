@@ -439,6 +439,8 @@ async def start_mcp_oauth(
     if not isinstance(config, dict) or not config:
         raise ApiError("Invalid mcp_server_config")
     force = bool(body.get("force", False))
+    server_name = body.get("server_name") or body.get("name")
+    server_name = str(server_name).strip() if server_name else None
     callback_base_url = str(request.base_url).rstrip("/")
     if "testserver" in callback_base_url:
         callback_base_url = callback_base_url.replace("testserver", "localhost")
@@ -447,6 +449,7 @@ async def start_mcp_oauth(
             config,
             callback_base_url=callback_base_url,
             force=force,
+            server_name=server_name,
         )
     )
 

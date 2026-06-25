@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import threading
+import time
 import urllib.parse
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -17,7 +18,9 @@ from astrbot import logger
 from astrbot.core import sp
 from astrbot.core.agent.mcp_client import MCPClient, MCPTool
 from astrbot.core.agent.mcp_oauth import (
+    MCPOAuthAuthorizationRequiredError,
     MCPOAuthManager,
+    get_mcp_oauth_callback_base_url,
     get_mcp_oauth_state,
     has_mcp_oauth_config,
 )
@@ -35,6 +38,7 @@ DEFAULT_MCP_CONFIG = {"mcpServers": {}}
 DEFAULT_MCP_INIT_TIMEOUT_SECONDS = 180.0
 DEFAULT_ENABLE_MCP_TIMEOUT_SECONDS = 180.0
 DEFAULT_MCP_RECOVERY_INTERVAL_SECONDS = 30.0
+DEFAULT_MCP_OAUTH_LOGIN_LOG_INTERVAL_SECONDS = 300.0
 MCP_INIT_TIMEOUT_ENV = "ASTRBOT_MCP_INIT_TIMEOUT"
 ENABLE_MCP_TIMEOUT_ENV = "ASTRBOT_MCP_ENABLE_TIMEOUT"
 MCP_RECOVERY_INTERVAL_ENV = "ASTRBOT_MCP_RECOVERY_INTERVAL"
@@ -307,6 +311,7 @@ class FunctionToolManager:
         self._runtime_lock = asyncio.Lock()
         self._mcp_starting: set[str] = set()
         self._mcp_recovery_task: asyncio.Task[None] | None = None
+        self._mcp_oauth_login_log_times: dict[str, float] = {}
         self._mcp_oauth_manager = MCPOAuthManager()
         self._init_timeout_default = _resolve_timeout(
             timeout=None,
@@ -622,6 +627,8 @@ class FunctionToolManager:
                 except TimeoutError:
                     logger.warning(f"Timed out while recovering MCP server {name}.")
                     self._log_safe_mcp_debug_config(cfg)
+                except MCPOAuthAuthorizationRequiredError as exc:
+                    await self._start_mcp_oauth_login_from_log(name, cfg, str(exc))
                 except Exception as exc:
                     logger.warning(f"Failed to recover MCP server {name}: {exc!s}")
                     self._log_safe_mcp_debug_config(cfg)
@@ -632,6 +639,9 @@ class FunctionToolManager:
                 tools_res = await runtime.client.list_tools_and_save()
             except asyncio.CancelledError:
                 raise
+            except MCPOAuthAuthorizationRequiredError as exc:
+                await self._start_mcp_oauth_login_from_log(name, cfg, str(exc))
+                continue
             except Exception as exc:
                 logger.warning(f"MCP server {name} health check failed: {exc!s}")
                 continue
@@ -972,6 +982,84 @@ class FunctionToolManager:
                 f"Failed to cleanup MCP client resources {name}: {cleanup_exc}"
             )
 
+    async def _start_mcp_oauth_login_from_log(
+        self,
+        name: str,
+        config: dict,
+        reason: str,
+    ) -> None:
+        """Start an OAuth login flow that prints URL and QR code to logs.
+
+        Args:
+            name: MCP server name.
+            config: MCP server config.
+            reason: Authorization failure reason for diagnostics.
+        """
+        now = time.time()
+        last_logged_at = self._mcp_oauth_login_log_times.get(name, 0.0)
+        if now - last_logged_at < DEFAULT_MCP_OAUTH_LOGIN_LOG_INTERVAL_SECONDS:
+            return
+
+        self._mcp_oauth_login_log_times[name] = now
+        try:
+            logger.info(
+                "MCP server %s requires OAuth login because its token is invalid: %s",
+                name,
+                reason,
+            )
+            await self._mcp_oauth_manager.start_authorization(
+                config,
+                callback_base_url=get_mcp_oauth_callback_base_url(config),
+                force=True,
+                server_name=name,
+                log_authorization=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to start automatic MCP OAuth login for %s: %s",
+                name,
+                exc,
+            )
+
+    async def _init_mcp_client(self, name: str, config: dict) -> MCPClient:
+        """初始化单个MCP客户端"""
+        mcp_client = MCPClient()
+        mcp_client.name = name
+        try:
+            await mcp_client.connect_to_server(config, name)
+            tools_res = await mcp_client.list_tools_and_save()
+        except asyncio.CancelledError:
+            await self._cleanup_mcp_client_safely(mcp_client, name)
+            raise
+        except MCPOAuthAuthorizationRequiredError as exc:
+            await self._cleanup_mcp_client_safely(mcp_client, name)
+            await self._start_mcp_oauth_login_from_log(name, config, str(exc))
+            raise
+        except Exception:
+            await self._cleanup_mcp_client_safely(mcp_client, name)
+            raise
+        logger.debug(f"MCP server {name} list tools response: {tools_res}")
+        tool_names = [tool.name for tool in tools_res.tools]
+
+        # 移除该MCP服务之前的工具（如有）
+        self.func_list = [
+            f
+            for f in self.func_list
+            if not (isinstance(f, MCPTool) and f.mcp_server_name == name)
+        ]
+
+        # 将 MCP 工具转换为 FuncTool 并添加到 func_list
+        for tool in mcp_client.tools:
+            func_tool = MCPTool(
+                mcp_tool=tool,
+                mcp_client=mcp_client,
+                mcp_server_name=name,
+            )
+            self.func_list.append(func_tool)
+
+        logger.info(f"Connected to MCP server {name}, Tools: {tool_names}")
+        return mcp_client
+
     async def _terminate_mcp_client(self, name: str) -> None:
         """关闭并清理MCP客户端"""
         async with self._runtime_lock:
@@ -1028,11 +1116,13 @@ class FunctionToolManager:
         *,
         callback_base_url: str,
         force: bool = False,
+        server_name: str | None = None,
     ) -> dict[str, Any]:
         flow = await self._mcp_oauth_manager.start_authorization(
             config,
             callback_base_url=callback_base_url,
             force=force,
+            server_name=server_name,
         )
         return self._mcp_oauth_manager.get_flow_status(flow.flow_id)
 
