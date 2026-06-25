@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import time
@@ -27,6 +28,128 @@ class AstrBotUpdator(RepoZipUpdator):
         self.CORE_PACKAGE_BASE_URL = (
             "https://astrbot-registry.soulter.top/download/astrbot-core"
         )
+
+    async def _try_git_update(
+        self,
+        latest: bool = True,
+        version: str | None = None,
+        proxy: str = "",
+    ) -> bool:
+        """尝试使用 git 更新 AstrBot 核心代码。
+
+        检查 MAIN_PATH 是否为 Git 仓库，如果是则优先使用 git pull 或 git checkout。
+        成功返回 True，失败返回 False 以让调用方回退到 ZIP 下载更新方式。
+
+        Args:
+            latest: 是否更新到最新版本
+            version: 指定版本号（tag、commit hash 或分支名）
+            proxy: 代理地址
+        """
+        git_dir = os.path.join(self.MAIN_PATH, ".git")
+        if not os.path.exists(git_dir) or not os.path.isdir(git_dir):
+            return False
+
+        logger.info("AstrBot 目录是 Git 仓库，使用 git 进行更新...")
+        try:
+            env = os.environ.copy()
+            if proxy:
+                env["http_proxy"] = proxy
+                env["https_proxy"] = proxy
+                env["GIT_HTTP_PROXY"] = proxy
+
+            if not latest and version:
+                # 指定版本：尝试 git checkout 到对应 tag/commit
+                if str(version).startswith("v") or len(str(version)) == 40:
+                    # tag 或 commit hash → git fetch --tags + git checkout
+                    logger.info(f"正在切换到指定版本：{version}")
+                    proc = await asyncio.create_subprocess_exec(
+                        "git",
+                        "fetch",
+                        "--tags",
+                        "--force",
+                        cwd=self.MAIN_PATH,
+                        env=env,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await proc.communicate()
+
+                    proc = await asyncio.create_subprocess_exec(
+                        "git",
+                        "checkout",
+                        version,
+                        cwd=self.MAIN_PATH,
+                        env=env,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    err_text = stderr.decode().strip()
+
+                    if proc.returncode != 0:
+                        logger.warning(
+                            f"git checkout {version} 失败：{err_text}，回退到 ZIP 下载"
+                        )
+                        return False
+                    logger.info(f"AstrBot 已通过 git checkout 切换到 {version}")
+                    return True
+                else:
+                    # 分支名 → git pull origin <branch>
+                    proc = await asyncio.create_subprocess_exec(
+                        "git",
+                        "pull",
+                        "origin",
+                        version,
+                        cwd=self.MAIN_PATH,
+                        env=env,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    out_text = stdout.decode().strip()
+                    err_text = stderr.decode().strip()
+                    if proc.returncode != 0:
+                        logger.warning(
+                            f"git pull origin {version} 失败：{err_text}，回退到 ZIP 下载"
+                        )
+                        return False
+                    if out_text and "Already up to date" not in out_text:
+                        logger.info(f"git pull 输出：{out_text}")
+                    logger.info(f"AstrBot 已通过 git pull 更新到 {version} 分支最新")
+                    return True
+
+            # 默认：更新到当前分支最新（git pull）
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "pull",
+                cwd=self.MAIN_PATH,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            out_text = stdout.decode().strip()
+            err_text = stderr.decode().strip()
+
+            if proc.returncode == 0:
+                if out_text and "Already up to date" not in out_text:
+                    logger.info(f"git pull 输出：{out_text}")
+                if err_text:
+                    logger.info(f"git pull stderr: {err_text}")
+                logger.info("AstrBot 已通过 git pull 更新成功")
+                return True
+
+            logger.warning(
+                f"git pull 更新失败 (exit {proc.returncode}): {err_text or out_text}，"
+                "回退到 ZIP 下载"
+            )
+            return False
+        except FileNotFoundError:
+            logger.warning("系统中未找到 git 命令，将回退到 ZIP 下载方式更新")
+            return False
+        except Exception as e:
+            logger.warning(f"执行 git 操作时发生异常：{e}，将回退到 ZIP 下载方式更新")
+            return False
 
     def _build_core_package_url(self, version: str | None) -> str | None:
         """Build the hosted core package URL for a release tag.
@@ -178,6 +301,17 @@ class AstrBotUpdator(RepoZipUpdator):
         proxy="",
         progress_callback=None,
     ) -> None:
+        # 优先使用 git 更新（如果 AstrBot 目录是 Git 仓库）
+        if not (os.environ.get("ASTRBOT_CLI") or os.environ.get("ASTRBOT_LAUNCHER")):
+            if await self._try_git_update(
+                latest=latest,
+                version=version,
+                proxy=proxy,
+            ):
+                if reboot:
+                    self._reboot()
+                return
+
         zip_path = await self.download_update_package(
             latest=latest,
             version=version,
