@@ -101,6 +101,28 @@ class botClient(Client):
     def is_shutting_down(self) -> bool:
         return self._shutting_down or self.is_closed()
 
+    async def _bot_login(self, token) -> None:
+        """Override _bot_login with retry for transient None user response.
+
+        botpy 底层调用 users/@me API 首次登录时可能返回空数据导致
+        AttributeError: 'NoneType' object has no attribute 'get'。
+        重试几次后会恢复正常。
+        """
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return await super()._bot_login(token)
+            except (AttributeError, TypeError):
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "[QQOfficial] 登录返回空用户信息，"
+                        f"正在重试 ({attempt + 1}/{max_retries})..."
+                    )
+                    await asyncio.sleep(1 + attempt)
+                else:
+                    logger.error("[QQOfficial] 登录失败，已达最大重试次数")
+                    raise
+
     # 收到群消息
     async def on_group_at_message_create(
         self, message: botpy.message.GroupMessage
