@@ -17,6 +17,7 @@ from astrbot import logger
 from astrbot.core import sp
 from astrbot.core.agent.mcp_client import MCPClient, MCPTool
 from astrbot.core.agent.mcp_oauth import (
+    MCPOAuthAuthorizationRequiredError,
     MCPOAuthManager,
     get_mcp_oauth_state,
     has_mcp_oauth_config,
@@ -617,6 +618,11 @@ class FunctionToolManager:
                 if isinstance(result, MCPInitTimeoutError):
                     logger.error(
                         f"Connected to MCP server {name} timeout ({timeout_display} seconds)"
+                    )
+                elif isinstance(result, MCPOAuthAuthorizationRequiredError):
+                    logger.warning(
+                        f"MCP server {name} requires OAuth 2.0 authorization. "
+                        f"Please complete authorization in the dashboard. ({result})"
                     )
                 else:
                     logger.error(f"Failed to initialize MCP server {name}: {result}")

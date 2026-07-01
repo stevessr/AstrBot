@@ -29,18 +29,6 @@
 
           <div class="mcp-server-tools text-caption text-medium-emphasis">
             <template v-if="(server.tools && server.tools.length > 0) || server.oauth2_enabled">
-              <div v-if="server.oauth2_enabled" class="d-flex align-center mb-2">
-                <v-icon size="small" :color="server.oauth2_authorized ? 'success' : 'warning'" class="me-2">
-                  mdi-shield-key-outline
-                </v-icon>
-                <span class="text-caption text-medium-emphasis">
-                  {{ server.oauth2_grant_type === 'client_credentials'
-                    ? tm('mcpServers.status.oauthClientCredentials')
-                    : (server.oauth2_authorized
-                      ? tm('mcpServers.status.oauthAuthorized')
-                      : tm('mcpServers.status.oauthLoginRequired')) }}
-                </span>
-              </div>
               <v-dialog max-width="600px">
                 <template v-slot:activator="{ props: listToolsProps }">
                   <button
@@ -86,6 +74,18 @@
                   </v-card>
                 </template>
               </v-dialog>
+              <div v-if="server.oauth2_enabled" class="mt-1">
+                <v-icon size="small" :color="server.oauth2_authorized ? 'success' : 'warning'" class="me-2">
+                  mdi-shield-key-outline
+                </v-icon>
+                <span class="text-caption text-medium-emphasis">
+                  {{ server.oauth2_grant_type === 'client_credentials'
+                    ? tm('mcpServers.status.oauthClientCredentials')
+                    : (server.oauth2_authorized
+                      ? tm('mcpServers.status.oauthAuthorized')
+                      : tm('mcpServers.status.oauthLoginRequired')) }}
+                </span>
+              </div>
             </template>
             <template v-else>
               <v-icon size="small" color="warning" class="me-1">
@@ -938,8 +938,9 @@ export default {
 }
 
 .mcp-server-tools {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
+  flex-direction: column;
   margin-top: 6px;
 }
 
