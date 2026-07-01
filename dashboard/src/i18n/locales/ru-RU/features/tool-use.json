@@ -20,7 +20,9 @@
             "useTemplateStreamableHttp": "Шаблон Streamable HTTP",
             "useTemplateSse": "Шаблон SSE",
             "useTemplateOauth2": "Шаблон OAuth 2.0",
-            "sync": "Синхронизировать"
+            "sync": "Синхронизировать",
+            "authorize": "Авторизовать",
+            "reauthorize": "Переавторизовать"
         },
         "empty": "MCP-сервера не найдены. Нажмите «Добавить сервер».",
         "status": {

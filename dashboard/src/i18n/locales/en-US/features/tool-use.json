@@ -20,7 +20,9 @@
       "useTemplateStreamableHttp": "Streamable HTTP Template",
       "useTemplateSse": "SSE Template",
       "useTemplateOauth2": "OAuth 2.0 Template",
-      "sync": "Sync MCP Servers"
+      "sync": "Sync MCP Servers",
+      "authorize": "Authorize",
+      "reauthorize": "Re-authorize"
     },
     "empty": "No MCP servers available, click Add Server to add one",
     "status": {

@@ -232,6 +232,23 @@
               <div class="d-flex align-center mb-2">
                 <v-icon size="small" :color="oauthFlowStatusColor" class="me-2">mdi-shield-key-outline</v-icon>
                 <span :class="oauthFlowStatusClass" class="text-caption font-weight-bold">{{ oauthFlowStatusText }}</span>
+
+                <v-spacer></v-spacer>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  color="primary"
+                  :loading="loading"
+                  :disabled="loading || oauthFlowStatus === 'authorizing'"
+                  @click="authorizeOauth"
+                >
+                  <v-icon start size="small">mdi-shield-key-outline</v-icon>
+                  {{
+                    oauthFlowStatus === 'completed'
+                      ? tm('mcpServers.buttons.reauthorize')
+                      : tm('mcpServers.buttons.authorize')
+                  }}
+                </v-btn>
               </div>
 
               <div v-if="oauthUrl && oauthFlowStatus === 'awaiting_user'" class="mt-2 pa-3 bg-grey-lighten-4 rounded border">

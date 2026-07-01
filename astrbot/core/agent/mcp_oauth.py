@@ -645,9 +645,21 @@ async def get_mcp_oauth_state(config: Mapping[str, Any]) -> dict[str, Any]:
 
     storage = MCPFileTokenStorage.from_mcp_config(config)
     tokens = await storage.get_tokens()
+
+    # 检查 token 是否已过期且无法刷新
+    authorized = tokens is not None
+    if authorized:
+        expires_at = await storage.get_token_expires_at()
+        if (
+            expires_at is not None
+            and time.time() > expires_at
+            and not tokens.refresh_token
+        ):
+            authorized = False
+
     return {
         "oauth2_enabled": True,
-        "oauth2_authorized": tokens is not None,
+        "oauth2_authorized": authorized,
         "oauth2_grant_type": oauth_config.grant_type,
     }
 

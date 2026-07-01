@@ -20,7 +20,9 @@
       "useTemplateStreamableHttp": "Streamable HTTP 模板",
       "useTemplateSse": "SSE 模板",
       "useTemplateOauth2": "OAuth 2.0 模板",
-      "sync": "同步服务器"
+      "sync": "同步服务器",
+      "authorize": "授权",
+      "reauthorize": "重新授权"
     },
     "empty": "暂无 MCP 服务器，点击 新增服务器 添加",
     "status": {
