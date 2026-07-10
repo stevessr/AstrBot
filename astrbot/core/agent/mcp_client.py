@@ -452,7 +452,7 @@ class MCPClient:
             except Exception as exc:
                 if not ready.done():
                     ready.set_exception(exc)
-                raise
+                return
             else:
                 if not ready.done():
                     ready.set_result(None)
@@ -693,14 +693,36 @@ class MCPClient:
         self.tools = response.tools
         return response
 
+    def _suppress_task_exception(self, task: asyncio.Task | None) -> None:
+        """Retrieve a task's exception to prevent 'Task exception was never retrieved'.
+
+        Call before the task is removed from internal tracking to avoid the
+        asyncio warning that fires when a finished task whose exception was
+        never accessed is garbage-collected.
+        """
+        if task is None:
+            return
+        if task.done() and not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                logger.debug(f"Suppressed unhandled exception from {task.get_name()}: {exc}")
+
     def _cancel_connection_task(self, task: asyncio.Task) -> None:
         """Cancel a connection owner task and track it until it finishes."""
         # Prune already-finished tasks to avoid accumulating references over
-        # many reconnections in a long-running process.
-        self._old_connection_tasks = [
-            t for t in self._old_connection_tasks if not t.done()
-        ]
+        # many reconnections in a long-running process.  Suppress exceptions
+        # from pruned tasks so asyncio does not log "Task exception was never
+        # retrieved" when they are garbage-collected.
+        remaining: list[asyncio.Task] = []
+        for t in self._old_connection_tasks:
+            if t.done():
+                self._suppress_task_exception(t)
+            else:
+                remaining.append(t)
+        self._old_connection_tasks = remaining
+
         if task.done():
+            self._suppress_task_exception(task)
             return
         task.cancel()
         self._old_connection_tasks.append(task)
@@ -821,6 +843,11 @@ class MCPClient:
             pending = [t for t in self._old_connection_tasks if not t.done()]
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+            # Suppress exceptions from all finished old tasks before clearing the
+            # list so the asyncio event loop does not log "Task exception was
+            # never retrieved" when the task objects are garbage-collected.
+            for t in self._old_connection_tasks:
+                self._suppress_task_exception(t)
             self._old_connection_tasks.clear()
 
         # Set running_event to unblock any waiting tasks
