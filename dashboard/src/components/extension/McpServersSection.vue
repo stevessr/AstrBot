@@ -94,48 +94,6 @@
               </span>
             </div>
 
-            <template v-if="server.tools && server.tools.length > 0">
-              <div class="d-flex" style="gap: 8px;">
-                <div>
-                  <div class="d-flex align-center mb-1">
-                    <v-icon size="small" color="grey" class="me-2">mdi-tools</v-icon>
-                    <v-dialog max-width="600px">
-                      <template v-slot:activator="{ props: listToolsProps }">
-                        <span class="text-caption text-medium-emphasis cursor-pointer" v-bind="listToolsProps"
-                          style="text-decoration: underline;">
-                          {{ tm('mcpServers.status.availableTools', { count: server.tools.length }) }} ({{ server.tools.length }})
-                        </span>
-                      </template>
-                      <template v-slot:default="{ isActive }">
-                        <v-card style="padding: 16px;">
-                          <v-card-title class="d-flex align-center">
-                            <span>{{ tm('mcpServers.status.availableTools') }}</span>
-                          </v-card-title>
-                          <v-card-text>
-                            <ul>
-                              <li v-for="(tool, idx) in server.tools" :key="idx" style="margin: 8px 0px;">{{ tool }}</li>
-                            </ul>
-                          </v-card-text>
-                          <v-card-actions class="d-flex justify-end">
-                            <v-btn variant="text" color="primary" @click="isActive.value = false">
-                              Close
-                            </v-btn>
-                          </v-card-actions>
-                        </v-card>
-                      </template>
-                    </v-dialog>
-                  </div>
-                </div>
-                <div v-if="mcpServerUpdateLoaders[server.name]" class="text-caption text-medium-emphasis">
-                  <v-progress-circular indeterminate color="primary" size="16"></v-progress-circular>
-                </div>
-              </div>
-            </template>
-
-            <template v-else>
-              <v-icon size="small" color="warning" class="me-1">mdi-alert-circle</v-icon>
-              {{ tm('mcpServers.status.noTools') }}
-            </template>
           </div>
 
           <template #actions>
@@ -367,6 +325,7 @@
 <script>
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor';
 import { mcpApi } from '@/api/v1';
+import { httpClient } from '@/api/http';
 import { useI18n, useModuleI18n } from '@/i18n/composables';
 import OutlinedActionListItem from '@/components/shared/OutlinedActionListItem.vue';
 import {
@@ -709,7 +668,7 @@ export default {
       }
       this.oauthPollInFlight = true;
       try {
-        const response = await axios.get('/api/tools/mcp/oauth/status', {
+        const response = await httpClient.get('/api/tools/mcp/oauth/status', {
           params: { flow_id: this.oauthFlowId }
         });
         if (response.data.status === 'error') {
@@ -776,7 +735,7 @@ export default {
       this.oauthFlowError = '';
 
       try {
-        const response = await axios.post('/api/tools/mcp/oauth/start', {
+        const response = await httpClient.post('/api/tools/mcp/oauth/start', {
           mcp_server_config: configObj,
           server_name: this.currentServer.name || this.originalServerName || undefined,
           force: true
