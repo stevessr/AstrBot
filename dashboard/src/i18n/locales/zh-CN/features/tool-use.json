@@ -114,6 +114,13 @@
         "sync": "同步"
       },
       "oauth": {
+        "authorizationUrl": "授权 URL（可复制或扫码打开）",
+        "copyUrl": "复制 URL",
+        "qrAlt": "OAuth 授权二维码",
+        "scanTip": "使用手机扫码打开授权页面",
+        "openInBrowser": "在浏览器中打开",
+        "starting": "正在启动 OAuth 授权...",
+        "applyConfig": "应用配置",
         "status": {
           "notAuthorized": "检测到 OAuth 2.0 授权码流程，请先完成登录授权。",
           "awaitingUser": "已打开 OAuth 登录页，等待授权完成。",
@@ -201,6 +208,8 @@
     "oauthPopupOpened": "OAuth 登录页已打开，请在新窗口中完成授权。",
     "oauthPopupBlocked": "浏览器拦截了 OAuth 登录弹窗，请允许弹窗后重试。",
     "oauthAuthorized": "OAuth 2.0 授权成功！",
-    "oauthStartError": "启动 OAuth 2.0 授权失败：{error}"
+    "oauthStartError": "启动 OAuth 2.0 授权失败：{error}",
+    "copySuccess": "已复制到剪贴板",
+    "copyError": "复制失败，请手动复制"
   }
 }

@@ -114,6 +114,13 @@
         "sync": "Sync"
       },
       "oauth": {
+        "authorizationUrl": "Authorization URL (copy or scan QR)",
+        "copyUrl": "Copy URL",
+        "qrAlt": "OAuth Authorization QR Code",
+        "scanTip": "Scan with phone to open authorization page",
+        "openInBrowser": "Open in Browser",
+        "starting": "Starting OAuth authorization...",
+        "applyConfig": "Apply Configuration",
         "status": {
           "notAuthorized": "Authorization code OAuth 2.0 was detected. Complete login before saving.",
           "awaitingUser": "The OAuth login page has been opened. Waiting for authorization.",
@@ -201,6 +208,8 @@
     "oauthPopupOpened": "The OAuth login page has been opened. Complete authorization in the new window.",
     "oauthPopupBlocked": "The browser blocked the OAuth popup. Allow popups and try again.",
     "oauthAuthorized": "OAuth 2.0 authorization completed!",
-    "oauthStartError": "Failed to start OAuth 2.0 authorization: {error}"
+    "oauthStartError": "Failed to start OAuth 2.0 authorization: {error}",
+    "copySuccess": "Copied to clipboard",
+    "copyError": "Copy failed, please copy manually"
   }
 }
