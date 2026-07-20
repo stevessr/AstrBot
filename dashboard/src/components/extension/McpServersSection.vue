@@ -315,6 +315,115 @@
       </v-card>
     </v-dialog>
 
+    <!-- OAuth 2.0 授权弹窗 -->
+    <v-dialog v-model="showOauthDialog" max-width="520px" persistent>
+      <v-card>
+        <v-card-title class="text-h3 pa-4 pb-0 pl-6 d-flex align-center">
+          <v-icon class="me-2" color="primary">mdi-shield-key-outline</v-icon>
+          <span>OAuth 2.0 授权</span>
+        </v-card-title>
+
+        <v-card-text class="py-4">
+          <div v-if="oauthAuthorizationUrl">
+            <div class="text-body-2 text-medium-emphasis mb-2">
+              <v-icon size="small" class="me-1">mdi-link-variant</v-icon>
+              {{ tm('dialogs.addServer.oauth.authorizationUrl') }}
+            </div>
+            <div class="oauth-url-box d-flex align-center">
+              <v-text-field
+                :model-value="oauthAuthorizationUrl"
+                variant="solo-filled"
+                density="compact"
+                hide-details
+                readonly
+                class="oauth-url-input"
+              ></v-text-field>
+              <v-tooltip location="top" :text="tm('dialogs.addServer.oauth.copyUrl')">
+                <template #activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    icon="mdi-content-copy"
+                    variant="text"
+                    size="small"
+                    class="ms-2"
+                    @click="copyToClipboard(oauthAuthorizationUrl)"
+                  />
+                </template>
+              </v-tooltip>
+            </div>
+            <div class="oauth-qr-section mt-3 text-center">
+              <QrCodeViewer
+                :value="oauthAuthorizationUrl"
+                :alt="tm('dialogs.addServer.oauth.qrAlt')"
+                :size="160"
+                :margin="2"
+              />
+              <div class="text-caption text-medium-emphasis mt-1">
+                {{ tm('dialogs.addServer.oauth.scanTip') }}
+              </div>
+            </div>
+
+            <v-divider class="my-3"></v-divider>
+
+            <v-alert
+              v-if="oauthFlowStatus === 'completed'"
+              type="success"
+              variant="tonal"
+              density="compact"
+              class="mb-3"
+            >
+              {{ tm('dialogs.addServer.oauth.status.authorized') }}
+            </v-alert>
+            <v-alert
+              v-else-if="oauthFlowStatus === 'failed'"
+              type="error"
+              variant="tonal"
+              density="compact"
+              class="mb-3"
+            >
+              {{ oauthFlowError || tm('dialogs.addServer.oauth.status.failed') }}
+            </v-alert>
+
+            <div v-if="oauthFlowStatus !== 'completed'" class="text-center">
+              <v-btn
+                color="primary"
+                variant="tonal"
+                size="large"
+                class="mb-2"
+                prepend-icon="mdi-open-in-new"
+                @click="openOauthPopup"
+                :disabled="oauthFlowStatus === 'authorizing'"
+              >
+                {{ tm('dialogs.addServer.oauth.openInBrowser') }}
+              </v-btn>
+              <div class="text-caption text-medium-emphasis">
+                {{ oauthFlowStatusText }}
+              </div>
+            </div>
+          </div>
+          <div v-else-if="loading" class="text-center pa-4">
+            <v-progress-circular indeterminate color="primary"></v-progress-circular>
+            <div class="mt-2 text-medium-emphasis">{{ tm('dialogs.addServer.oauth.starting') }}</div>
+          </div>
+        </v-card-text>
+
+        <v-card-actions class="pa-4">
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="closeOauthDialog" :disabled="loading">
+            {{ tm('dialogs.addServer.buttons.cancel') }}
+          </v-btn>
+          <v-btn
+            v-if="oauthFlowStatus === 'completed'"
+            color="primary"
+            variant="tonal"
+            @click="applyOauthConfig"
+          >
+            {{ tm('dialogs.addServer.oauth.applyConfig') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 消息提示 -->
     <v-snackbar :timeout="3000" elevation="6" :color="save_message_success" v-model="save_message_snack" location="top">
       {{ save_message }}
@@ -328,6 +437,7 @@ import { mcpApi } from '@/api/v1';
 import { httpClient } from '@/api/http';
 import { useI18n, useModuleI18n } from '@/i18n/composables';
 import OutlinedActionListItem from '@/components/shared/OutlinedActionListItem.vue';
+import QrCodeViewer from '@/components/shared/QrCodeViewer.vue';
 import {
   askForConfirmation as askForConfirmationDialog,
   useConfirmDialog
@@ -337,7 +447,8 @@ export default {
   name: 'McpServersSection',
   components: {
     VueMonacoEditor,
-    OutlinedActionListItem
+    OutlinedActionListItem,
+    QrCodeViewer
   },
   setup() {
     const { t } = useI18n();
@@ -358,9 +469,11 @@ export default {
       loading: false,
       loadingGettingServers: false,
       mcpServerUpdateLoaders: {},
+      showOauthDialog: false,
       oauthFlowId: '',
       oauthFlowStatus: '',
       oauthFlowError: '',
+      oauthAuthorizationUrl: '',
       oauthPollTimer: null,
       oauthPollInFlight: false,
       isEditMode: false,
@@ -653,6 +766,7 @@ export default {
     closeServerDialog() {
       this.showMcpServerDialog = false;
       this.addServerDialogMessage = '';
+      this.closeOauthDialog();
       this.resetForm();
     },
     stopOauthPolling() {
@@ -711,6 +825,52 @@ export default {
         this.pollOauthStatus();
       }, 1500);
     },
+    async copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.showSuccess(this.tm('messages.copySuccess'));
+      } catch {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          this.showSuccess(this.tm('messages.copySuccess'));
+        } catch {
+          this.showError(this.tm('messages.copyError'));
+        }
+        document.body.removeChild(textarea);
+      }
+    },
+    openOauthPopup() {
+      if (!this.oauthAuthorizationUrl) return;
+      const popup = window.open(
+        this.oauthAuthorizationUrl,
+        'astrbot-mcp-oauth',
+        'popup=yes,width=720,height=840'
+      );
+      if (!popup) {
+        this.showError(this.tm('messages.oauthPopupBlocked'));
+        return;
+      }
+      this.oauthFlowStatus = 'awaiting_user';
+      this.startOauthPolling();
+    },
+    closeOauthDialog() {
+      this.showOauthDialog = false;
+      this.stopOauthPolling();
+      this.oauthAuthorizationUrl = '';
+      this.oauthFlowId = '';
+      this.oauthFlowStatus = '';
+      this.oauthFlowError = '';
+    },
+    applyOauthConfig() {
+      this.closeOauthDialog();
+    },
     async authorizeOauth() {
       if (!this.validateJson()) {
         return;
@@ -721,16 +881,6 @@ export default {
         return;
       }
 
-      const popup = window.open('', 'astrbot-mcp-oauth', 'popup=yes,width=720,height=840');
-      if (popup) {
-        try {
-          popup.opener = null;
-          popup.document.title = 'AstrBot OAuth 2.0';
-          popup.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 24px;">Preparing OAuth 2.0 login...</div>';
-        } catch {
-          // Ignore cross-window access issues; navigation below is the critical path.
-        }
-      }
       this.loading = true;
       this.oauthFlowError = '';
 
@@ -742,9 +892,6 @@ export default {
         });
 
         if (response.data.status === 'error') {
-          if (popup) {
-            popup.close();
-          }
           this.showError(response.data.message || this.tm('messages.oauthStartError', { error: 'Unknown error' }));
           return;
         }
@@ -755,22 +902,11 @@ export default {
         this.addServerDialogMessage = '';
 
         if (flow.authorization_url) {
-          if (popup && !popup.closed) {
-            popup.location.replace(flow.authorization_url);
-          } else {
-            const fallbackPopup = window.open(
-              flow.authorization_url,
-              'astrbot-mcp-oauth',
-              'popup=yes,width=720,height=840'
-            );
-            if (!fallbackPopup) {
-              this.showError(this.tm('messages.oauthPopupBlocked'));
-              return;
-            }
-          }
+          this.oauthAuthorizationUrl = flow.authorization_url;
+          this.showOauthDialog = true;
           this.addServerDialogMessage = this.tm('messages.oauthPopupOpened');
-        } else if (popup) {
-          popup.close();
+        } else {
+          this.addServerDialogMessage = '';
         }
 
         if (this.oauthFlowStatus === 'completed') {
@@ -790,9 +926,6 @@ export default {
 
         this.startOauthPolling();
       } catch (error) {
-        if (popup) {
-          popup.close();
-        }
         this.showError(this.tm('messages.oauthStartError', {
           error: error.response?.data?.message || error.message
         }));
@@ -835,6 +968,8 @@ export default {
       this.oauthFlowId = '';
       this.oauthFlowStatus = '';
       this.oauthFlowError = '';
+      this.oauthAuthorizationUrl = '';
+      this.showOauthDialog = false;
       this.isEditMode = false;
       this.originalServerName = '';
     },
@@ -968,6 +1103,26 @@ export default {
   height: 300px;
   margin-top: 4px;
   overflow: hidden;
+}
+
+.oauth-url-box {
+  gap: 4px;
+}
+
+.oauth-url-input :deep(.v-field) {
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.oauth-qr-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.oauth-qr-section :deep(.qr-code-image) {
+  width: 140px;
+  height: 140px;
 }
 
 </style>

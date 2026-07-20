@@ -5,6 +5,7 @@ from typing import Any
 
 from astrbot.core import logger, sp
 from astrbot.core.agent.mcp_client import MCPTool, validate_mcp_stdio_config
+from astrbot.core.agent.mcp_oauth import get_mcp_oauth_state
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.star import star_map
 from astrbot.core.tools.registry import get_builtin_tool_config_statuses
@@ -49,7 +50,7 @@ class ToolsService:
             logger.error(traceback.format_exc())
             return False
 
-    def get_mcp_servers(self) -> list[dict]:
+    async def get_mcp_servers(self) -> list[dict]:
         try:
             config = self.tool_mgr.load_mcp_config()
             servers = []
@@ -84,6 +85,15 @@ class ToolsService:
                         break
                 else:
                     server_info["tools"] = []
+
+                # 附加 OAuth 2.0 状态信息
+                try:
+                    oauth_state = await get_mcp_oauth_state(server_config)
+                    server_info.update(oauth_state)
+                except Exception:
+                    server_info.setdefault("oauth2_enabled", False)
+                    server_info.setdefault("oauth2_authorized", False)
+                    server_info.setdefault("oauth2_grant_type", None)
 
                 servers.append(server_info)
 
