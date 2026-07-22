@@ -122,6 +122,29 @@
                 </div>
               </div>
 
+              <!-- Nested Template List -->
+              <div
+                v-else-if="itemMeta?.type === 'template_list' && !itemMeta?.invisible && shouldShowItem(itemMeta, entry)"
+                class="nested-container mx-4"
+              >
+                <div class="config-section mb-2">
+                  <v-list-item-title class="config-title">
+                    {{ templateItemText(entry.__template_key, itemKey, 'description', itemMeta?.description) || itemKey }}
+                  </v-list-item-title>
+                  <v-list-item-subtitle class="config-hint" v-if="itemMeta?.hint">
+                    {{ templateItemText(entry.__template_key, itemKey, 'hint', itemMeta.hint) }}
+                  </v-list-item-subtitle>
+                </div>
+                <TemplateListEditor
+                  v-model="entry[itemKey]"
+                  :templates="itemMeta?.templates || {}"
+                  :plugin-name="pluginName"
+                  :plugin-i18n="pluginI18n"
+                  :config-path="templateItemPath(entry.__template_key, itemKey)"
+                  class="config-field"
+                />
+              </div>
+
               <!-- Regular Property -->
               <template v-else-if="!itemMeta?.invisible && shouldShowItem(itemMeta, entry)">
                 <v-row class="config-row">
