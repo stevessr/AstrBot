@@ -8,12 +8,17 @@ from astrbot.core.star.filter.platform_adapter_type import (
     PlatformAdapterType,
     PlatformAdapterTypeFilter,
 )
+from astrbot.core.star.register import register_active_reply_method
+from astrbot.core.star.register import (
+    register_active_reply_method as active_reply_method,
+)
 from astrbot.core.star.register import register_after_message_sent as after_message_sent
 from astrbot.core.star.register import register_command as command
 from astrbot.core.star.register import register_command_group as command_group
 from astrbot.core.star.register import register_custom_filter as custom_filter
 from astrbot.core.star.register import register_event_message_type as event_message_type
 from astrbot.core.star.register import register_llm_tool as llm_tool
+from astrbot.core.star.register import register_on_active_reply as on_active_reply
 from astrbot.core.star.register import register_on_agent_begin as on_agent_begin
 from astrbot.core.star.register import register_on_agent_done as on_agent_done
 from astrbot.core.star.register import register_on_astrbot_loaded as on_astrbot_loaded
@@ -47,12 +52,14 @@ __all__ = [
     "PermissionTypeFilter",
     "PlatformAdapterType",
     "PlatformAdapterTypeFilter",
+    "active_reply_method",
     "after_message_sent",
     "command",
     "command_group",
     "custom_filter",
     "event_message_type",
     "llm_tool",
+    "on_active_reply",
     "on_agent_begin",
     "on_agent_done",
     "on_astrbot_loaded",
@@ -67,6 +74,7 @@ __all__ = [
     "permission_type",
     "platform_adapter_type",
     "regex",
+    "register_active_reply_method",
     "on_using_llm_tool",
     "on_llm_tool_respond",
 ]

@@ -20,6 +20,7 @@ from astrbot.core.config.default import (
 from astrbot.core.config.i18n_utils import ConfigMetadataI18n
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.db import BaseDatabase
+from astrbot.core.platform.active_reply import refresh_active_reply_method_options
 from astrbot.core.platform.register import platform_cls_map, platform_registry
 from astrbot.core.provider.register import provider_registry
 from astrbot.core.star.star import star_registry
@@ -460,6 +461,7 @@ class ConfigProfileService:
         self.db = db
 
     def get_profile_schema(self) -> dict:
+        refresh_active_reply_method_options()
         return {
             "config": DEFAULT_CONFIG,
             "metadata": ConfigMetadataI18n.convert_to_i18n_keys(CONFIG_METADATA_3),
@@ -494,6 +496,7 @@ class ConfigProfileService:
         return await self.create_profile(data.get("name"), data.get("config"))
 
     def get_profile(self, config_id: str) -> dict:
+        refresh_active_reply_method_options()
         if config_id not in self.acm.confs:
             raise ValueError(f"Config file {config_id} does not exist")
         return {

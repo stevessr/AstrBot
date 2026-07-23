@@ -1,5 +1,6 @@
 from .star import register_star
 from .star_handler import (
+    register_active_reply_method,
     register_after_message_sent,
     register_agent,
     register_command,
@@ -7,6 +8,7 @@ from .star_handler import (
     register_custom_filter,
     register_event_message_type,
     register_llm_tool,
+    register_on_active_reply,
     register_on_agent_begin,
     register_on_agent_done,
     register_on_astrbot_loaded,
@@ -26,7 +28,9 @@ from .star_handler import (
 )
 
 __all__ = [
+    "register_active_reply_method",
     "register_after_message_sent",
+    "register_on_active_reply",
     "register_agent",
     "register_command",
     "register_command_group",

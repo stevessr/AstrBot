@@ -4,6 +4,7 @@ import typing as T
 
 from astrbot import logger
 from astrbot.core.message.message_event_result import CommandResult, MessageEventResult
+from astrbot.core.platform.active_reply import ActiveReplyContext
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
@@ -73,6 +74,45 @@ async def call_handler(
             yield
         else:
             yield ret
+
+
+async def call_active_reply_hook(
+    event: AstrMessageEvent,
+    active_reply_context: ActiveReplyContext,
+) -> bool | None:
+    """调用主动回复 hook，并返回插件提供的判定结果。
+
+    主动回复 hook 与普通事件 hook 不同，需要保留处理函数的返回值：
+    ``True`` 或 ``False`` 表示插件接管判定，``None`` 表示继续尝试下一个
+    插件或回退到内置逻辑。
+    """
+    handlers = star_handlers_registry.get_handlers_by_event_type(
+        EventType.OnActiveReplyEvent,
+        plugins_name=event.plugins_name,
+    )
+    for handler in handlers:
+        registered_method = handler.extras_configs.get("active_reply_method")
+        if registered_method and registered_method != active_reply_context.method:
+            continue
+        try:
+            assert inspect.iscoroutinefunction(handler.handler)
+            logger.debug(
+                f"hook({EventType.OnActiveReplyEvent.name}) -> "
+                f"{star_map[handler.handler_module_path].name} - "
+                f"{handler.handler_name}",
+            )
+            result = await handler.handler(event, active_reply_context)
+            if isinstance(result, bool):
+                return result
+            if active_reply_context.should_reply is not None:
+                return active_reply_context.should_reply
+        except BaseException:
+            logger.error(traceback.format_exc())
+
+        if event.is_stopped():
+            return False
+
+    return active_reply_context.should_reply
 
 
 async def call_event_hook(

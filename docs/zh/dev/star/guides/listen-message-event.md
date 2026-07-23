@@ -462,6 +462,27 @@ async def after_message_sent(self, event: AstrMessageEvent):
 
 > 这里不能使用 yield 来发送消息。如需发送，请直接使用 `event.send()` 方法。
 
+#### 主动回复判定时
+
+在群聊主动回复完成基础条件判断后，会触发 `on_active_reply` 钩子。插件可以使用 `active_reply_method` 注册带名称的方法；注册的方法名会自动加入 `provider_ltm_settings.active_reply.method` 的 WebUI 选项。返回 `True` 或 `False` 会接管本次判定，返回 `None` 则继续使用内置逻辑。
+
+```python
+from astrbot.api.event import ActiveReplyContext, AstrMessageEvent, filter
+
+
+@filter.active_reply_method("my_method")
+async def on_active_reply(
+    self,
+    event: AstrMessageEvent,
+    active_reply: ActiveReplyContext,
+) -> bool | None:
+    if active_reply.method != "my_method":
+        return None
+    return event.get_sender_id() == "123456"
+```
+
+注册后，`my_method` 会自动出现在 `provider_ltm_settings.active_reply.method` 的选项中。也可以使用 `@filter.on_active_reply()` 注册不限定方法名的通用钩子。插件可以直接修改 `active_reply.should_reply`，但推荐使用返回值表达判定结果。
+
 ### 优先级
 
 指令、事件监听器、事件钩子可以设置优先级，先于其他指令、监听器、钩子执行。默认优先级是 `0`。

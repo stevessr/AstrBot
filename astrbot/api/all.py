@@ -11,13 +11,16 @@ from astrbot.core.message.message_event_result import (
     CommandResult,
     EventResultType,
 )
-from astrbot.core.platform import AstrMessageEvent
+from astrbot.core.platform import ActiveReplyContext, AstrMessageEvent
 
 # star register
 from astrbot.core.star.register import (
+    register_active_reply_method,
+    register_active_reply_method as active_reply_method,
     register_command as command,
     register_command_group as command_group,
     register_event_message_type as event_message_type,
+    register_on_active_reply as on_active_reply,
     register_regex as regex,
     register_platform_adapter_type as platform_adapter_type,
 )

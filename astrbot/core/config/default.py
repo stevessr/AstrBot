@@ -4254,6 +4254,7 @@ CONFIG_METADATA_3 = {
                         "description": "主动回复方法",
                         "type": "string",
                         "options": ["possibility_reply"],
+                        "hint": "内置方法为 possibility_reply，也可以填写插件通过 active_reply_method 注册的方法名。",
                         "condition": {
                             "provider_ltm_settings.active_reply.enable": True,
                         },

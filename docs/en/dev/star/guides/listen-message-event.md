@@ -461,6 +461,27 @@ async def after_message_sent(self, event: AstrMessageEvent):
 
 > You cannot use yield to send messages here. If you need to send, please use the `event.send()` method directly.
 
+#### Active reply decision
+
+After the basic conditions for group-chat active replies are checked, the `on_active_reply` hook is triggered. A plugin can use `active_reply_method` to register a named method; the registered name is automatically added to the WebUI options for `provider_ltm_settings.active_reply.method`. Returning `True` or `False` takes over the decision for the current message, while returning `None` continues with the built-in logic.
+
+```python
+from astrbot.api.event import ActiveReplyContext, AstrMessageEvent, filter
+
+
+@filter.active_reply_method("my_method")
+async def on_active_reply(
+    self,
+    event: AstrMessageEvent,
+    active_reply: ActiveReplyContext,
+) -> bool | None:
+    if active_reply.method != "my_method":
+        return None
+    return event.get_sender_id() == "123456"
+```
+
+After registration, `my_method` is automatically available in the `provider_ltm_settings.active_reply.method` options. Use `@filter.on_active_reply()` for a generic hook without a method restriction. The plugin may also set `active_reply.should_reply` directly, but returning the decision is recommended.
+
 ### Priority
 
 Commands, event listeners, and event hooks can have priority set to execute before other commands, listeners, or hooks. The default priority is `0`.

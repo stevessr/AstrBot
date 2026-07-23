@@ -406,6 +406,49 @@ def register_on_plugin_unloaded(**kwargs):
     return decorator
 
 
+def register_on_active_reply(method: str | None = None, **kwargs):
+    """判断是否执行主动回复时触发。
+
+    Args:
+        method: 可选的主动回复方法名。传入后，该处理函数只会在配置选择
+            相同方法名时触发，并自动将方法名加入 WebUI 的配置选项。
+
+    Hook 参数：
+        event, active_reply_context
+
+    处理函数返回 ``True`` 或 ``False`` 会接管本次判定，返回 ``None`` 时
+    继续执行其他处理函数或内置逻辑。也可以将
+    ``active_reply_context.should_reply`` 设置为 ``True`` 或 ``False``。
+    """
+    if method is not None:
+        if not isinstance(method, str) or not method.strip():
+            raise ValueError("主动回复方法名必须是非空字符串")
+        method = method.strip()
+
+    def decorator(awaitable):
+        handler_md = get_handler_or_create(
+            awaitable,
+            EventType.OnActiveReplyEvent,
+            **kwargs,
+        )
+        if method is not None:
+            handler_md.extras_configs["active_reply_method"] = method
+
+        from astrbot.core.platform.active_reply import (
+            refresh_active_reply_method_options,
+        )
+
+        refresh_active_reply_method_options()
+        return awaitable
+
+    return decorator
+
+
+def register_active_reply_method(method: str, **kwargs):
+    """注册一个按方法名匹配的主动回复处理函数。"""
+    return register_on_active_reply(method=method, **kwargs)
+
+
 def register_on_waiting_llm_request(**kwargs):
     """当等待调用 LLM 时的通知事件（在获取锁之前）
 

@@ -23,6 +23,8 @@ from astrbot.api.platform import MessageType
 from astrbot.api.provider import Provider, ProviderRequest
 from astrbot.core.agent.message import TextPart
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+from astrbot.core.pipeline.context_utils import call_active_reply_hook
+from astrbot.core.platform import ActiveReplyContext
 
 """
 Group chat context awareness.
@@ -117,6 +119,12 @@ class GroupChatContext:
             )
         ):
             return False
+
+        active_reply_context = ActiveReplyContext(method=cfg["ar_method"])
+        hook_result = await call_active_reply_hook(event, active_reply_context)
+        if hook_result is not None:
+            return hook_result
+
         match cfg["ar_method"]:
             case "possibility_reply":
                 return random.random() < cfg["ar_possibility"]

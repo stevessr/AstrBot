@@ -5,9 +5,10 @@ from astrbot.core.message.message_event_result import (
     MessageEventResult,
     ResultContentType,
 )
-from astrbot.core.platform import AstrMessageEvent
+from astrbot.core.platform import ActiveReplyContext, AstrMessageEvent
 
 __all__ = [
+    "ActiveReplyContext",
     "AstrMessageEvent",
     "CommandResult",
     "EventResultType",

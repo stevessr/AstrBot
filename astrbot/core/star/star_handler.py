@@ -58,6 +58,14 @@ class StarHandlerRegistry(Generic[T]):
     @overload
     def get_handlers_by_event_type(
         self,
+        event_type: Literal[EventType.OnActiveReplyEvent],
+        only_activated=True,
+        plugins_name: list[str] | None = None,
+    ) -> list[StarHandlerMetadata[Callable[..., Awaitable[Any]]]]: ...
+
+    @overload
+    def get_handlers_by_event_type(
+        self,
         event_type: Literal[EventType.OnLLMRequestEvent],
         only_activated=True,
         plugins_name: list[str] | None = None,
@@ -226,6 +234,7 @@ class EventType(enum.Enum):
     OnPlatformLoadedEvent = enum.auto()  # 平台加载完成
 
     AdapterMessageEvent = enum.auto()  # 收到适配器发来的消息
+    OnActiveReplyEvent = enum.auto()  # 判断是否执行主动回复
     OnWaitingLLMRequestEvent = enum.auto()  # 等待调用 LLM（在获取锁之前，仅通知）
     OnLLMRequestEvent = enum.auto()  # 收到 LLM 请求（可以是用户也可以是插件）
     OnLLMResponseEvent = enum.auto()  # LLM 响应后

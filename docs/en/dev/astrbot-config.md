@@ -427,7 +427,7 @@ Whether to record images in group chats and automatically generate text descript
 #### `provider_ltm_settings.active_reply`
 
 - `enable`: Whether to enable active replies. Default is `false`.
-- `method`: Method for active replies. Option is `possibility_reply`.
+- `method`: Method for active replies. The built-in method is `possibility_reply`; plugins can register custom methods through `active_reply_method`, and registered names are added to the WebUI options automatically.
 - `possibility_reply`: Probability of an active reply. Default is `0.1`. Only applicable when `method` is `possibility_reply`.
 - `whitelist`: ID whitelist for active replies. Only IDs in this list will trigger active replies. Empty means no whitelist filter. You can use the `/sid` command to get the session ID on a platform.
 

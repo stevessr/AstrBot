@@ -427,7 +427,7 @@ Added in `v4.3.5`
 #### `provider_ltm_settings.active_reply`
 
 - `enable`: 是否启用主动回复。默认为 `false`。
-- `method`: 主动回复的方法。可选值为 `possibility_reply`。
+- `method`: 主动回复的方法。内置方法为 `possibility_reply`；插件可通过 `active_reply_method` 注册自定义方法，注册的方法名会自动加入 WebUI 选项。
 - `possibility_reply`: 主动回复的概率。默认为 `0.1`。仅在 `method` 为 `possibility_reply` 时适用。
 - `whitelist`: 主动回复的 ID 白名单。仅在此列表中的 ID 才会触发主动回复。为空时表示不启用白名单过滤。可以使用 `/sid` 指令获取在某个平台上的会话 ID。
 
