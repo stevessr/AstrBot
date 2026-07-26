@@ -31,12 +31,12 @@ Group chat context awareness.
 """
 
 GROUP_HISTORY_HEADER = (
-    "<system_reminder>"
-    "You are in a group chat. "
-    "Belows are group chat context after your last reply:\n"
-    "--- BEGIN CONTEXT---\n"
+    "<系统提示>"
+    "你在群聊中"
+    "以下是上次回复到此的消息:\n"
+    "---开始---\n"
 )
-GROUP_HISTORY_FOOTER = "\n--- END CONTEXT ---\n</system_reminder>"
+GROUP_HISTORY_FOOTER = "\n---结束---\n</系统提示>"
 DEFAULT_GROUP_MESSAGE_MAX_CNT = 1000
 
 
