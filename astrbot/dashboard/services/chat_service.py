@@ -394,7 +394,7 @@ def replace_user_conversation_content(original_content, edited_text: str):
             result.append(part)
             continue
         text = part.get("text")
-        if isinstance(text, str) and text.startswith("<system_reminder>"):
+        if isinstance(text, str) and text.startswith("<系统提示>"):
             result.append(part)
             continue
         if not inserted_text and edited_text:
