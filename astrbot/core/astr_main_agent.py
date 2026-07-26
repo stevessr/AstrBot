@@ -980,7 +980,7 @@ def _append_system_reminders(
     if cfg.get("identifier"):
         user_id = event.message_obj.sender.user_id
         user_nickname = event.message_obj.sender.nickname
-        system_parts.append(f"User ID: {user_id}, Nickname: {user_nickname}")
+        system_parts.append(f"ID: {user_id}, 昵称: {user_nickname}")
 
     if cfg.get("group_name_display") and event.message_obj.group_id:
         if not event.message_obj.group:
@@ -1004,11 +1004,11 @@ def _append_system_reminders(
             now = datetime.datetime.now().astimezone()
         current_time = now.strftime("%Y-%m-%d %H:%M (%Z)")
         weekday = WEEKDAY_NAMES[now.weekday()]
-        system_parts.append(f"Current datetime: {current_time}, Weekday: {weekday}")
+        system_parts.append(f"时间: {current_time}, 星期: {weekday}")
 
     if system_parts:
         system_content = (
-            "<system_reminder>" + "\n".join(system_parts) + "</system_reminder>"
+            "<系统提示>" + "\n".join(system_parts) + "</系统提示>"
         )
         req.extra_user_content_parts.append(TextPart(text=system_content))
 
