@@ -164,8 +164,7 @@ def test_append_system_reminders_includes_weekday(mock_event):
         )
 
     assert [part.text for part in req.extra_user_content_parts] == [
-        "<system_reminder>Current datetime: "
-        "2026-06-08 12:34 (UTC), Weekday: Monday</system_reminder>"
+        "<系统提示>时间: 2026-06-08 12:34 (UTC) 周一</系统提示>"
     ]
 
 
@@ -801,9 +800,7 @@ class TestEnsurePersonaAndSkills:
         mock_context.persona_manager.resolve_selected_persona = AsyncMock(
             return_value=("conv-persona", persona, None, False)
         )
-        mock_event.get_extra.side_effect = (
-            lambda key: key == "enable_inline_genui"
-        )
+        mock_event.get_extra.side_effect = lambda key: key == "enable_inline_genui"
         req = ProviderRequest()
         req.conversation = MagicMock(persona_id="conv-persona")
 
@@ -818,9 +815,7 @@ class TestEnsurePersonaAndSkills:
     ):
         """Test inline GenUI instructions are added before conversation setup."""
         module = ama
-        mock_event.get_extra.side_effect = (
-            lambda key: key == "enable_inline_genui"
-        )
+        mock_event.get_extra.side_effect = lambda key: key == "enable_inline_genui"
         req = ProviderRequest()
 
         await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)

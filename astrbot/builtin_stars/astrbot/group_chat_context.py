@@ -28,13 +28,8 @@ from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 Group chat context awareness.
 """
 
-GROUP_HISTORY_HEADER = (
-    "<系统提示>"
-    "你在群聊中"
-    "以下是上次回复到此的消息:\n"
-    "---开始---\n"
-)
-GROUP_HISTORY_FOOTER = "\n---结束---\n</系统提示>"
+GROUP_HISTORY_HEADER = "<系统提示>群聊上下文:\n"
+GROUP_HISTORY_FOOTER = "\n</系统提示>"
 DEFAULT_GROUP_MESSAGE_MAX_CNT = 300
 
 

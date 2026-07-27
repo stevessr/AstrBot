@@ -122,15 +122,7 @@ from astrbot.core.workspace import (
 )
 
 LLM_ERROR_MESSAGE_EXTRA_KEY = "_llm_error_message"
-WEEKDAY_NAMES = (
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-)
+WEEKDAY_NAMES = ("一", "二", "三", "四", "五", "六", "日")
 WEB_SEARCH_CITATION_TOOL_NAMES = frozenset(
     {
         "web_search_baidu",
@@ -937,11 +929,11 @@ def _append_system_reminders(
     cfg: dict,
     timezone: str | None,
 ) -> None:
+    """注入本轮状态提示（用户/群/时间），保持短小以节省 token。"""
     system_parts: list[str] = []
     if cfg.get("identifier"):
-        user_id = event.message_obj.sender.user_id
-        user_nickname = event.message_obj.sender.nickname
-        system_parts.append(f"ID: {user_id}, 昵称: {user_nickname}")
+        sender = event.message_obj.sender
+        system_parts.append(f"用户: {sender.nickname}({sender.user_id})")
 
     if cfg.get("group_name_display") and event.message_obj.group_id:
         if not event.message_obj.group:
@@ -952,7 +944,7 @@ def _append_system_reminders(
         else:
             group_name = event.message_obj.group.group_name
             if group_name:
-                system_parts.append(f"Group name: {group_name}")
+                system_parts.append(f"群: {group_name}")
 
     if cfg.get("datetime_system_prompt"):
         now = None
@@ -964,13 +956,10 @@ def _append_system_reminders(
         if now is None:
             now = datetime.datetime.now().astimezone()
         current_time = now.strftime("%Y-%m-%d %H:%M (%Z)")
-        weekday = WEEKDAY_NAMES[now.weekday()]
-        system_parts.append(f"时间: {current_time}, 星期: {weekday}")
+        system_parts.append(f"时间: {current_time} 周{WEEKDAY_NAMES[now.weekday()]}")
 
     if system_parts:
-        system_content = (
-            "<系统提示>" + "\n".join(system_parts) + "</系统提示>"
-        )
+        system_content = "<系统提示>" + " | ".join(system_parts) + "</系统提示>"
         req.extra_user_content_parts.append(TextPart(text=system_content))
 
 
