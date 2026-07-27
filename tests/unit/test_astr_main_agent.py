@@ -170,8 +170,7 @@ def test_append_system_reminders_includes_weekday(mock_event):
         )
 
     assert [part.text for part in req.extra_user_content_parts] == [
-        "<system_reminder>Current datetime: "
-        "2026-06-08 12:34 (UTC), Weekday: Monday</system_reminder>"
+        "<系统提示>时间: 2026-06-08 12:34 (UTC) 周一</系统提示>"
     ]
 
 
