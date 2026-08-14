@@ -12,6 +12,7 @@ import pytest
 
 from astrbot.core import dashboard_assets, process_restart
 from astrbot.core import updater as core_updater
+from astrbot.core.repository import GitUnavailableError
 from astrbot.core.star.updater import _PluginUpdater
 from astrbot.core.updater import AstrBotUpdater, UpdateProgress
 from astrbot.core.zip_updater import ReleaseInfo, _RepoZipUpdater
@@ -499,7 +500,9 @@ async def test_plugin_update_validates_git_checkout_before_replacing_plugin(
         root_dir_name="demo_plugin",
     )
 
-    async def fake_clone_repository(repo_url: str, target_path: Path) -> None:
+    async def fake_clone_repository(
+        repo_url: str, target_path: Path, **_kwargs
+    ) -> None:
         assert repo_url == "git@gitlab.com:AstrBotDevs/demo-plugin.git"
         target_path.mkdir(parents=True)
         (target_path / "main.py").write_text("VALUE = 'new'\n", encoding="utf-8")
@@ -822,7 +825,7 @@ async def test_astrbot_updater_prefers_hosted_core_package(
     monkeypatch.delenv("ASTRBOT_LAUNCHER", raising=False)
     monkeypatch.setenv("ASTRBOT_CORE_PACKAGE_BASE_URL", "https://cdn.example/core")
 
-    updater = AstrBotUpdater()
+    monkeypatch.setattr(updater := AstrBotUpdater(), "is_git_available", lambda: False)
     calls: list[str] = []
 
     async def fake_fetch_release_info(url: str, latest: bool = True):  # noqa: ARG001
@@ -864,7 +867,7 @@ async def test_astrbot_updater_falls_back_when_hosted_core_package_fails(
     monkeypatch.delenv("ASTRBOT_LAUNCHER", raising=False)
     monkeypatch.setenv("ASTRBOT_CORE_PACKAGE_BASE_URL", "https://cdn.example/core")
 
-    updater = AstrBotUpdater()
+    monkeypatch.setattr(updater := AstrBotUpdater(), "is_git_available", lambda: False)
     calls: list[str] = []
 
     async def fake_fetch_release_info(url: str, latest: bool = True):  # noqa: ARG001
@@ -911,7 +914,7 @@ async def test_astrbot_updater_falls_back_when_hosted_core_package_is_not_zip(
     monkeypatch.delenv("ASTRBOT_LAUNCHER", raising=False)
     monkeypatch.setenv("ASTRBOT_CORE_PACKAGE_BASE_URL", "https://cdn.example/core")
 
-    updater = AstrBotUpdater()
+    monkeypatch.setattr(updater := AstrBotUpdater(), "is_git_available", lambda: False)
     calls: list[str] = []
 
     async def fake_fetch_release_info(url: str, latest: bool = True):  # noqa: ARG001
@@ -1138,7 +1141,7 @@ async def test_plugin_updater_shallow_clones_non_github_repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import astrbot.core.star.updater as plugin_updater_module
+    import astrbot.core.git_updater as git_updater_module
 
     updater = _PluginUpdater()
     updater.plugin_store_path = str(tmp_path)
@@ -1172,9 +1175,9 @@ async def test_plugin_updater_shallow_clones_non_github_repository(
         clone_args = args
         return FakeGitProcess()
 
-    monkeypatch.setattr(plugin_updater_module.shutil, "which", lambda _name: "/git")
+    monkeypatch.setattr(git_updater_module.shutil, "which", lambda _name: "/git")
     monkeypatch.setattr(
-        plugin_updater_module.asyncio,
+        git_updater_module.asyncio,
         "create_subprocess_exec",
         fake_create_subprocess_exec,
     )
@@ -1201,15 +1204,16 @@ async def test_plugin_updater_git_clone_requires_git(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import astrbot.core.star.updater as plugin_updater_module
+    import astrbot.core.git_updater as git_updater_module
 
     updater = _PluginUpdater()
-    monkeypatch.setattr(plugin_updater_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(git_updater_module.shutil, "which", lambda _name: None)
 
-    with pytest.raises(RuntimeError, match="未找到 git 命令"):
+    with pytest.raises(GitUnavailableError, match="未找到 git 命令"):
         await updater._clone_repository(
             "git@github.com:AstrBotDevs/demo.git",
             tmp_path / "demo",
+            require_git=True,
         )
 
 
@@ -1579,3 +1583,145 @@ def test_repo_unzip_file_handles_archives_without_explicit_root_dir_entry(
     assert captured["move"] == (expected_file, target_dir)
     assert captured["cleanup"] == expected_root
     assert captured["removed"] == "temp.zip"
+
+
+@pytest.mark.asyncio
+async def test_plugin_updater_install_prefers_git_for_github(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    updater = _PluginUpdater()
+    updater.plugin_store_path = str(tmp_path)
+    calls: dict[str, object] = {}
+
+    async def fake_try_clone(
+        normalized_url: str,
+        repository,
+        checkout_path: Path,
+        *,
+        require_git: bool = False,
+        validate_metadata: bool = True,
+    ) -> bool:
+        del repository, require_git, validate_metadata
+        calls["git"] = normalized_url
+        checkout_path.mkdir(parents=True, exist_ok=True)
+        (checkout_path / "metadata.yaml").write_text(
+            "\n".join(
+                [
+                    "name: plugin_name",
+                    "desc: Demo plugin",
+                    "version: 1.0.0",
+                    "author: AstrBot Team",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return True
+
+    async def fail_download_from_repo_url(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("install should prefer git over archive download")
+
+    monkeypatch.setattr(updater, "_try_clone_plugin_repository", fake_try_clone)
+    monkeypatch.setattr(updater, "_download_repository", fail_download_from_repo_url)
+
+    plugin_path = await updater.install("https://github.com/Owner/plugin-name")
+
+    assert plugin_path == str(tmp_path / "plugin_name")
+    assert calls["git"] == "https://github.com/Owner/plugin-name"
+
+
+@pytest.mark.asyncio
+async def test_plugin_updater_install_falls_back_to_archive_when_git_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    updater = _PluginUpdater()
+    updater.plugin_store_path = str(tmp_path)
+    calls: dict[str, tuple[str, ...]] = {}
+
+    monkeypatch.setattr(updater, "is_git_available", lambda: False)
+
+    async def fake_download_from_repo_url(
+        plugin_path: str,
+        repo_url: str,
+        proxy: str = "",
+    ) -> None:
+        del proxy
+        calls["archive"] = (plugin_path, repo_url)
+        with zipfile.ZipFile(plugin_path + ".zip", "w") as archive:
+            archive.writestr(
+                "plugin-name/metadata.yaml",
+                "\n".join(
+                    [
+                        "name: plugin_name",
+                        "desc: Demo plugin",
+                        "version: 1.0.0",
+                        "author: AstrBot Team",
+                    ]
+                ),
+            )
+
+    monkeypatch.setattr(updater, "_download_repository", fake_download_from_repo_url)
+
+    plugin_path = await updater.install("https://github.com/Owner/plugin-name")
+
+    assert plugin_path == str(tmp_path / "plugin_name")
+    assert calls["archive"] == (
+        str(tmp_path / "plugin_name"),
+        "https://github.com/Owner/plugin-name",
+    )
+
+
+@pytest.mark.asyncio
+async def test_astrbot_updater_prefers_git_core_package(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("ASTRBOT_CLI", raising=False)
+    monkeypatch.delenv("ASTRBOT_LAUNCHER", raising=False)
+    monkeypatch.setenv("ASTRBOT_CORE_PACKAGE_BASE_URL", "https://cdn.example/core")
+
+    updater = AstrBotUpdater()
+    calls: list[str] = []
+
+    async def fake_fetch_release_info(url: str, latest: bool = True):  # noqa: ARG001
+        return [
+            {
+                "version": "AstrBot v99.0.0",
+                "published_at": "2026-06-19T00:00:00Z",
+                "body": "git core package",
+                "tag_name": "v99.0.0",
+                "zipball_url": "https://github.example/archive.zip",
+            }
+        ]
+
+    async def fake_try_download_core_via_git(
+        version: str,
+        zip_path: Path,
+        progress_callback=None,  # noqa: ARG001
+    ) -> bool:
+        calls.append(f"git:{version}")
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("AstrBot-v99.0.0/README.md", "git-core")
+        return True
+
+    async def fail_download_file(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("git core update should not fall back to HTTP download")
+
+    monkeypatch.setattr(updater, "_fetch_release_info", fake_fetch_release_info)
+    monkeypatch.setattr(
+        updater,
+        "_try_download_core_via_git",
+        fake_try_download_core_via_git,
+    )
+    monkeypatch.setattr(updater, "_download_file", fail_download_file)
+
+    zip_path = await updater._download_core_package(
+        latest=False,
+        version="v99.0.0",
+        path=tmp_path / "core.zip",
+    )
+
+    assert zip_path == tmp_path / "core.zip"
+    assert zipfile.is_zipfile(zip_path)
+    assert calls == ["git:v99.0.0"]

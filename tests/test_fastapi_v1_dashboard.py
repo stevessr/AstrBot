@@ -1099,9 +1099,7 @@ async def test_v1_openapi_is_served_by_fastapi(asgi_client: httpx.AsyncClient):
     assert chat_send["x-astrbot-scope"] == "chat"
     assert chat_send["x-astrbot-sensitive-scopes"] == ["chat:admin"]
     assert "**Required scope:** `chat`" in chat_send["description"]
-    assert (
-        "**Conditional sensitive scope:** `chat:admin`" in chat_send["description"]
-    )
+    assert "**Conditional sensitive scope:** `chat:admin`" in chat_send["description"]
 
     public_spec_path = (
         Path(__file__).resolve().parents[1] / "docs" / "public" / "openapi.json"
@@ -2353,14 +2351,6 @@ async def test_plugin_service_enforces_repository_transport_route(
             }
         )
 
-    with pytest.raises(PluginServiceError, match="GitHub archive"):
-        await plugin_service.install_plugin(
-            {
-                "url": "https://github.com/AstrBotDevs/demo",
-                "repository_transport": "git",
-            }
-        )
-
 
 @pytest.mark.asyncio
 async def test_plugin_service_exposes_missing_git_error(
@@ -3393,9 +3383,7 @@ async def test_v1_mcp_list_reports_connected_runtime(
 
     assert response.status_code == 200
     demo_server = next(
-        server
-        for server in response.json()["data"]
-        if server["name"] == "demo-server"
+        server for server in response.json()["data"] if server["name"] == "demo-server"
     )
     assert demo_server["connected"] is True
     assert demo_server["tools"] == ["demo_tool"]

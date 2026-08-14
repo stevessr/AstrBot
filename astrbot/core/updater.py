@@ -26,6 +26,7 @@ from astrbot.core.utils.astrbot_path import (
 )
 from astrbot.core.utils.io import ensure_dir, remove_dir
 
+from .git_updater import _GitRepoUpdater
 from .zip_updater import ReleaseInfo, _RepoZipUpdater
 
 __all__ = ["AstrBotUpdater", "UpdateProgress", "UpdateProgressCallback"]
@@ -57,7 +58,7 @@ class UpdateProgress:
 UpdateProgressCallback = Callable[[UpdateProgress], Awaitable[None]]
 
 
-class AstrBotUpdater(_RepoZipUpdater):
+class AstrBotUpdater(_RepoZipUpdater, _GitRepoUpdater):
     """Expose the complete, high-level AstrBot Core update operations."""
 
     def __init__(
@@ -375,6 +376,62 @@ class AstrBotUpdater(_RepoZipUpdater):
             )
         return data_dist_path
 
+    async def _try_download_core_via_git(
+        self,
+        version: str,
+        zip_path: Path,
+        progress_callback=None,
+    ) -> bool:
+        if not self.is_git_available() or not version or len(str(version)) == 40:
+            return False
+
+        repository = GitHubRepository.parse(self._repository_url)
+        clone_url = f"https://github.com/{repository.owner}/{repository.name}.git"
+        update_temp_parent = Path(get_astrbot_temp_path()) / "updates"
+        if update_temp_parent.is_symlink():
+            update_temp_parent.unlink()
+        update_temp_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory(
+            prefix="core-git-",
+            dir=update_temp_parent,
+        ) as temp_dir:
+            clone_dir = Path(temp_dir) / "checkout"
+            try:
+                logger.info(
+                    "Attempting to update AstrBot Core to %s via Git clone from %s",
+                    version,
+                    clone_url,
+                )
+                await self._clone_repository(
+                    clone_url,
+                    clone_dir,
+                    branch=str(version),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to prepare AstrBot Core update via Git for %s: %s",
+                    version,
+                    exc,
+                )
+                return False
+
+            archive_root_name = f"{repository.name}-{version}"
+            self._archive_directory(clone_dir, zip_path, archive_root_name)
+
+        if progress_callback:
+            payload = {
+                "url": clone_url,
+                "downloaded": 1,
+                "total": 1,
+                "percent": 1,
+                "speed": 0,
+            }
+            result = progress_callback(payload)
+            if asyncio.iscoroutine(result):
+                await result
+        return zipfile.is_zipfile(zip_path)
+
     async def _download_core_package(
         self,
         latest=True,
@@ -442,6 +499,13 @@ class AstrBotUpdater(_RepoZipUpdater):
 
         zip_path = Path(path)
         ensure_dir(zip_path.parent)
+        if target_version and await self._try_download_core_via_git(
+            target_version,
+            zip_path,
+            progress_callback=progress_callback,
+        ):
+            return zip_path
+
         hosted_package_url = self._build_core_package_url(target_version)
         if hosted_package_url:
             try:

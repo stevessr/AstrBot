@@ -4,6 +4,7 @@ from astrbot.core.repository import (
     GitHubRepository,
     normalize_repository_url,
     parse_repository_url,
+    resolve_git_clone_url,
 )
 
 
@@ -69,3 +70,19 @@ def test_github_repository_rejects_other_hosts(url: str) -> None:
 def test_repository_parser_rejects_unsafe_or_non_repository_urls(url: str) -> None:
     with pytest.raises(ValueError):
         parse_repository_url(url)
+
+
+def test_resolve_git_clone_url_for_github_archive_transport() -> None:
+    repository = parse_repository_url("https://github.com/AstrBotDevs/AstrBot")
+    assert (
+        resolve_git_clone_url("https://github.com/AstrBotDevs/AstrBot", repository)
+        == "https://github.com/AstrBotDevs/AstrBot.git"
+    )
+
+
+def test_resolve_git_clone_url_for_git_transport() -> None:
+    repository = parse_repository_url("https://gitee.com/astrbot/demo.git")
+    assert (
+        resolve_git_clone_url("https://gitee.com/astrbot/demo.git", repository)
+        == "https://gitee.com/astrbot/demo.git"
+    )
