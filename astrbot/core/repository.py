@@ -1,4 +1,5 @@
 import re
+import shutil
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import quote, unquote, urlparse
@@ -7,8 +8,10 @@ __all__ = [
     "GitUnavailableError",
     "GitHubRepository",
     "RepositoryReference",
+    "is_git_available",
     "normalize_repository_url",
     "parse_repository_url",
+    "resolve_git_clone_url",
 ]
 
 _SCP_GIT_URL_PATTERN = re.compile(
@@ -233,3 +236,40 @@ def parse_repository_url(url: str) -> RepositoryReference:
         name=name,
         transport="git",
     )
+
+
+def is_git_available() -> bool:
+    """Return whether a Git executable is available on PATH."""
+    return shutil.which("git") is not None
+
+
+def resolve_git_clone_url(url: str, repository: RepositoryReference) -> str:
+    """Resolve a repository locator to a Git clone URL.
+
+    Args:
+        url: Original repository locator.
+        repository: Parsed repository identity.
+
+    Returns:
+        URL suitable for ``git clone``.
+
+    Raises:
+        ValueError: If a Git clone URL cannot be derived.
+    """
+    normalized = normalize_repository_url(url)
+    if _SCP_GIT_URL_PATTERN.fullmatch(normalized):
+        return normalized
+
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() == "ssh":
+        return normalized
+
+    if repository.transport == "git":
+        if normalized.lower().endswith(".git"):
+            return normalized
+        return f"{normalized}.git"
+
+    if repository.provider == "github":
+        return f"https://github.com/{repository.owner}/{repository.name}.git"
+
+    raise ValueError("Cannot resolve git clone URL for repository")
