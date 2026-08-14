@@ -1588,17 +1588,10 @@ class PluginService:
             ) from exc
 
         expected_transport = str(payload.get("repository_transport") or "").strip()
-        if expected_transport == "github" and (
-            repository.provider != "github" or repository.transport != "archive"
-        ):
+        if expected_transport == "github" and repository.provider != "github":
             raise PluginServiceError(
                 "GitHub archive endpoint received a non-GitHub repository.",
                 public_message="请输入有效的 GitHub HTTP(S) 仓库地址。",
-            )
-        if expected_transport == "git" and repository.transport != "git":
-            raise PluginServiceError(
-                "Git clone endpoint received a GitHub archive repository.",
-                public_message="该地址应通过 GitHub 仓库安装入口处理。",
             )
 
         proxy: str | None = payload.get("proxy", None)

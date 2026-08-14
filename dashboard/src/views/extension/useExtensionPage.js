@@ -2123,9 +2123,7 @@ export const useExtensionPage = (initialTab = "installed") => {
     if (!installUsesRepositorySource.value) {
       return pluginApi.installUrl(payload);
     }
-    return isGithubArchiveUrl(extension_url.value)
-      ? pluginApi.installGithub(payload)
-      : pluginApi.installGit(payload);
+    return pluginApi.installGit(payload);
   };
 
   const finalizeSuccessfulInstall = async (resData, source) => {

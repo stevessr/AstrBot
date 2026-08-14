@@ -1,4 +1,3 @@
-import asyncio
 import os
 import shutil
 import tempfile
@@ -10,8 +9,10 @@ import yaml
 from astrbot.core import logger
 from astrbot.core.repository import (
     GitUnavailableError,
+    RepositoryReference,
     normalize_repository_url,
     parse_repository_url,
+    resolve_git_clone_url,
 )
 from astrbot.core.utils.astrbot_path import (
     get_astrbot_plugin_path,
@@ -19,6 +20,7 @@ from astrbot.core.utils.astrbot_path import (
 )
 from astrbot.core.utils.io import ensure_dir, remove_dir
 
+from ..git_updater import REPOSITORY_GIT_CLONE_TIMEOUT_SECONDS, _GitRepoUpdater
 from ..star.star import StarMetadata
 from ..zip_updater import _RepoZipUpdater
 
@@ -26,12 +28,12 @@ PLUGIN_METADATA_FILENAMES = ("metadata.yaml", "metadata.yml")
 PLUGIN_METADATA_REQUIRED_FIELDS = ("name", "desc", "version", "author")
 PLUGIN_METADATA_MAX_BYTES = 1024 * 1024
 PLUGIN_REPOSITORY_TIMEOUT_SECONDS = 15
-PLUGIN_GIT_CLONE_TIMEOUT_SECONDS = 180
+PLUGIN_GIT_CLONE_TIMEOUT_SECONDS = REPOSITORY_GIT_CLONE_TIMEOUT_SECONDS
 
 __all__ = ["PLUGIN_METADATA_FILENAMES"]
 
 
-class _PluginUpdater(_RepoZipUpdater):
+class _PluginUpdater(_RepoZipUpdater, _GitRepoUpdater):
     """Install and update plugins from repository source archives."""
 
     def __init__(
@@ -49,63 +51,53 @@ class _PluginUpdater(_RepoZipUpdater):
     def get_plugin_store_path(self) -> str:
         return self.plugin_store_path
 
-    async def _clone_repository(self, repo_url: str, target_path: str | Path) -> None:
-        """Shallow-clone a remote Git repository without retaining Git metadata.
+    async def _try_clone_plugin_repository(
+        self,
+        normalized_url: str,
+        repository: RepositoryReference,
+        checkout_path: Path,
+        *,
+        require_git: bool = False,
+        validate_metadata: bool = True,
+    ) -> bool:
+        if not self.is_git_available():
+            if require_git:
+                raise GitUnavailableError(
+                    "安装此仓库需要 Git，但当前运行环境中未找到 git 命令。"
+                )
+            return False
 
-        Args:
-            repo_url: Validated HTTP(S), SSH, or SCP-style Git locator.
-            target_path: New directory that will receive the working tree.
-
-        Raises:
-            RuntimeError: If Git is unavailable, times out, or clone fails.
-        """
-        git_executable = shutil.which("git")
-        if not git_executable:
-            raise GitUnavailableError(
-                "安装此仓库需要 Git，但当前运行环境中未找到 git 命令。"
-            )
-
-        target = Path(target_path)
-        if target.exists():
-            raise RuntimeError(f"Git clone target already exists: {target}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        process_env = os.environ.copy()
-        process_env["GIT_TERMINAL_PROMPT"] = "0"
-        process = await asyncio.create_subprocess_exec(
-            git_executable,
-            "clone",
-            "--depth",
-            "1",
-            "--single-branch",
-            "--no-tags",
-            "--",
-            repo_url,
-            str(target),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=process_env,
-        )
         try:
-            _, stderr = await asyncio.wait_for(
-                process.communicate(),
+            clone_url = resolve_git_clone_url(normalized_url, repository)
+        except ValueError:
+            if require_git:
+                raise
+            return False
+
+        try:
+            await self._clone_repository(
+                clone_url,
+                checkout_path,
+                branch=repository.branch,
+                require_git=require_git,
                 timeout=PLUGIN_GIT_CLONE_TIMEOUT_SECONDS,
             )
-        except asyncio.TimeoutError as exc:
-            process.kill()
-            await process.communicate()
-            if target.exists():
-                remove_dir(str(target))
-            raise RuntimeError("Git clone timed out.") from exc
-
-        if process.returncode != 0:
-            if target.exists():
-                remove_dir(str(target))
-            detail = stderr.decode("utf-8", errors="replace").strip()[-2000:]
-            raise RuntimeError(f"Git clone failed: {detail or 'unknown error'}")
-
-        git_metadata = target / ".git"
-        if git_metadata.exists():
-            remove_dir(str(git_metadata))
+            if validate_metadata:
+                self.inspect_plugin_directory(checkout_path)
+            return True
+        except GitUnavailableError:
+            raise
+        except Exception as exc:
+            if require_git:
+                raise
+            logger.warning(
+                "Git clone failed for %s; falling back to archive download: %s",
+                normalized_url,
+                exc,
+            )
+            if checkout_path.exists():
+                remove_dir(str(checkout_path))
+            return False
 
     async def inspect_repository(
         self,
@@ -132,14 +124,19 @@ class _PluginUpdater(_RepoZipUpdater):
             raise ValueError("请输入有效的 Git 仓库地址。") from exc
 
         metadata: object | None = None
-        if repository.transport == "git":
-            temp_parent = Path(get_astrbot_temp_path()) / "repository-inspection"
-            temp_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(dir=temp_parent) as temp_dir:
-                checkout_path = Path(temp_dir) / repository.name
-                await self._clone_repository(normalized_url, checkout_path)
+        temp_parent = Path(get_astrbot_temp_path()) / "repository-inspection"
+        temp_parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temp_parent) as temp_dir:
+            checkout_path = Path(temp_dir) / repository.name
+            if await self._try_clone_plugin_repository(
+                normalized_url,
+                repository,
+                checkout_path,
+                require_git=repository.transport == "git",
+            ):
                 metadata = self.inspect_plugin_directory(checkout_path)["metadata"]
-        else:
+
+        if metadata is None:
             source = await self._resolve_repository_source(normalized_url)
             proxy = proxy.strip().removesuffix("/")
             async with self._create_httpx_client(
@@ -207,19 +204,19 @@ class _PluginUpdater(_RepoZipUpdater):
         if download_url:
             logger.info(f"Downloading plugin archive for {repo_name}: {download_url}")
             await self._download_file(download_url, plugin_path + ".zip")
-        elif repository.transport == "git":
-            try:
-                await self._clone_repository(normalized_url, plugin_path)
-                self.inspect_plugin_directory(plugin_path)
-            except Exception:
-                if os.path.exists(plugin_path):
-                    remove_dir(plugin_path)
-                raise
+            self._extract_plugin_archive(plugin_path + ".zip", plugin_path)
             return plugin_path
-        else:
-            await self._download_repository(plugin_path, normalized_url, proxy)
-        self._extract_plugin_archive(plugin_path + ".zip", plugin_path)
 
+        if await self._try_clone_plugin_repository(
+            normalized_url,
+            repository,
+            Path(plugin_path),
+            require_git=repository.transport == "git",
+        ):
+            return plugin_path
+
+        await self._download_repository(plugin_path, normalized_url, proxy)
+        self._extract_plugin_archive(plugin_path + ".zip", plugin_path)
         return plugin_path
 
     async def update(
@@ -269,18 +266,26 @@ class _PluginUpdater(_RepoZipUpdater):
                 f"Downloading plugin update archive for {plugin.name}: {download_url}"
             )
             await self._download_file(download_url, plugin_path + ".zip")
-        elif repository and repository.transport == "git":
+        elif repository:
             ensure_dir(self.plugin_store_path)
             with tempfile.TemporaryDirectory(
                 prefix=".plugin-update-",
                 dir=self.plugin_store_path,
             ) as temp_dir:
                 checkout_path = Path(temp_dir) / repository.name
-                await self._clone_repository(normalized_url, checkout_path)
-                self.inspect_plugin_directory(checkout_path)
-                remove_dir(plugin_path)
-                shutil.move(str(checkout_path), plugin_path)
-            return plugin_path
+                if await self._try_clone_plugin_repository(
+                    normalized_url,
+                    repository,
+                    checkout_path,
+                    require_git=repository.transport == "git",
+                ):
+                    remove_dir(plugin_path)
+                    shutil.move(str(checkout_path), plugin_path)
+                    return plugin_path
+            if normalized_url:
+                await self._download_repository(
+                    plugin_path, normalized_url, proxy=proxy
+                )
         elif normalized_url:
             await self._download_repository(plugin_path, normalized_url, proxy=proxy)
 

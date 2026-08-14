@@ -2417,14 +2417,6 @@ async def test_plugin_service_enforces_repository_transport_route(
             }
         )
 
-    with pytest.raises(PluginServiceError, match="GitHub archive"):
-        await plugin_service.install_plugin(
-            {
-                "url": "https://github.com/AstrBotDevs/demo",
-                "repository_transport": "git",
-            }
-        )
-
 
 @pytest.mark.asyncio
 async def test_plugin_service_exposes_missing_git_error(
