@@ -417,6 +417,10 @@ class ProviderManager:
                 from .sources.openai_responses_source import (
                     ProviderOpenAIResponses as ProviderOpenAIResponses,
                 )
+            case "openai_responses_ws":
+                from .sources.openai_responses_ws_source import (
+                    ProviderOpenAIResponsesWS as ProviderOpenAIResponsesWS,
+                )
             case "longcat_chat_completion":
                 from .sources.longcat_source import ProviderLongCat as ProviderLongCat
             case "minimax_token_plan":
