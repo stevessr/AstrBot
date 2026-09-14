@@ -705,7 +705,9 @@ class MCPClient:
         if task.done() and not task.cancelled():
             exc = task.exception()
             if exc is not None:
-                logger.debug(f"Suppressed unhandled exception from {task.get_name()}: {exc}")
+                logger.debug(
+                    f"Suppressed unhandled exception from {task.get_name()}: {exc}"
+                )
 
     def _cancel_connection_task(self, task: asyncio.Task) -> None:
         """Cancel a connection owner task and track it until it finishes."""
