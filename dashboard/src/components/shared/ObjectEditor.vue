@@ -72,7 +72,7 @@
                       {{ pair.slider.max }}
                     </span>
                   </template>
-                  
+
                   <v-text-field
                     v-model.number="pair.value"
                     type="number"
@@ -160,7 +160,7 @@
                       {{ template.slider.max }}
                     </span>
                   </template>
-                  
+
 
                   <v-text-field
                     :model-value="getTemplateValue(templateKey)"
