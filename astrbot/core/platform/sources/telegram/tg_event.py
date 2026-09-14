@@ -26,7 +26,7 @@ from astrbot.api.message_components import (
     Reply,
     Video,
 )
-from astrbot.api.platform import AstrBotMessage, MessageType, PlatformMetadata
+from astrbot.api.platform import AstrBotMessage, Group, MessageType, PlatformMetadata
 from astrbot.core import sp
 from astrbot.core.utils.metrics import Metric
 
