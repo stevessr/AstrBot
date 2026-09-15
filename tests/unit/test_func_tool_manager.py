@@ -116,9 +116,11 @@ def test_shell_session_schema_supports_line_writes():
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="Restricted execution needs POSIX.")
+@pytest.mark.parametrize("allow_network", [False, True])
 async def test_local_execute_shell_manages_running_and_closed_results(
     monkeypatch,
     tmp_path,
+    allow_network,
 ):
     from astrbot.core.tools.computer_tools import shell as shell_tools
 
@@ -141,7 +143,14 @@ async def test_local_execute_shell_manages_running_and_closed_results(
 
     class FakeConfig:
         def get_config(self, umo):
-            return {"provider_settings": {"computer_use_runtime": "local"}}
+            return {
+                "provider_settings": {
+                    "computer_use_runtime": "local",
+                    "computer_use_local_permissions": {
+                        "admin": {"allow_network": allow_network}
+                    },
+                }
+            }
 
     class FakeEvent:
         unified_msg_origin = "umo"
@@ -177,6 +186,10 @@ async def test_local_execute_shell_manages_running_and_closed_results(
     )
 
     assert json.loads(result)["session_id"] == "sh_test"
+    notice = shell_tools.LOCAL_NETWORK_POLICY_NOTICE
+    assert json.loads(result).get("policy_notice") == (
+        None if allow_network else notice
+    )
     shell.exec_managed.assert_awaited_once_with(
         "python server.py",
         owner_id="umo",
@@ -184,7 +197,7 @@ async def test_local_execute_shell_manages_running_and_closed_results(
         creator_is_admin=True,
         sandboxed=True,
         permission_check=ANY,
-        allow_network=True,
+        allow_network=allow_network,
         filesystem_scope="workspace",
         readable_roots=ANY,
         writable_roots=ANY,
@@ -215,7 +228,8 @@ async def test_local_execute_shell_manages_running_and_closed_results(
         )
 
         assert result == (
-            f"Command completed with exit code {exit_code} "
+            ("" if allow_network else f"{notice}\n")
+            + f"Command completed with exit code {exit_code} "
             f"(wall time: {wall_time}s).\nOutput:\ndone\n"
         )
 
