@@ -1,4 +1,4 @@
-/* Auto-generated MDI subset – 266 icons */
+/* Auto-generated MDI subset – 271 icons */
 /* Do not edit manually. Run: pnpm run subset-icons */
 
 @font-face {
@@ -250,6 +250,14 @@
 
 .mdi-close-circle-outline::before {
   content: "\F015A";
+}
+
+.mdi-cloud-download-outline::before {
+  content: "\F0B7D";
+}
+
+.mdi-cloud-search-outline::before {
+  content: "\F0957";
 }
 
 .mdi-cloud-upload::before {
@@ -672,6 +680,10 @@
   content: "\F0980";
 }
 
+.mdi-magnify-scan::before {
+  content: "\F1276";
+}
+
 .mdi-memory::before {
   content: "\F035B";
 }
@@ -912,6 +924,10 @@
   content: "\F0BC4";
 }
 
+.mdi-shield-key-outline::before {
+  content: "\F0BC5";
+}
+
 .mdi-shield-lock-outline::before {
   content: "\F0CCC";
 }
@@ -954,6 +970,10 @@
 
 .mdi-star-outline::before {
   content: "\F04D2";
+}
+
+.mdi-store-search-outline::before {
+  content: "\F18D3";
 }
 
 .mdi-subdirectory-arrow-right::before {

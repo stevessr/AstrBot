@@ -646,6 +646,7 @@ export default {
       return this.filteredMcpServers.length > 0 && this.filteredMcpServers.every(
         server => this.selectedMcpServerNames.includes(server.name)
       );
+    },
     parsedServerConfig() {
       try {
         if (!this.serverConfigJson.trim()) {
@@ -1384,6 +1385,8 @@ export default {
     margin-left: 0;
     width: 100%;
   }
+}
+
 .oauth-url-box {
   gap: 4px;
 }
@@ -1402,7 +1405,6 @@ export default {
 .oauth-qr-section :deep(.qr-code-image) {
   width: 140px;
   height: 140px;
-
 }
 
 </style>
